@@ -1,2 +1,2 @@
-# rest-in-peace
+# REST-in-peace
 A Simple, Declarative and Peaceful REST Client
