@@ -8,6 +8,7 @@ import java.lang.annotation.Target;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.constant.HTTPMethod;
+import com.shri.restinpeace.constant.RIPConstant;
 
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
@@ -15,5 +16,5 @@ import com.shri.restinpeace.constant.HTTPMethod;
 @HTTPMethodMarker(HTTPMethod.GET)
 
 public @interface GET {
-	String value();
+	String value() default RIPConstant.DEFAULT;
 }
