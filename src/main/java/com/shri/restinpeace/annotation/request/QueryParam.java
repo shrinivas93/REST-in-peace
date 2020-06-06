@@ -6,11 +6,15 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+import com.shri.restinpeace.annotation.method.meta.HTTPRequestParamMarker;
+import com.shri.restinpeace.constant.HTTPRequestParam;
 import com.shri.restinpeace.constant.RIPConstant;
 
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.PARAMETER)
+@HTTPRequestParamMarker(HTTPRequestParam.QUERY)
+
 public @interface QueryParam {
 	String value();
 

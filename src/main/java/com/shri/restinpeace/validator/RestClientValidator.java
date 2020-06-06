@@ -2,7 +2,13 @@ package com.shri.restinpeace.validator;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -13,6 +19,8 @@ import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.validator.dto.ValidationResult;
 
 public class RestClientValidator {
+
+	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("{(.*?)}");
 
 	private RestClientValidator() {
 		// private constructor to hide the implicit public one
@@ -116,11 +124,32 @@ public class RestClientValidator {
 
 	private static void processGetRequest(Method method, ValidationResult validationResult) {
 		GET get = method.getAnnotation(GET.class);
-		String methodURL = get.value();
+		String url = get.value();
+		boolean validURL = isURLValid(url);
+		Set<String> URLPathParams = extractPathParams(url);
+
+	}
+
+	private static Set<String> extractPathParams(String url) {
+		Set<String> pathParams = new HashSet<>();
+		Matcher matcher = PATH_PARAM_PATTERN.matcher(url);
+		while (matcher.find()) {
+			pathParams.add(matcher.group(1));
+		}
+		return pathParams;
 	}
 
 	private static void processDeleteRequest(Method method, ValidationResult validationResult) {
 
+	}
+
+	private static boolean isURLValid(String url) {
+		try {
+			new URI(url);
+			return true;
+		} catch (URISyntaxException e) {
+			return false;
+		}
 	}
 
 }

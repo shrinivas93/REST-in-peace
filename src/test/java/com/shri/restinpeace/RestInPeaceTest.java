@@ -6,8 +6,7 @@ public class RestInPeaceTest {
 
 	public static void main(String[] args) {
 		SampleApi sampleApi = RIP.getClient(SampleApi.class);
-		String foo = sampleApi.foo("https://enaxsbw8ux2bb.x.pipedream.net/{pathParam1}/testUrl", "Shrinivas", 1993,
-				"Shukla");
+		String foo = sampleApi.foo("Shrinivas", 1993, "Shukla");
 		System.out.println("Result : " + foo);
 	}
 

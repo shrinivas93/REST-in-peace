@@ -2,11 +2,8 @@ package com.shri.restinpeace.annotation.service;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.Optional;
-import java.util.stream.Stream;
 
 import com.shri.restinpeace.annotation.method.GET;
-import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.constant.HTTPMethod;
 
 public class RestRequestProcessor {
@@ -70,9 +67,6 @@ public class RestRequestProcessor {
 		GET get = method.getAnnotation(GET.class);
 		String endpoint = get.value();
 		Parameter[] parameters = method.getParameters();
-		Optional<Parameter> findFirst = Stream.of(parameters)
-				.filter(parameter -> parameter.getAnnotation(Url.class) != null).findFirst();
-		Parameter parameter = findFirst.get();
 	}
 
 	private void processDeleteRequest(Method method) {
