@@ -19,10 +19,8 @@ public class RestClientInvocationHandler implements InvocationHandler {
 
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-		System.out.println(method.toString());
 		HTTPMethod httpMethod = getHTTPMethod(method);
-		restRequestProcessor.processRestRequest(method, httpMethod);
-		return null;
+		return restRequestProcessor.processRestRequest(method, httpMethod, args);
 	}
 
 	private HTTPMethod getHTTPMethod(Method method) {

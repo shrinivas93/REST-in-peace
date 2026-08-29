@@ -5,22 +5,25 @@ import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
+import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.validator.dto.ValidationResult;
 
 public class RestClientValidator {
 
-	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("{(.*?)}");
+	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("\\{(.*?)\\}");
 
 	private RestClientValidator() {
 		// private constructor to hide the implicit public one
@@ -63,7 +66,9 @@ public class RestClientValidator {
 			}
 		}
 
-		throw new RestInPeaceValidationException(validationResult);
+		if (validationResult.hasError()) {
+			throw new RestInPeaceValidationException(validationResult);
+		}
 
 	}
 
@@ -125,9 +130,23 @@ public class RestClientValidator {
 	private static void processGetRequest(Method method, ValidationResult validationResult) {
 		GET get = method.getAnnotation(GET.class);
 		String url = get.value();
-		boolean validURL = isURLValid(url);
+		if (!isURLValid(url)) {
+			validationResult.addError(String.format("The method %s.%s has an invalid URL '%s'.",
+					method.getDeclaringClass().getName(), method.getName(), url));
+			return;
+		}
 		Set<String> URLPathParams = extractPathParams(url);
+		Set<String> methodPathParams = Stream.of(method.getParameters())
+				.map(parameter -> parameter.getAnnotation(PathParam.class)).filter(Objects::nonNull)
+				.map(PathParam::value).collect(Collectors.toSet());
 
+		for (String urlPathParam : URLPathParams) {
+			if (!methodPathParams.contains(urlPathParam)) {
+				validationResult.addError(String.format(
+						"The method %s.%s has path param '%s' in its URL that is not annotated on any parameter with @PathParam.",
+						method.getDeclaringClass().getName(), method.getName(), urlPathParam));
+			}
+		}
 	}
 
 	private static Set<String> extractPathParams(String url) {
@@ -145,7 +164,7 @@ public class RestClientValidator {
 
 	private static boolean isURLValid(String url) {
 		try {
-			new URI(url);
+			new URI(PATH_PARAM_PATTERN.matcher(url).replaceAll("x"));
 			return true;
 		} catch (URISyntaxException e) {
 			return false;
