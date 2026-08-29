@@ -3,7 +3,13 @@ package com.shri.restinpeace.annotation.service;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 
+import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
+import com.shri.restinpeace.annotation.method.HEAD;
+import com.shri.restinpeace.annotation.method.OPTIONS;
+import com.shri.restinpeace.annotation.method.PATCH;
+import com.shri.restinpeace.annotation.method.POST;
+import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -11,34 +17,65 @@ import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.exception.RestInPeaceException;
 
-import kong.unirest.GetRequest;
+import kong.unirest.HttpRequest;
 import kong.unirest.HttpResponse;
 import kong.unirest.Unirest;
 
 public class RestRequestProcessor {
 
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
+		String url = resolvePathParams(getUrlTemplate(method, httpMethod), method, args);
+
+		HttpRequest<?> request = createRequest(httpMethod, url);
+		applyParams(request, method, args);
+
+		HttpResponse<String> response = request.asString();
+		return response.getBody();
+	}
+
+	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {
 		switch (httpMethod) {
 		case GET:
-			return processGetRequest(method, args);
-		case DELETE:
-		case HEAD:
-		case OPTIONS:
-		case PATCH:
+			return method.getAnnotation(GET.class).value();
 		case POST:
+			return method.getAnnotation(POST.class).value();
 		case PUT:
-			throw new RestInPeaceException(
-					String.format("HTTP method %s is not yet supported (method %s).", httpMethod, method));
+			return method.getAnnotation(PUT.class).value();
+		case DELETE:
+			return method.getAnnotation(DELETE.class).value();
+		case PATCH:
+			return method.getAnnotation(PATCH.class).value();
+		case HEAD:
+			return method.getAnnotation(HEAD.class).value();
+		case OPTIONS:
+			return method.getAnnotation(OPTIONS.class).value();
 		default:
 			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
 		}
 	}
 
-	private Object processGetRequest(Method method, Object[] args) {
-		GET get = method.getAnnotation(GET.class);
-		String url = resolvePathParams(get.value(), method, args);
+	private HttpRequest<?> createRequest(HTTPMethod httpMethod, String url) {
+		switch (httpMethod) {
+		case GET:
+			return Unirest.get(url);
+		case HEAD:
+			return Unirest.head(url);
+		case OPTIONS:
+			return Unirest.options(url);
+		case POST:
+			return Unirest.post(url);
+		case PUT:
+			return Unirest.put(url);
+		case PATCH:
+			return Unirest.patch(url);
+		case DELETE:
+			return Unirest.delete(url);
+		default:
+			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
+		}
+	}
 
-		GetRequest request = Unirest.get(url);
+	private void applyParams(HttpRequest<?> request, Method method, Object[] args) {
 		Parameter[] parameters = method.getParameters();
 
 		for (int i = 0; i < parameters.length; i++) {
@@ -50,7 +87,7 @@ public class RestRequestProcessor {
 				Object value = resolveValue(argValue, queryParam.required(), queryParam.defaultValue(),
 						queryParam.value());
 				if (value != null) {
-					request = request.queryString(queryParam.value(), value);
+					request.queryString(queryParam.value(), value);
 				}
 			}
 
@@ -59,13 +96,10 @@ public class RestRequestProcessor {
 				Object value = resolveValue(argValue, headerParam.required(), headerParam.defaultValue(),
 						headerParam.value());
 				if (value != null) {
-					request = request.header(headerParam.value(), String.valueOf(value));
+					request.header(headerParam.value(), String.valueOf(value));
 				}
 			}
 		}
-
-		HttpResponse<String> response = request.asString();
-		return response.getBody();
 	}
 
 	private String resolvePathParams(String urlTemplate, Method method, Object[] args) {

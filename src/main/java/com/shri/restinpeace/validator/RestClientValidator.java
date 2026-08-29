@@ -14,10 +14,17 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
+import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
+import com.shri.restinpeace.annotation.method.HEAD;
+import com.shri.restinpeace.annotation.method.OPTIONS;
+import com.shri.restinpeace.annotation.method.PATCH;
+import com.shri.restinpeace.annotation.method.POST;
+import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.constant.HTTPMethod;
+import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.validator.dto.ValidationResult;
 
@@ -78,69 +85,47 @@ public class RestClientValidator {
 						.ofNullable(annotation.annotationType().getAnnotation(HTTPMethodMarker.class)).isPresent())
 				.findFirst();
 		if (httpMethodAnnotationOptional.isPresent()) {
-			Class<? extends Annotation> httpMethodAnnotation = httpMethodAnnotationOptional.get().annotationType();
-			HTTPMethod httpMethod = httpMethodAnnotation.getAnnotation(HTTPMethodMarker.class).value();
-			switch (httpMethod) {
-			case DELETE:
-				processDeleteRequest(method, validationResult);
-				break;
-			case GET:
-				processGetRequest(method, validationResult);
-				break;
-			case HEAD:
-				processHeadRequest(method, validationResult);
-				break;
-			case OPTIONS:
-				processOptionsRequest(method, validationResult);
-				break;
-			case PATCH:
-				processPatchRequest(method, validationResult);
-				break;
-			case POST:
-				processPostRequest(method, validationResult);
-				break;
-			case PUT:
-				processPutRequest(method, validationResult);
-				break;
-			}
+			Annotation httpMethodAnnotation = httpMethodAnnotationOptional.get();
+			HTTPMethod httpMethod = httpMethodAnnotation.annotationType().getAnnotation(HTTPMethodMarker.class).value();
+			String url = getUrlValue(httpMethodAnnotation, httpMethod);
+			validateUrl(method, url, validationResult);
 		}
 
 	}
 
-	private static void processPutRequest(Method method, ValidationResult validationResult) {
-
+	private static String getUrlValue(Annotation httpMethodAnnotation, HTTPMethod httpMethod) {
+		switch (httpMethod) {
+		case GET:
+			return ((GET) httpMethodAnnotation).value();
+		case POST:
+			return ((POST) httpMethodAnnotation).value();
+		case PUT:
+			return ((PUT) httpMethodAnnotation).value();
+		case DELETE:
+			return ((DELETE) httpMethodAnnotation).value();
+		case PATCH:
+			return ((PATCH) httpMethodAnnotation).value();
+		case HEAD:
+			return ((HEAD) httpMethodAnnotation).value();
+		case OPTIONS:
+			return ((OPTIONS) httpMethodAnnotation).value();
+		default:
+			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
+		}
 	}
 
-	private static void processPostRequest(Method method, ValidationResult validationResult) {
-
-	}
-
-	private static void processPatchRequest(Method method, ValidationResult validationResult) {
-
-	}
-
-	private static void processOptionsRequest(Method method, ValidationResult validationResult) {
-
-	}
-
-	private static void processHeadRequest(Method method, ValidationResult validationResult) {
-
-	}
-
-	private static void processGetRequest(Method method, ValidationResult validationResult) {
-		GET get = method.getAnnotation(GET.class);
-		String url = get.value();
+	private static void validateUrl(Method method, String url, ValidationResult validationResult) {
 		if (!isURLValid(url)) {
 			validationResult.addError(String.format("The method %s.%s has an invalid URL '%s'.",
 					method.getDeclaringClass().getName(), method.getName(), url));
 			return;
 		}
-		Set<String> URLPathParams = extractPathParams(url);
+		Set<String> urlPathParams = extractPathParams(url);
 		Set<String> methodPathParams = Stream.of(method.getParameters())
 				.map(parameter -> parameter.getAnnotation(PathParam.class)).filter(Objects::nonNull)
 				.map(PathParam::value).collect(Collectors.toSet());
 
-		for (String urlPathParam : URLPathParams) {
+		for (String urlPathParam : urlPathParams) {
 			if (!methodPathParams.contains(urlPathParam)) {
 				validationResult.addError(String.format(
 						"The method %s.%s has path param '%s' in its URL that is not annotated on any parameter with @PathParam.",
@@ -156,10 +141,6 @@ public class RestClientValidator {
 			pathParams.add(matcher.group(1));
 		}
 		return pathParams;
-	}
-
-	private static void processDeleteRequest(Method method, ValidationResult validationResult) {
-
 	}
 
 	private static boolean isURLValid(String url) {
