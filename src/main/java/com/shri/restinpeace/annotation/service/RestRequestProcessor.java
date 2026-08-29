@@ -10,6 +10,7 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -18,6 +19,7 @@ import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.exception.RestInPeaceException;
 
 import kong.unirest.HttpRequest;
+import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.Unirest;
 
@@ -27,7 +29,7 @@ public class RestRequestProcessor {
 		String url = resolvePathParams(getUrlTemplate(method, httpMethod), method, args);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
-		applyParams(request, method, args);
+		request = applyParams(request, method, args);
 
 		HttpResponse<String> response = request.asString();
 		return response.getBody();
@@ -75,7 +77,7 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private void applyParams(HttpRequest<?> request, Method method, Object[] args) {
+	private HttpRequest<?> applyParams(HttpRequest<?> request, Method method, Object[] args) {
 		Parameter[] parameters = method.getParameters();
 
 		for (int i = 0; i < parameters.length; i++) {
@@ -99,7 +101,26 @@ public class RestRequestProcessor {
 					request.header(headerParam.value(), String.valueOf(value));
 				}
 			}
+
+			Body body = parameter.getAnnotation(Body.class);
+			if (body != null && argValue != null) {
+				request = applyBody(request, method, argValue);
+			}
 		}
+		return request;
+	}
+
+	private HttpRequest<?> applyBody(HttpRequest<?> request, Method method, Object value) {
+		if (!(request instanceof HttpRequestWithBody)) {
+			throw new RestInPeaceException(String.format(
+					"The method %s is annotated with @Body but its HTTP method does not support a request body.",
+					method));
+		}
+		HttpRequestWithBody bodyRequest = (HttpRequestWithBody) request;
+		if (value instanceof String) {
+			return bodyRequest.body((String) value);
+		}
+		return bodyRequest.body(value);
 	}
 
 	private String resolvePathParams(String urlTemplate, Method method, Object[] args) {

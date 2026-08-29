@@ -4,6 +4,7 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -22,6 +23,7 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
+import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
@@ -31,6 +33,9 @@ import com.shri.restinpeace.validator.dto.ValidationResult;
 public class RestClientValidator {
 
 	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("\\{(.*?)\\}");
+
+	private static final Set<HTTPMethod> BODY_SUPPORTED_METHODS = EnumSet.of(HTTPMethod.POST, HTTPMethod.PUT,
+			HTTPMethod.PATCH, HTTPMethod.DELETE);
 
 	private RestClientValidator() {
 		// private constructor to hide the implicit public one
@@ -89,8 +94,25 @@ public class RestClientValidator {
 			HTTPMethod httpMethod = httpMethodAnnotation.annotationType().getAnnotation(HTTPMethodMarker.class).value();
 			String url = getUrlValue(httpMethodAnnotation, httpMethod);
 			validateUrl(method, url, validationResult);
+			validateBody(method, httpMethod, validationResult);
 		}
 
+	}
+
+	private static void validateBody(Method method, HTTPMethod httpMethod, ValidationResult validationResult) {
+		long bodyParamCount = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(Body.class) != null).count();
+
+		if (bodyParamCount > 1) {
+			validationResult.addError(String.format("The method %s.%s has more than one parameter annotated with @Body.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (bodyParamCount > 0 && !BODY_SUPPORTED_METHODS.contains(httpMethod)) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Body but HTTP method %s does not support a request body.",
+					method.getDeclaringClass().getName(), method.getName(), httpMethod));
+		}
 	}
 
 	private static String getUrlValue(Annotation httpMethodAnnotation, HTTPMethod httpMethod) {
