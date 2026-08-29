@@ -19,8 +19,24 @@ public class RestClientInvocationHandler implements InvocationHandler {
 
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+		if (method.getDeclaringClass() == Object.class) {
+			return invokeObjectMethod(proxy, method, args);
+		}
 		HTTPMethod httpMethod = getHTTPMethod(method);
 		return restRequestProcessor.processRestRequest(method, httpMethod, args);
+	}
+
+	private Object invokeObjectMethod(Object proxy, Method method, Object[] args) {
+		switch (method.getName()) {
+		case "toString":
+			return "RestClient[" + proxy.getClass().getInterfaces()[0].getName() + "]";
+		case "hashCode":
+			return System.identityHashCode(proxy);
+		case "equals":
+			return proxy == args[0];
+		default:
+			throw new RestInPeaceException(String.format("Unsupported Object method %s.", method));
+		}
 	}
 
 	private HTTPMethod getHTTPMethod(Method method) {

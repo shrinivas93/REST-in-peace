@@ -1,5 +1,8 @@
 package com.shri.restinpeace;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -34,6 +37,30 @@ class RipTest {
 	void getClient_invalidInterface_throwsRestInPeaceException() {
 		RestInPeaceException exception = assertThrows(RestInPeaceException.class, () -> RIP.getClient(InvalidApi.class));
 		assertTrue(exception.getMessage().contains("failed during validation"));
+	}
+
+	@Test
+	void toString_doesNotThrow() {
+		ValidApi client = RIP.getClient(ValidApi.class);
+		assertDoesNotThrow(client::toString);
+		assertTrue(client.toString().contains(ValidApi.class.getName()));
+	}
+
+	@Test
+	void hashCode_doesNotThrow() {
+		ValidApi client = RIP.getClient(ValidApi.class);
+		assertDoesNotThrow(client::hashCode);
+	}
+
+	@Test
+	void equals_comparesByIdentity() {
+		ValidApi client = RIP.getClient(ValidApi.class);
+		ValidApi otherClient = RIP.getClient(ValidApi.class);
+
+		assertTrue(client.equals(client));
+		assertFalse(client.equals(otherClient));
+		assertFalse(client.equals(null));
+		assertEquals(client.hashCode(), client.hashCode());
 	}
 
 }
