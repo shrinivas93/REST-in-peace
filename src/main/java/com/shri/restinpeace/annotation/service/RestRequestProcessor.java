@@ -4,7 +4,10 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
@@ -20,6 +23,8 @@ import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.interceptor.RequestContext;
+import com.shri.restinpeace.interceptor.RequestInterceptor;
 
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
@@ -28,35 +33,82 @@ import kong.unirest.Unirest;
 
 public class RestRequestProcessor {
 
+	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
+
+	public static void addInterceptor(RequestInterceptor interceptor) {
+		INTERCEPTORS.add(interceptor);
+	}
+
+	public static void clearInterceptors() {
+		INTERCEPTORS.clear();
+	}
+
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
 		String url = resolvePathParams(getUrlTemplate(method, httpMethod), method, args);
+		RequestContext context = new RequestContext(httpMethod, url);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
 		request = applyParams(request, method, args);
+		request = applyInterceptors(request, context);
 
 		Class<?> returnType = method.getReturnType();
 		if (returnType == CompletableFuture.class) {
-			return processAsync(request, method);
+			return processAsync(request, method, context);
 		}
 		if (returnType == String.class) {
-			return request.asString().getBody();
+			HttpResponse<String> response = request.asString();
+			notifyAfterResponse(context, response);
+			return response.getBody();
 		}
 		if (returnType == void.class) {
-			request.asString();
+			notifyAfterResponse(context, request.asString());
 			return null;
 		}
-		return request.asObject(returnType).getBody();
+		HttpResponse<?> response = request.asObject(returnType);
+		notifyAfterResponse(context, response);
+		return response.getBody();
 	}
 
-	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method) {
+	private HttpRequest<?> applyInterceptors(HttpRequest<?> request, RequestContext context) {
+		if (INTERCEPTORS.isEmpty()) {
+			return request;
+		}
+		for (RequestInterceptor interceptor : INTERCEPTORS) {
+			interceptor.beforeRequest(context);
+		}
+		for (Map.Entry<String, String> header : context.getHeaders().entrySet()) {
+			request.header(header.getKey(), header.getValue());
+		}
+		return request;
+	}
+
+	private void notifyAfterResponse(RequestContext context, HttpResponse<?> response) {
+		if (INTERCEPTORS.isEmpty()) {
+			return;
+		}
+		for (RequestInterceptor interceptor : INTERCEPTORS) {
+			interceptor.afterResponse(context, response.getStatus(), response.getBody());
+		}
+	}
+
+	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, RequestContext context) {
 		Class<?> innerType = resolveFutureInnerType(method);
 		if (innerType == String.class) {
-			return request.asStringAsync().thenApply(HttpResponse::getBody);
+			return request.asStringAsync().thenApply(response -> {
+				notifyAfterResponse(context, response);
+				return response.getBody();
+			});
 		}
 		if (innerType == Void.class) {
-			return request.asStringAsync().thenApply(response -> null);
+			return request.asStringAsync().thenApply(response -> {
+				notifyAfterResponse(context, response);
+				return null;
+			});
 		}
-		return request.asObjectAsync(innerType).thenApply(HttpResponse::getBody);
+		return request.asObjectAsync(innerType).thenApply(response -> {
+			notifyAfterResponse(context, response);
+			return response.getBody();
+		});
 	}
 
 	private Class<?> resolveFutureInnerType(Method method) {

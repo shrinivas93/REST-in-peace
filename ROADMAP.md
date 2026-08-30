@@ -8,9 +8,12 @@ for reference rather than tracked in code. Check items off as they land.
       from response JSON.
 - [x] **Async support** — a method returning `CompletableFuture<T>` fires
       via Unirest's `asStringAsync()`/`asObjectAsync()` instead of blocking.
-- [ ] **Interceptors** — a way to hook into every request/response (auth
-      token injection, logging, retry policy) without modifying each
-      `@RestClient` interface.
+- [x] **Interceptors** — `RIP.addInterceptor(...)` hooks into every
+      request/response globally: `beforeRequest` can add headers or abort by
+      throwing, `afterResponse` observes status/body. Covers auth token
+      injection and logging. Does **not** cover retry policy - a passive
+      observer can't cause a request to be re-sent, so that would need a
+      different mechanism if wanted later.
 - [ ] **Javadocs** — the public API currently has no doc comments (surfaced
       by the `release-central` Maven profile's javadoc generation). Worth
       doing before wider external adoption.

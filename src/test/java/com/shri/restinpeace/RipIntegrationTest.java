@@ -38,6 +38,8 @@ import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.interceptor.RequestContext;
+import com.shri.restinpeace.interceptor.RequestInterceptor;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -154,6 +156,7 @@ class RipIntegrationTest {
 	@BeforeEach
 	void resetCapturedRequest() {
 		LAST_REQUEST.set(null);
+		RIP.clearInterceptors();
 	}
 
 	private static void handle(HttpExchange exchange) throws IOException {
@@ -365,6 +368,88 @@ class RipIntegrationTest {
 		CompletableFuture<String> future = api.getAsync(port, "daemon");
 
 		assertEquals("ok", future.get(5, TimeUnit.SECONDS));
+	}
+
+	@Test
+	void interceptor_beforeRequest_addsHeaderThatGetsSent() {
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void beforeRequest(RequestContext context) {
+				context.addHeader("X-From-Interceptor", "injected");
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals("injected", LAST_REQUEST.get().header("X-From-Interceptor"));
+	}
+
+	@Test
+	void interceptor_afterResponse_calledWithStatusAndStringBody() {
+		AtomicReference<Integer> capturedStatus = new AtomicReference<>();
+		AtomicReference<Object> capturedBody = new AtomicReference<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				capturedStatus.set(status);
+				capturedBody.set(body);
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals(200, capturedStatus.get());
+		assertEquals("ok", capturedBody.get());
+	}
+
+	@Test
+	void interceptor_afterResponse_calledWithDeserializedPojo() {
+		AtomicReference<Object> capturedBody = new AtomicReference<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				capturedBody.set(body);
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getPayload(port, "abc");
+
+		assertEquals(Payload.class, capturedBody.get().getClass());
+		assertEquals("Shrinivas", ((Payload) capturedBody.get()).name);
+	}
+
+	@Test
+	void interceptor_afterResponse_calledForAsyncCalls()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		AtomicReference<Integer> capturedStatus = new AtomicReference<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				capturedStatus.set(status);
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getAsync(port, "async").get(5, TimeUnit.SECONDS);
+
+		assertEquals(200, capturedStatus.get());
+	}
+
+	@Test
+	void interceptor_beforeRequestThrows_abortsRequestBeforeSending() {
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void beforeRequest(RequestContext context) {
+				throw new IllegalStateException("blocked by interceptor");
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		assertThrows(IllegalStateException.class, () -> api.get(port, "abc", 7, "custom-value"));
+		assertNull(LAST_REQUEST.get());
 	}
 
 }
