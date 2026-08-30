@@ -27,6 +27,7 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
@@ -112,7 +113,17 @@ public class RestClientValidator {
 					validateUrl(method, url, validationResult);
 					validateBody(method, httpMethod, validationResult);
 					validateReturnType(method, validationResult);
+					validateRetry(method, validationResult);
 				});
+	}
+
+	private static void validateRetry(Method method, ValidationResult validationResult) {
+		Retry retry = method.getAnnotation(Retry.class);
+		if (retry != null && retry.times() < 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Retry but times must be at least 1.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
 	}
 
 	private static void validateReturnType(Method method, ValidationResult validationResult) {
