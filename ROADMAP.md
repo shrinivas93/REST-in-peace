@@ -19,8 +19,11 @@ for reference rather than tracked in code. Check items off as they land.
       `mvn javadoc:javadoc` run (0 warnings) - the `release-central` Maven
       profile's javadoc generation, whenever that's picked back up, won't
       surface anything new.
-- [ ] **CONTRIBUTING.md + CHANGELOG.md** — light process maturity now that
-      the project has real, automated releases going out.
+- [x] **CONTRIBUTING.md + CHANGELOG.md** — `CONTRIBUTING.md` covers building,
+      testing, code style, and the branch/release workflow; `CHANGELOG.md`
+      (Keep a Changelog format) documents every release from v1.0.0.0
+      through v1.0.0.4, plus an `[Unreleased]` section to update going
+      forward.
 - [ ] **Maven Central publishing** — full setup (groupId change to
       `io.github.shrinivas93`, POM metadata, GPG signing, publish workflow)
       is built and verified but paused pending account-level setup (Sonatype
