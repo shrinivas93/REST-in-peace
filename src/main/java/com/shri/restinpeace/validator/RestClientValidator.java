@@ -9,7 +9,6 @@ import java.net.URISyntaxException;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
@@ -79,10 +78,9 @@ public class RestClientValidator {
 
 		Method[] methods = restClient.getMethods();
 
-		for (Method method : methods) {
+		Stream.of(methods).forEach(method -> {
 			long httpMethodAnnotationCount = Stream.of(method.getAnnotations())
-					.filter(annotation -> Optional
-							.ofNullable(annotation.annotationType().getAnnotation(HTTPMethodMarker.class)).isPresent())
+					.filter(annotation -> annotation.annotationType().getAnnotation(HTTPMethodMarker.class) != null)
 					.count();
 			if (httpMethodAnnotationCount == 0) {
 				validationResult.addError(
@@ -96,7 +94,7 @@ public class RestClientValidator {
 			if (httpMethodAnnotationCount == 1) {
 				validateRestClientMethod(method, validationResult);
 			}
-		}
+		});
 
 		if (validationResult.hasError()) {
 			throw new RestInPeaceValidationException(validationResult);
@@ -105,19 +103,16 @@ public class RestClientValidator {
 	}
 
 	private static void validateRestClientMethod(Method method, ValidationResult validationResult) {
-		Optional<Annotation> httpMethodAnnotationOptional = Stream.of(method.getAnnotations())
-				.filter(annotation -> Optional
-						.ofNullable(annotation.annotationType().getAnnotation(HTTPMethodMarker.class)).isPresent())
-				.findFirst();
-		if (httpMethodAnnotationOptional.isPresent()) {
-			Annotation httpMethodAnnotation = httpMethodAnnotationOptional.get();
-			HTTPMethod httpMethod = httpMethodAnnotation.annotationType().getAnnotation(HTTPMethodMarker.class).value();
-			String url = getUrlValue(httpMethodAnnotation, httpMethod);
-			validateUrl(method, url, validationResult);
-			validateBody(method, httpMethod, validationResult);
-			validateReturnType(method, validationResult);
-		}
-
+		Stream.of(method.getAnnotations())
+				.filter(annotation -> annotation.annotationType().getAnnotation(HTTPMethodMarker.class) != null)
+				.findFirst().ifPresent(httpMethodAnnotation -> {
+					HTTPMethod httpMethod = httpMethodAnnotation.annotationType().getAnnotation(HTTPMethodMarker.class)
+							.value();
+					String url = getUrlValue(httpMethodAnnotation, httpMethod);
+					validateUrl(method, url, validationResult);
+					validateBody(method, httpMethod, validationResult);
+					validateReturnType(method, validationResult);
+				});
 	}
 
 	private static void validateReturnType(Method method, ValidationResult validationResult) {
@@ -187,13 +182,10 @@ public class RestClientValidator {
 				.map(parameter -> parameter.getAnnotation(PathParam.class)).filter(Objects::nonNull)
 				.map(PathParam::value).collect(Collectors.toSet());
 
-		for (String urlPathParam : urlPathParams) {
-			if (!methodPathParams.contains(urlPathParam)) {
-				validationResult.addError(String.format(
+		urlPathParams.stream().filter(urlPathParam -> !methodPathParams.contains(urlPathParam))
+				.forEach(urlPathParam -> validationResult.addError(String.format(
 						"The method %s.%s has path param '%s' in its URL that is not annotated on any parameter with @PathParam.",
-						method.getDeclaringClass().getName(), method.getName(), urlPathParam));
-			}
-		}
+						method.getDeclaringClass().getName(), method.getName(), urlPathParam)));
 	}
 
 	private static Set<String> extractPathParams(String url) {
