@@ -248,6 +248,18 @@ RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + currentTok
 // token that gets refreshed) - it's re-evaluated on every request.
 RIP.addInterceptor(new HeaderInterceptor("Authorization", () -> currentToken()));
 
+// Need several headers? Register them all in one interceptor instead
+// of one HeaderInterceptor per header.
+RIP.addInterceptor(HeaderInterceptor.of(Map.of(
+    "X-Api-Key", "abc123",
+    "X-Client-Version", "1.2.3")));
+
+// Or a Map<String, Supplier<String>> when some of those values can
+// change between calls.
+RIP.addInterceptor(new HeaderInterceptor(Map.of(
+    "Authorization", () -> "Bearer " + currentToken(),
+    "X-Client-Version", () -> "1.2.3")));
+
 // Log a line before each request goes out and another when its
 // response comes back, including elapsed time.
 RIP.addInterceptor(new LoggingInterceptor());
