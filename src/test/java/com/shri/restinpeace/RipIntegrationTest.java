@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -20,6 +21,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -473,6 +475,41 @@ class RipIntegrationTest {
 
 		api.get(port, "abc", 7, "custom-value");
 		assertEquals("token-1", LAST_REQUEST.get().header("Authorization"));
+
+		token.set("token-2");
+		api.get(port, "abc", 7, "custom-value");
+		assertEquals("token-2", LAST_REQUEST.get().header("Authorization"));
+	}
+
+	@Test
+	void headerInterceptor_ofStaticMap_addsAllHeadersToEveryRequest() {
+		Map<String, String> headers = new LinkedHashMap<>();
+		headers.put("X-Api-Key", "key-1");
+		headers.put("X-Client-Version", "1.2.3");
+		headers.put("X-Tenant-Id", "tenant-42");
+		RIP.addInterceptor(HeaderInterceptor.of(headers));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		CapturedRequest request = LAST_REQUEST.get();
+		assertEquals("key-1", request.header("X-Api-Key"));
+		assertEquals("1.2.3", request.header("X-Client-Version"));
+		assertEquals("tenant-42", request.header("X-Tenant-Id"));
+	}
+
+	@Test
+	void headerInterceptor_withSupplierMap_reevaluatesEachValuePerCall() {
+		AtomicReference<String> token = new AtomicReference<>("token-1");
+		Map<String, Supplier<String>> suppliers = new LinkedHashMap<>();
+		suppliers.put("Authorization", token::get);
+		suppliers.put("X-Static", () -> "fixed");
+		RIP.addInterceptor(new HeaderInterceptor(suppliers));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+		assertEquals("token-1", LAST_REQUEST.get().header("Authorization"));
+		assertEquals("fixed", LAST_REQUEST.get().header("X-Static"));
 
 		token.set("token-2");
 		api.get(port, "abc", 7, "custom-value");
