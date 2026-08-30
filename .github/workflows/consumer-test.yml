@@ -1,0 +1,90 @@
+name: Consumer Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version of com.shri:rest-in-peace to test as a real consumer'
+        required: true
+
+jobs:
+  consumer-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          server-id: github
+          settings-path: ${{ github.workspace }}
+
+      - name: Scaffold a standalone consumer project
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          mkdir -p consumer-test/src/main/java/consumertest
+          cat > consumer-test/pom.xml <<EOF
+          <project xmlns="http://maven.apache.org/POM/4.0.0">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>consumertest</groupId>
+            <artifactId>consumer-test</artifactId>
+            <version>1.0.0</version>
+            <packaging>jar</packaging>
+            <properties>
+              <maven.compiler.source>1.8</maven.compiler.source>
+              <maven.compiler.target>1.8</maven.compiler.target>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+            </properties>
+            <repositories>
+              <repository>
+                <id>github</id>
+                <url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
+              </repository>
+            </repositories>
+            <dependencies>
+              <dependency>
+                <groupId>com.shri</groupId>
+                <artifactId>rest-in-peace</artifactId>
+                <version>${VERSION}</version>
+              </dependency>
+            </dependencies>
+          </project>
+          EOF
+          cat > consumer-test/src/main/java/consumertest/ConsumerTest.java <<'JAVAEOF'
+          package consumertest;
+
+          import com.shri.restinpeace.RIP;
+          import com.shri.restinpeace.annotation.marker.RestClient;
+          import com.shri.restinpeace.annotation.method.GET;
+          import com.shri.restinpeace.annotation.request.PathParam;
+          import com.shri.restinpeace.annotation.request.QueryParam;
+
+          public class ConsumerTest {
+
+              @RestClient
+              public interface SampleApi {
+                  @GET("https://httpbin.org/anything/{id}")
+                  String get(@PathParam("id") String id, @QueryParam("q") Integer q);
+              }
+
+              public static void main(String[] args) {
+                  SampleApi api = RIP.getClient(SampleApi.class);
+                  String result = api.get("consumer-test", 1);
+                  if (result == null || !result.contains("consumer-test")) {
+                      throw new IllegalStateException("Unexpected response: " + result);
+                  }
+                  System.out.println("Consumer test passed against the real published artifact.");
+              }
+          }
+          JAVAEOF
+
+      - name: Resolve the published dependency and run the consumer test
+        working-directory: consumer-test
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mvn -B -s "$GITHUB_WORKSPACE/settings.xml" dependency:build-classpath -Dmdep.outputFile=cp.txt
+          mvn -B -s "$GITHUB_WORKSPACE/settings.xml" compile
+          java -cp "target/classes:$(cat cp.txt)" consumertest.ConsumerTest
