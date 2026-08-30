@@ -258,15 +258,17 @@ RIP.addInterceptor(new HeaderInterceptor("Authorization", () -> currentToken()))
 
 // Need several headers? Register them all in one interceptor instead
 // of one HeaderInterceptor per header.
-RIP.addInterceptor(HeaderInterceptor.of(Map.of(
-    "X-Api-Key", "abc123",
-    "X-Client-Version", "1.2.3")));
+Map<String, String> staticHeaders = new LinkedHashMap<>();
+staticHeaders.put("X-Api-Key", "abc123");
+staticHeaders.put("X-Client-Version", "1.2.3");
+RIP.addInterceptor(HeaderInterceptor.of(staticHeaders));
 
 // Or a Map<String, Supplier<String>> when some of those values can
 // change between calls.
-RIP.addInterceptor(new HeaderInterceptor(Map.of(
-    "Authorization", () -> "Bearer " + currentToken(),
-    "X-Client-Version", () -> "1.2.3")));
+Map<String, Supplier<String>> headerSuppliers = new LinkedHashMap<>();
+headerSuppliers.put("Authorization", () -> "Bearer " + currentToken());
+headerSuppliers.put("X-Client-Version", () -> "1.2.3");
+RIP.addInterceptor(new HeaderInterceptor(headerSuppliers));
 
 // Log a line before each request goes out and another when its
 // response comes back, including elapsed time.

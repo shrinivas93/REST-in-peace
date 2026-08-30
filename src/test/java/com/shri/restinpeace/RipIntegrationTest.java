@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -469,7 +470,8 @@ class RipIntegrationTest {
 		api.get(port, "abc", 7, "custom-value");
 
 		assertEquals(
-				List.of("first-before", "second-before", "third-before", "third-after", "second-after", "first-after"),
+				Arrays.asList("first-before", "second-before", "third-before", "third-after", "second-after",
+						"first-after"),
 				order);
 	}
 
