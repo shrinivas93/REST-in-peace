@@ -18,21 +18,35 @@ import java.util.function.Supplier;
  */
 public class CorrelationIdInterceptor implements RequestInterceptor {
 
+	/** The header used when no header name is given explicitly. */
 	public static final String DEFAULT_HEADER_NAME = "X-Request-Id";
 
+	/** {@link RequestContext} attribute key the generated ID is stashed under. */
 	public static final String ID_ATTRIBUTE = "com.shri.restinpeace.interceptor.CorrelationIdInterceptor.id";
 
 	private final String headerName;
 	private final Supplier<String> idGenerator;
 
+	/** Generates a random UUID per call, sent under {@link #DEFAULT_HEADER_NAME}. */
 	public CorrelationIdInterceptor() {
 		this(DEFAULT_HEADER_NAME);
 	}
 
+	/**
+	 * Generates a random UUID per call, sent under a custom header name.
+	 *
+	 * @param headerName the header to send the generated ID under
+	 */
 	public CorrelationIdInterceptor(String headerName) {
 		this(headerName, () -> UUID.randomUUID().toString());
 	}
 
+	/**
+	 * Uses a custom ID generator instead of a random UUID.
+	 *
+	 * @param headerName  the header to send the generated ID under
+	 * @param idGenerator supplies a fresh ID for each request
+	 */
 	public CorrelationIdInterceptor(String headerName, Supplier<String> idGenerator) {
 		this.headerName = headerName;
 		this.idGenerator = idGenerator;

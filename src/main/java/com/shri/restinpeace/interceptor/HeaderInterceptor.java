@@ -16,19 +16,43 @@ public class HeaderInterceptor implements RequestInterceptor {
 
 	private final Map<String, Supplier<String>> valueSuppliers;
 
+	/**
+	 * Injects a single header with a static value.
+	 *
+	 * @param name  the header name
+	 * @param value the static header value
+	 */
 	public HeaderInterceptor(String name, String value) {
 		this(name, () -> value);
 	}
 
+	/**
+	 * Injects a single header whose value is re-evaluated for each request.
+	 *
+	 * @param name          the header name
+	 * @param valueSupplier supplies the header value for each request
+	 */
 	public HeaderInterceptor(String name, Supplier<String> valueSupplier) {
 		this.valueSuppliers = new LinkedHashMap<>();
 		this.valueSuppliers.put(name, valueSupplier);
 	}
 
+	/**
+	 * Injects several headers, each re-evaluated for every request.
+	 *
+	 * @param valueSuppliers a header name to value-supplier map, applied to
+	 *                       every request
+	 */
 	public HeaderInterceptor(Map<String, Supplier<String>> valueSuppliers) {
 		this.valueSuppliers = new LinkedHashMap<>(valueSuppliers);
 	}
 
+	/**
+	 * Creates an interceptor for a fixed set of static headers.
+	 *
+	 * @param headers a header name to value map, applied to every request
+	 * @return the interceptor
+	 */
 	public static HeaderInterceptor of(Map<String, String> headers) {
 		Map<String, Supplier<String>> valueSuppliers = new LinkedHashMap<>();
 		headers.forEach((name, value) -> valueSuppliers.put(name, () -> value));
