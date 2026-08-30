@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -456,6 +457,36 @@ class RipIntegrationTest {
 
 		assertThrows(IllegalStateException.class, () -> api.get(port, "abc", 7, "custom-value"));
 		assertNull(LAST_REQUEST.get());
+	}
+
+	@Test
+	void interceptors_beforeRequestRunsFifo_afterResponseRunsLifo() {
+		List<String> order = new ArrayList<>();
+		RIP.addInterceptor(namedInterceptor("first", order));
+		RIP.addInterceptor(namedInterceptor("second", order));
+		RIP.addInterceptor(namedInterceptor("third", order));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals(
+				Arrays.asList("first-before", "second-before", "third-before", "third-after", "second-after",
+						"first-after"),
+				order);
+	}
+
+	private static RequestInterceptor namedInterceptor(String name, List<String> order) {
+		return new RequestInterceptor() {
+			@Override
+			public void beforeRequest(RequestContext context) {
+				order.add(name + "-before");
+			}
+
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				order.add(name + "-after");
+			}
+		};
 	}
 
 	@Test
