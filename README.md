@@ -55,6 +55,11 @@ GitHub Packages requires authentication even for public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
 for configuring credentials in your `settings.xml`.
 
+Full API documentation is browsable at
+[shrinivas93.github.io/REST-in-peace](https://shrinivas93.github.io/REST-in-peace/),
+rebuilt from `master` on every merge. Each published version also ships a
+`-javadoc.jar` alongside the main jar in GitHub Packages.
+
 ## Quick start
 
 Declare your API as an interface annotated with `@RestClient`, with each
