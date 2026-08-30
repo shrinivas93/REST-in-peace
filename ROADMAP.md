@@ -3,13 +3,11 @@
 Library-maturity items identified while building out REST-in-peace, kept here
 for reference rather than tracked in code. Check items off as they land.
 
-- [ ] **Response deserialization** — methods currently always return the raw
-      response body as `String`. Support return-type-driven deserialization
-      (e.g. `User getUser(...)`) so callers get a POJO back instead of
-      hand-parsing JSON themselves. *(In progress.)*
-- [ ] **Async support** — every call currently blocks. Unirest supports
-      `asStringAsync()`/`asObjectAsync()`; expose an async calling
-      convention (e.g. methods returning `CompletableFuture<T>`).
+- [x] **Response deserialization** — a method's return type now controls
+      deserialization: `String` for the raw body, anything else deserialized
+      from response JSON.
+- [x] **Async support** — a method returning `CompletableFuture<T>` fires
+      via Unirest's `asStringAsync()`/`asObjectAsync()` instead of blocking.
 - [ ] **Interceptors** — a way to hook into every request/response (auth
       token injection, logging, retry policy) without modifying each
       `@RestClient` interface.
