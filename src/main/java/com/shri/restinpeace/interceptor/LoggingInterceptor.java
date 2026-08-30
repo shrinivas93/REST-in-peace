@@ -15,10 +15,16 @@ public class LoggingInterceptor implements RequestInterceptor {
 
 	private final Consumer<String> sink;
 
+	/** Logs to {@code System.out}. */
 	public LoggingInterceptor() {
 		this(System.out::println);
 	}
 
+	/**
+	 * Logs to a custom sink instead of {@code System.out}.
+	 *
+	 * @param sink receives each log line, e.g. a logger method reference
+	 */
 	public LoggingInterceptor(Consumer<String> sink) {
 		this.sink = sink;
 	}

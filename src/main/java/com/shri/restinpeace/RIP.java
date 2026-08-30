@@ -16,6 +16,11 @@ import com.shri.restinpeace.validator.RestClientValidator;
 
 import kong.unirest.Unirest;
 
+/**
+ * Entry point for REST-in-peace: turns an annotated {@code @RestClient}
+ * interface into a working HTTP client backed by a JDK dynamic proxy, via
+ * {@link #getClient(Class)}.
+ */
 public class RIP {
 
 	private static final InvocationHandler REST_CLIENT_INVOCATION_HANDLER = new RestClientInvocationHandler();
@@ -24,6 +29,17 @@ public class RIP {
 		// private constructor to hide the implicit public one
 	}
 
+	/**
+	 * Validates {@code restClient} and returns a proxy implementing it, where
+	 * each method call issues the HTTP request its annotations describe.
+	 *
+	 * @param <T>        the rest client interface type
+	 * @param restClient an interface annotated with
+	 *                    {@link com.shri.restinpeace.annotation.marker.RestClient @RestClient}
+	 * @return a proxy instance implementing {@code restClient}
+	 * @throws RestInPeaceException if the interface is missing
+	 *                              {@code @RestClient} or fails validation
+	 */
 	@SuppressWarnings("unchecked")
 	public static <T> T getClient(Class<T> restClient) {
 
@@ -63,6 +79,8 @@ public class RIP {
 	/**
 	 * Registers a global hook into every request/response made through RIP -
 	 * see {@link RequestInterceptor} for what it can and can't do.
+	 *
+	 * @param interceptor the interceptor to register
 	 */
 	public static void addInterceptor(RequestInterceptor interceptor) {
 		RestRequestProcessor.addInterceptor(interceptor);

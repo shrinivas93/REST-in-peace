@@ -32,18 +32,48 @@ import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.Unirest;
 
+/**
+ * Builds and executes the actual HTTP request for a {@code @RestClient}
+ * method call, applying path/query/header/body parameters and registered
+ * {@link RequestInterceptor}s. Used internally by
+ * {@link com.shri.restinpeace.proxy.RestClientInvocationHandler}; not part
+ * of the library's public API - use {@link com.shri.restinpeace.RIP}
+ * instead.
+ */
 public class RestRequestProcessor {
 
 	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
 
+	/** Creates a processor. Cheap and stateless beyond the shared interceptor registry. */
+	public RestRequestProcessor() {
+	}
+
+	/**
+	 * Registers a global interceptor applied to every request/response made
+	 * through RIP. See
+	 * {@link com.shri.restinpeace.RIP#addInterceptor(RequestInterceptor)}.
+	 *
+	 * @param interceptor the interceptor to register
+	 */
 	public static void addInterceptor(RequestInterceptor interceptor) {
 		INTERCEPTORS.add(interceptor);
 	}
 
+	/** Removes all registered interceptors. */
 	public static void clearInterceptors() {
 		INTERCEPTORS.clear();
 	}
 
+	/**
+	 * Executes the given {@code @RestClient} method call and returns its result.
+	 *
+	 * @param method     the interface method that was called
+	 * @param httpMethod the HTTP method it maps to
+	 * @param args       the call's argument values, in declaration order
+	 * @return the call's result: the raw body, a deserialized object, a
+	 *         {@code CompletableFuture} of either, or {@code null} for
+	 *         {@code void} methods
+	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
 		String url = resolvePathParams(getUrlTemplate(method, httpMethod), method, args);
 		RequestContext context = new RequestContext(httpMethod, url);

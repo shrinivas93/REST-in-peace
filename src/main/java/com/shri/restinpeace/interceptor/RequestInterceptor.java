@@ -23,9 +23,23 @@ package com.shri.restinpeace.interceptor;
  */
 public interface RequestInterceptor {
 
+	/**
+	 * Called before the request is sent. Can add headers via
+	 * {@link RequestContext#addHeader}, or abort the call by throwing.
+	 *
+	 * @param context the request being made
+	 */
 	default void beforeRequest(RequestContext context) {
 	}
 
+	/**
+	 * Called once the response is back.
+	 *
+	 * @param context the request that was made
+	 * @param status  the HTTP response status code
+	 * @param body    the response body - a {@code String}, a deserialized
+	 *                object, or {@code null} for a {@code void}-returning method
+	 */
 	default void afterResponse(RequestContext context, int status, Object body) {
 	}
 
