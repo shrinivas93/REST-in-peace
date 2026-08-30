@@ -99,6 +99,12 @@ class RipIntegrationTest {
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithNullPathParam(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload/{id}")
+		Payload getPayload(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/items/{id}")
+		void ping(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
 	public static final class Payload {
@@ -141,6 +147,13 @@ class RipIntegrationTest {
 
 		if ("HEAD".equals(exchange.getRequestMethod())) {
 			exchange.sendResponseHeaders(200, -1);
+		} else if (exchange.getRequestURI().getPath().startsWith("/payload/")) {
+			byte[] response = "{\"name\":\"Shrinivas\",\"age\":1993}".getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			exchange.sendResponseHeaders(200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
+			}
 		} else {
 			byte[] response = "ok".getBytes(StandardCharsets.UTF_8);
 			exchange.sendResponseHeaders(200, response.length);
@@ -277,6 +290,25 @@ class RipIntegrationTest {
 		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
 				() -> api.getWithNullPathParam(port, null));
 		assertTrue(exception.getMessage().contains("Missing value for path param"));
+	}
+
+	@Test
+	void get_withPojoReturnType_deserializesJsonResponse() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		Payload payload = api.getPayload(port, "abc");
+
+		assertEquals("Shrinivas", payload.name);
+		assertEquals(1993, payload.age);
+	}
+
+	@Test
+	void get_withVoidReturnType_doesNotThrow() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.ping(port, "abc");
+
+		assertEquals("GET", LAST_REQUEST.get().method);
 	}
 
 }

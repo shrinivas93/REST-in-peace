@@ -20,7 +20,6 @@ import com.shri.restinpeace.exception.RestInPeaceException;
 
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
-import kong.unirest.HttpResponse;
 import kong.unirest.Unirest;
 
 public class RestRequestProcessor {
@@ -31,8 +30,15 @@ public class RestRequestProcessor {
 		HttpRequest<?> request = createRequest(httpMethod, url);
 		request = applyParams(request, method, args);
 
-		HttpResponse<String> response = request.asString();
-		return response.getBody();
+		Class<?> returnType = method.getReturnType();
+		if (returnType == String.class) {
+			return request.asString().getBody();
+		}
+		if (returnType == void.class) {
+			request.asString();
+			return null;
+		}
+		return request.asObject(returnType).getBody();
 	}
 
 	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {

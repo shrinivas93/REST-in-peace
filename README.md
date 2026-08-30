@@ -16,6 +16,8 @@ methods like any other Java call.
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
+- Responses: a `String` return type gives you the raw body; any other
+  return type is deserialized from JSON automatically
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -152,6 +154,25 @@ String createRaw(@Body String rawJson);
 ```
 
 At most one parameter per method may be annotated `@Body`.
+
+## Return types
+
+A method's declared return type controls what you get back:
+
+```java
+@GET("https://api.example.com/users/{id}")
+String getUserRaw(@PathParam("id") String id);   // raw response body
+
+@GET("https://api.example.com/users/{id}")
+User getUser(@PathParam("id") String id);        // response JSON deserialized into User
+
+@POST("https://api.example.com/events")
+void fireEvent(@Body Event event);               // response body discarded
+```
+
+`String` gives you the raw response body. `void` fires the request and
+discards the response. Anything else is deserialized from the response body
+as JSON, the same way `@Body` serializes non-`String` request bodies.
 
 ## Building from source
 
