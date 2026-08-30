@@ -9,6 +9,14 @@ import java.lang.annotation.Target;
 import com.shri.restinpeace.annotation.method.meta.HTTPRequestParamMarker;
 import com.shri.restinpeace.constant.HTTPRequestParam;
 
+/**
+ * Sends the annotated parameter as the request body. Valid only on
+ * {@code @POST}, {@code @PUT}, {@code @PATCH}, and {@code @DELETE} methods -
+ * using it on {@code @GET}, {@code @HEAD}, or {@code @OPTIONS} fails
+ * validation. A {@code String} value is sent as-is; any other object is
+ * JSON-serialized automatically. At most one parameter per method may be
+ * annotated {@code @Body}.
+ */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.PARAMETER)

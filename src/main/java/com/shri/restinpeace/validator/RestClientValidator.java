@@ -33,6 +33,12 @@ import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.validator.dto.ValidationResult;
 
+/**
+ * Validates a {@code @RestClient} interface before
+ * {@link com.shri.restinpeace.RIP#getClient(Class)} hands back a proxy for
+ * it, so a misconfigured interface fails fast with a complete list of
+ * problems instead of failing later on the first call.
+ */
 public class RestClientValidator {
 
 	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("\\{(.*?)\\}");
@@ -44,6 +50,17 @@ public class RestClientValidator {
 		// private constructor to hide the implicit public one
 	}
 
+	/**
+	 * Validates the given interface, collecting every problem found (missing
+	 * {@code @RestClient}, missing/duplicate HTTP method annotations, invalid
+	 * URLs, unmatched path params, misused {@code @Body}, unsupported
+	 * {@code CompletableFuture} type parameters) rather than stopping at the
+	 * first one.
+	 *
+	 * @param <T>        the rest client interface type
+	 * @param restClient the interface to validate
+	 * @throws RestInPeaceValidationException if any validation error is found
+	 */
 	public static <T> void validate(Class<T> restClient) throws RestInPeaceValidationException {
 
 		ValidationResult validationResult = new ValidationResult();

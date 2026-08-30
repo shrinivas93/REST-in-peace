@@ -14,9 +14,11 @@ for reference rather than tracked in code. Check items off as they land.
       injection and logging. Does **not** cover retry policy - a passive
       observer can't cause a request to be re-sent, so that would need a
       different mechanism if wanted later.
-- [ ] **Javadocs** — the public API currently has no doc comments (surfaced
-      by the `release-central` Maven profile's javadoc generation). Worth
-      doing before wider external adoption.
+- [x] **Javadocs** — every public class, annotation, method, and field across
+      the library now has a doc comment. Verified with a clean
+      `mvn javadoc:javadoc` run (0 warnings) - the `release-central` Maven
+      profile's javadoc generation, whenever that's picked back up, won't
+      surface anything new.
 - [ ] **CONTRIBUTING.md + CHANGELOG.md** — light process maturity now that
       the project has real, automated releases going out.
 - [ ] **Maven Central publishing** — full setup (groupId change to

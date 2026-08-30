@@ -13,9 +13,20 @@ import com.shri.restinpeace.annotation.service.RestRequestProcessor;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
 
+/**
+ * JDK dynamic proxy handler backing every client returned by
+ * {@link com.shri.restinpeace.RIP#getClient(Class)}. Routes {@code Object}
+ * methods ({@code toString}/{@code equals}/{@code hashCode}) to
+ * proxy-aware implementations, and every other method call to
+ * {@link RestRequestProcessor} based on its HTTP method annotation.
+ */
 public class RestClientInvocationHandler implements InvocationHandler {
 
 	private RestRequestProcessor restRequestProcessor = new RestRequestProcessor();
+
+	/** Creates a handler backed by a fresh {@link RestRequestProcessor}. */
+	public RestClientInvocationHandler() {
+	}
 
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
