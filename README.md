@@ -18,6 +18,9 @@ methods like any other Java call.
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
+- `CompletableFuture<T>` return types fire requests asynchronously
+- Global interceptors for cross-cutting concerns (auth headers, logging)
+  without touching individual `@RestClient` interfaces
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -173,6 +176,121 @@ void fireEvent(@Body Event event);               // response body discarded
 `String` gives you the raw response body. `void` fires the request and
 discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies.
+
+## Async
+
+Return `CompletableFuture<T>` instead of `T` to fire the request without
+blocking the calling thread — `T` follows the same rules as a synchronous
+return type (`String` for the raw body, anything else deserialized from
+JSON):
+
+```java
+@GET("https://api.example.com/users/{id}")
+CompletableFuture<User> getUserAsync(@PathParam("id") String id);
+```
+
+```java
+CompletableFuture<User> future = userApi.getUserAsync("42");
+future.thenAccept(user -> System.out.println(user.name));
+```
+
+A raw `CompletableFuture` (no type parameter) fails validation — the
+library needs to know what to deserialize the response into.
+
+Making any async call starts Unirest's async HTTP client on non-daemon
+threads, so a short-lived program (a script, a CLI tool) won't exit on its
+own afterward. Two ways to deal with that:
+
+- Call `RIP.useDaemonThreadsForAsync()` once at startup, before making any
+  async call — daemon threads don't keep the JVM alive, so your program
+  exits normally once its own work is done. Not the default, since it
+  reconfigures Unirest's shared global client; skip this if your app
+  already configures Unirest's async client itself.
+- Or call `kong.unirest.Unirest.shutDown()` when you're done making
+  requests.
+
+## Interceptors
+
+Register a global hook that runs on every request/response made through
+RIP, without touching any `@RestClient` interface:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void beforeRequest(RequestContext context) {
+        context.addHeader("Authorization", "Bearer " + currentToken());
+    }
+
+    @Override
+    public void afterResponse(RequestContext context, int status, Object body) {
+        System.out.println(context.getHttpMethod() + " " + context.getUrl() + " -> " + status);
+    }
+});
+```
+
+Both methods are observers, not a retry pipeline: `beforeRequest` can add
+headers or abort the call by throwing, and `afterResponse` sees the status
+and response body (a `String`, a deserialized object, or `null` for `void`
+methods) once the response is back — but neither can cause a request to be
+re-sent, so this isn't a mechanism for retry policies. `RIP.clearInterceptors()`
+removes everything that's registered.
+
+When several interceptors are registered, they run "onion"-style: `beforeRequest`
+runs in registration order, but `afterResponse` runs in the *reverse* order —
+the first interceptor registered wraps every other one and is the last to see
+the response. Register an interceptor first if it needs to bracket everything
+else's work (e.g. a timer measuring total call overhead); register it last if
+it needs to sit closest to the actual network call (e.g. a timer measuring
+only network latency).
+
+### Pre-built interceptors
+
+A few ready-to-use interceptors cover the common cases so you don't have to
+write a `RequestInterceptor` from scratch:
+
+```java
+// Attach a header to every request - useful for auth tokens.
+RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + currentToken()));
+
+// Or pass a Supplier when the value can change between calls (e.g. a
+// token that gets refreshed) - it's re-evaluated on every request.
+RIP.addInterceptor(new HeaderInterceptor("Authorization", () -> currentToken()));
+
+// Need several headers? Register them all in one interceptor instead
+// of one HeaderInterceptor per header.
+Map<String, String> staticHeaders = new LinkedHashMap<>();
+staticHeaders.put("X-Api-Key", "abc123");
+staticHeaders.put("X-Client-Version", "1.2.3");
+RIP.addInterceptor(HeaderInterceptor.of(staticHeaders));
+
+// Or a Map<String, Supplier<String>> when some of those values can
+// change between calls.
+Map<String, Supplier<String>> headerSuppliers = new LinkedHashMap<>();
+headerSuppliers.put("Authorization", () -> "Bearer " + currentToken());
+headerSuppliers.put("X-Client-Version", () -> "1.2.3");
+RIP.addInterceptor(new HeaderInterceptor(headerSuppliers));
+
+// Log a line before each request goes out and another when its
+// response comes back, including elapsed time.
+RIP.addInterceptor(new LoggingInterceptor());
+
+// Or route log lines wherever you want instead of System.out.
+RIP.addInterceptor(new LoggingInterceptor(logger::info));
+
+// Attach a fresh correlation/request ID to every call - useful for
+// tracing across service boundaries. Defaults to a random UUID under
+// the X-Request-Id header.
+RIP.addInterceptor(new CorrelationIdInterceptor());
+
+// Or use a custom header name and/or ID generator.
+RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGenerator.next()));
+```
+
+`CorrelationIdInterceptor` also stashes the generated ID on the
+`RequestContext` under `CorrelationIdInterceptor.ID_ATTRIBUTE`, so another
+interceptor registered alongside it (e.g. your own logging or metrics
+interceptor) can read it back via `context.getAttribute(...)` to correlate
+its own output with the same call.
 
 ## Building from source
 

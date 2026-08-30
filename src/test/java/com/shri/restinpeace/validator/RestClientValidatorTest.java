@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
 import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -85,6 +88,25 @@ class RestClientValidatorTest {
 		String options(@PathParam("id") String id);
 	}
 
+	@RestClient
+	public interface ValidAsync {
+		@GET("http://example.com/{id}")
+		CompletableFuture<String> get(@PathParam("id") String id);
+	}
+
+	@RestClient
+	@SuppressWarnings("rawtypes")
+	public interface RawCompletableFuture {
+		@GET("http://example.com")
+		CompletableFuture foo();
+	}
+
+	@RestClient
+	public interface UnsupportedCompletableFutureTypeParam {
+		@GET("http://example.com")
+		CompletableFuture<List<String>> foo();
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -148,6 +170,25 @@ class RestClientValidatorTest {
 	@Test
 	void validate_validInterfaceCoveringAllVerbs_passes() {
 		assertDoesNotThrow(() -> RestClientValidator.validate(ValidAllVerbs.class));
+	}
+
+	@Test
+	void validate_validCompletableFuture_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidAsync.class));
+	}
+
+	@Test
+	void validate_rawCompletableFuture_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(RawCompletableFuture.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("raw CompletableFuture"));
+	}
+
+	@Test
+	void validate_unsupportedCompletableFutureTypeParam_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(UnsupportedCompletableFutureTypeParam.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
 	}
 
 }
