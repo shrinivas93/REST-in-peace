@@ -357,4 +357,14 @@ class RipIntegrationTest {
 		assertTrue(exception.getMessage().contains("failed during validation"));
 	}
 
+	@Test
+	void useDaemonThreadsForAsync_asyncCallsStillWork() throws InterruptedException, ExecutionException, TimeoutException {
+		RIP.useDaemonThreadsForAsync();
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		CompletableFuture<String> future = api.getAsync(port, "daemon");
+
+		assertEquals("ok", future.get(5, TimeUnit.SECONDS));
+	}
+
 }

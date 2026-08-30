@@ -196,8 +196,15 @@ library needs to know what to deserialize the response into.
 
 Making any async call starts Unirest's async HTTP client on non-daemon
 threads, so a short-lived program (a script, a CLI tool) won't exit on its
-own afterward — call `kong.unirest.Unirest.shutDown()` when you're done
-making requests.
+own afterward. Two ways to deal with that:
+
+- Call `RIP.useDaemonThreadsForAsync()` once at startup, before making any
+  async call — daemon threads don't keep the JVM alive, so your program
+  exits normally once its own work is done. Not the default, since it
+  reconfigures Unirest's shared global client; skip this if your app
+  already configures Unirest's async client itself.
+- Or call `kong.unirest.Unirest.shutDown()` when you're done making
+  requests.
 
 ## Building from source
 
