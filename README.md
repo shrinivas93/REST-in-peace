@@ -174,6 +174,31 @@ void fireEvent(@Body Event event);               // response body discarded
 discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies.
 
+## Async
+
+Return `CompletableFuture<T>` instead of `T` to fire the request without
+blocking the calling thread — `T` follows the same rules as a synchronous
+return type (`String` for the raw body, anything else deserialized from
+JSON):
+
+```java
+@GET("https://api.example.com/users/{id}")
+CompletableFuture<User> getUserAsync(@PathParam("id") String id);
+```
+
+```java
+CompletableFuture<User> future = userApi.getUserAsync("42");
+future.thenAccept(user -> System.out.println(user.name));
+```
+
+A raw `CompletableFuture` (no type parameter) fails validation — the
+library needs to know what to deserialize the response into.
+
+Making any async call starts Unirest's async HTTP client on non-daemon
+threads, so a short-lived program (a script, a CLI tool) won't exit on its
+own afterward — call `kong.unirest.Unirest.shutDown()` when you're done
+making requests.
+
 ## Building from source
 
 ```bash

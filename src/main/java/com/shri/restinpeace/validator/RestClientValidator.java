@@ -2,6 +2,8 @@ package com.shri.restinpeace.validator;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.EnumSet;
@@ -9,6 +11,7 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -95,8 +98,28 @@ public class RestClientValidator {
 			String url = getUrlValue(httpMethodAnnotation, httpMethod);
 			validateUrl(method, url, validationResult);
 			validateBody(method, httpMethod, validationResult);
+			validateReturnType(method, validationResult);
 		}
 
+	}
+
+	private static void validateReturnType(Method method, ValidationResult validationResult) {
+		if (method.getReturnType() != CompletableFuture.class) {
+			return;
+		}
+		Type genericReturnType = method.getGenericReturnType();
+		if (!(genericReturnType instanceof ParameterizedType)) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns a raw CompletableFuture with no type parameter.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		if (!(innerType instanceof Class)) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns CompletableFuture<%s>, which is not a supported type parameter.",
+					method.getDeclaringClass().getName(), method.getName(), innerType));
+		}
 	}
 
 	private static void validateBody(Method method, HTTPMethod httpMethod, ValidationResult validationResult) {

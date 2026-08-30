@@ -2,6 +2,9 @@ package com.shri.restinpeace.annotation.service;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.concurrent.CompletableFuture;
 
 import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
@@ -20,6 +23,7 @@ import com.shri.restinpeace.exception.RestInPeaceException;
 
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
+import kong.unirest.HttpResponse;
 import kong.unirest.Unirest;
 
 public class RestRequestProcessor {
@@ -31,6 +35,9 @@ public class RestRequestProcessor {
 		request = applyParams(request, method, args);
 
 		Class<?> returnType = method.getReturnType();
+		if (returnType == CompletableFuture.class) {
+			return processAsync(request, method);
+		}
 		if (returnType == String.class) {
 			return request.asString().getBody();
 		}
@@ -39,6 +46,32 @@ public class RestRequestProcessor {
 			return null;
 		}
 		return request.asObject(returnType).getBody();
+	}
+
+	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method) {
+		Class<?> innerType = resolveFutureInnerType(method);
+		if (innerType == String.class) {
+			return request.asStringAsync().thenApply(HttpResponse::getBody);
+		}
+		if (innerType == Void.class) {
+			return request.asStringAsync().thenApply(response -> null);
+		}
+		return request.asObjectAsync(innerType).thenApply(HttpResponse::getBody);
+	}
+
+	private Class<?> resolveFutureInnerType(Method method) {
+		Type genericReturnType = method.getGenericReturnType();
+		if (!(genericReturnType instanceof ParameterizedType)) {
+			throw new RestInPeaceException(
+					String.format("The method %s returns a raw CompletableFuture with no type parameter.", method));
+		}
+		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		if (!(innerType instanceof Class)) {
+			throw new RestInPeaceException(String.format(
+					"The method %s returns CompletableFuture<%s>, which is not a supported type parameter.", method,
+					innerType));
+		}
+		return (Class<?>) innerType;
 	}
 
 	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {
