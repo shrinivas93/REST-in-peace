@@ -67,3 +67,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
         run: gh workflow run maven-publish.yml --ref "$RELEASE_TAG"
+
+      # Dispatched against the release tag (not master) so the hosted docs
+      # always reflect the version actually released, not the "prepare for
+      # next development iteration" -SNAPSHOT bump that follows it on master.
+      - name: Trigger javadoc workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
+        run: gh workflow run javadoc.yml --ref "$RELEASE_TAG"

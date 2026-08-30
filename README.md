@@ -57,8 +57,8 @@ for configuring credentials in your `settings.xml`.
 
 Full API documentation is browsable at
 [shrinivas93.github.io/REST-in-peace](https://shrinivas93.github.io/REST-in-peace/),
-rebuilt from `master` on every merge. Each published version also ships a
-`-javadoc.jar` alongside the main jar in GitHub Packages.
+rebuilt from the exact commit of each release. Each published version also
+ships a `-javadoc.jar` alongside the main jar in GitHub Packages.
 
 ## Quick start
 
