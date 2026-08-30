@@ -235,6 +235,27 @@ methods) once the response is back — but neither can cause a request to be
 re-sent, so this isn't a mechanism for retry policies. `RIP.clearInterceptors()`
 removes everything that's registered.
 
+### Pre-built interceptors
+
+Two ready-to-use interceptors cover the common cases so you don't have to
+write a `RequestInterceptor` from scratch:
+
+```java
+// Attach a header to every request - useful for auth tokens.
+RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + currentToken()));
+
+// Or pass a Supplier when the value can change between calls (e.g. a
+// token that gets refreshed) - it's re-evaluated on every request.
+RIP.addInterceptor(new HeaderInterceptor("Authorization", () -> currentToken()));
+
+// Log a line before each request goes out and another when its
+// response comes back, including elapsed time.
+RIP.addInterceptor(new LoggingInterceptor());
+
+// Or route log lines wherever you want instead of System.out.
+RIP.addInterceptor(new LoggingInterceptor(logger::info));
+```
+
 ## Building from source
 
 ```bash
