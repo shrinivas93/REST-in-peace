@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -38,6 +39,8 @@ import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.interceptor.HeaderInterceptor;
+import com.shri.restinpeace.interceptor.LoggingInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 
@@ -450,6 +453,45 @@ class RipIntegrationTest {
 
 		assertThrows(IllegalStateException.class, () -> api.get(port, "abc", 7, "custom-value"));
 		assertNull(LAST_REQUEST.get());
+	}
+
+	@Test
+	void headerInterceptor_withStaticValue_addsHeaderToEveryRequest() {
+		RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer static-token"));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals("Bearer static-token", LAST_REQUEST.get().header("Authorization"));
+	}
+
+	@Test
+	void headerInterceptor_withSupplier_reevaluatesValuePerCall() {
+		AtomicReference<String> token = new AtomicReference<>("token-1");
+		RIP.addInterceptor(new HeaderInterceptor("Authorization", token::get));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+		assertEquals("token-1", LAST_REQUEST.get().header("Authorization"));
+
+		token.set("token-2");
+		api.get(port, "abc", 7, "custom-value");
+		assertEquals("token-2", LAST_REQUEST.get().header("Authorization"));
+	}
+
+	@Test
+	void loggingInterceptor_logsRequestAndResponseLinesWithDuration() {
+		List<String> lines = new ArrayList<>();
+		RIP.addInterceptor(new LoggingInterceptor(lines::add));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals(2, lines.size());
+		assertTrue(lines.get(0).startsWith("--> GET "));
+		assertTrue(lines.get(1).startsWith("<-- GET "));
+		assertTrue(lines.get(1).contains(" 200 "));
+		assertTrue(lines.get(1).endsWith("ms)"));
 	}
 
 }
