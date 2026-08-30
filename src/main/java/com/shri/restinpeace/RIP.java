@@ -7,8 +7,10 @@ import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
+import com.shri.restinpeace.annotation.service.RestRequestProcessor;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
+import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.proxy.RestClientInvocationHandler;
 import com.shri.restinpeace.validator.RestClientValidator;
 
@@ -56,6 +58,21 @@ public class RIP {
 		}).build();
 		client.start();
 		Unirest.config().asyncClient(client);
+	}
+
+	/**
+	 * Registers a global hook into every request/response made through RIP -
+	 * see {@link RequestInterceptor} for what it can and can't do.
+	 */
+	public static void addInterceptor(RequestInterceptor interceptor) {
+		RestRequestProcessor.addInterceptor(interceptor);
+	}
+
+	/**
+	 * Removes all registered interceptors. Mainly useful for tests.
+	 */
+	public static void clearInterceptors() {
+		RestRequestProcessor.clearInterceptors();
 	}
 
 }

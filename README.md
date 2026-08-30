@@ -18,6 +18,9 @@ methods like any other Java call.
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
+- `CompletableFuture<T>` return types fire requests asynchronously
+- Global interceptors for cross-cutting concerns (auth headers, logging)
+  without touching individual `@RestClient` interfaces
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -205,6 +208,32 @@ own afterward. Two ways to deal with that:
   already configures Unirest's async client itself.
 - Or call `kong.unirest.Unirest.shutDown()` when you're done making
   requests.
+
+## Interceptors
+
+Register a global hook that runs on every request/response made through
+RIP, without touching any `@RestClient` interface:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void beforeRequest(RequestContext context) {
+        context.addHeader("Authorization", "Bearer " + currentToken());
+    }
+
+    @Override
+    public void afterResponse(RequestContext context, int status, Object body) {
+        System.out.println(context.getHttpMethod() + " " + context.getUrl() + " -> " + status);
+    }
+});
+```
+
+Both methods are observers, not a retry pipeline: `beforeRequest` can add
+headers or abort the call by throwing, and `afterResponse` sees the status
+and response body (a `String`, a deserialized object, or `null` for `void`
+methods) once the response is back — but neither can cause a request to be
+re-sent, so this isn't a mechanism for retry policies. `RIP.clearInterceptors()`
+removes everything that's registered.
 
 ## Building from source
 
