@@ -237,7 +237,7 @@ removes everything that's registered.
 
 ### Pre-built interceptors
 
-Two ready-to-use interceptors cover the common cases so you don't have to
+A few ready-to-use interceptors cover the common cases so you don't have to
 write a `RequestInterceptor` from scratch:
 
 ```java
@@ -266,7 +266,21 @@ RIP.addInterceptor(new LoggingInterceptor());
 
 // Or route log lines wherever you want instead of System.out.
 RIP.addInterceptor(new LoggingInterceptor(logger::info));
+
+// Attach a fresh correlation/request ID to every call - useful for
+// tracing across service boundaries. Defaults to a random UUID under
+// the X-Request-Id header.
+RIP.addInterceptor(new CorrelationIdInterceptor());
+
+// Or use a custom header name and/or ID generator.
+RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGenerator.next()));
 ```
+
+`CorrelationIdInterceptor` also stashes the generated ID on the
+`RequestContext` under `CorrelationIdInterceptor.ID_ATTRIBUTE`, so another
+interceptor registered alongside it (e.g. your own logging or metrics
+interceptor) can read it back via `context.getAttribute(...)` to correlate
+its own output with the same call.
 
 ## Building from source
 

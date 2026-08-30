@@ -41,6 +41,7 @@ import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.interceptor.CorrelationIdInterceptor;
 import com.shri.restinpeace.interceptor.HeaderInterceptor;
 import com.shri.restinpeace.interceptor.LoggingInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
@@ -529,6 +530,66 @@ class RipIntegrationTest {
 		assertTrue(lines.get(1).startsWith("<-- GET "));
 		assertTrue(lines.get(1).contains(" 200 "));
 		assertTrue(lines.get(1).endsWith("ms)"));
+	}
+
+	@Test
+	void correlationIdInterceptor_default_addsUniqueIdPerRequestUnderDefaultHeader() {
+		RIP.addInterceptor(new CorrelationIdInterceptor());
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+		String firstId = LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME);
+
+		api.get(port, "abc", 7, "custom-value");
+		String secondId = LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME);
+
+		assertTrue(firstId != null && !firstId.isEmpty());
+		assertTrue(secondId != null && !secondId.isEmpty());
+		assertFalse(firstId.equals(secondId));
+	}
+
+	@Test
+	void correlationIdInterceptor_customHeaderName_usesConfiguredHeader() {
+		RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id"));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertNull(LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME));
+		String traceId = LAST_REQUEST.get().header("X-Trace-Id");
+		assertTrue(traceId != null && !traceId.isEmpty());
+	}
+
+	@Test
+	void correlationIdInterceptor_customGenerator_usesProvidedIds() {
+		AtomicReference<Integer> counter = new AtomicReference<>(0);
+		RIP.addInterceptor(new CorrelationIdInterceptor(CorrelationIdInterceptor.DEFAULT_HEADER_NAME,
+				() -> "id-" + counter.updateAndGet(n -> n + 1)));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+		assertEquals("id-1", LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME));
+
+		api.get(port, "abc", 7, "custom-value");
+		assertEquals("id-2", LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME));
+	}
+
+	@Test
+	void correlationIdInterceptor_storesIdOnContext_forOtherInterceptorsToRead() {
+		AtomicReference<Object> idSeenByOtherInterceptor = new AtomicReference<>();
+		RIP.addInterceptor(new CorrelationIdInterceptor());
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				idSeenByOtherInterceptor.set(context.getAttribute(CorrelationIdInterceptor.ID_ATTRIBUTE));
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		String headerId = LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME);
+		assertEquals(headerId, idSeenByOtherInterceptor.get());
 	}
 
 }
