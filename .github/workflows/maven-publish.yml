@@ -6,6 +6,11 @@ name: Maven Package
 on:
   release:
     types: [created]
+  # release.yml creates the GitHub release with the default GITHUB_TOKEN,
+  # which doesn't fire `on: release` here (GitHub's anti-recursion rule), so
+  # it dispatches this workflow explicitly instead - workflow_dispatch is
+  # exempt from that restriction.
+  workflow_dispatch:
 
 jobs:
   build:

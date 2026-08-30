@@ -57,3 +57,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
         run: gh release create "$RELEASE_TAG" --generate-notes --title "$RELEASE_TAG"
+
+      # A release created via the default GITHUB_TOKEN does not fire other
+      # workflows' `on: release` triggers (GitHub's anti-recursion rule), so
+      # maven-publish.yml would never run on its own - dispatch it explicitly.
+      - name: Trigger publish workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
+        run: gh workflow run maven-publish.yml --ref "$RELEASE_TAG"
