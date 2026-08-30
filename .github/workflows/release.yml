@@ -68,11 +68,14 @@ jobs:
           RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
         run: gh workflow run maven-publish.yml --ref "$RELEASE_TAG"
 
-      # Dispatched against the release tag (not master) so the hosted docs
-      # always reflect the version actually released, not the "prepare for
-      # next development iteration" -SNAPSHOT bump that follows it on master.
+      # Dispatched against master (not the release tag) because the
+      # github-pages deployment environment's branch/tag protection rule
+      # only allows master, not tags - the release tag is instead passed as
+      # the "ref" input so the job checks out and builds the exact released
+      # commit, not master's post-release "prepare for next development
+      # iteration" -SNAPSHOT bump.
       - name: Trigger javadoc workflow
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
-        run: gh workflow run javadoc.yml --ref "$RELEASE_TAG"
+        run: gh workflow run javadoc.yml --ref master -f ref="$RELEASE_TAG"
