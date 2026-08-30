@@ -25,3 +25,14 @@ for reference rather than tracked in code. Check items off as they land.
       Central Portal account, GPG key, publishing token). Preserved on the
       `feature/maven-central-publishing` branch (was PR #9, closed
       without merging) — pick it back up when ready.
+- [ ] **Refactor to idiomatic Java 8** — most of the codebase predates this
+      roadmap's own Java 8 usage (lambdas showed up with interceptors and
+      `Supplier`-based headers, but plenty of earlier code still uses
+      pre-8 patterns). Sweep it for places lambdas, method references,
+      functional interfaces, and streams would replace imperative loops or
+      anonymous classes — e.g. the `for` loops in `RestRequestProcessor`
+      and `RestClientValidator`. Must stay within the actual Java 8 API
+      surface, not just source/target 8 — verify locally with
+      `mvn -Dmaven.compiler.release=8 clean test`, since a newer local JDK's
+      compiler silently allows post-8 APIs (like `List.of`) that fail CI's
+      real Java 8 build.
