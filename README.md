@@ -235,6 +235,14 @@ methods) once the response is back — but neither can cause a request to be
 re-sent, so this isn't a mechanism for retry policies. `RIP.clearInterceptors()`
 removes everything that's registered.
 
+When several interceptors are registered, they run "onion"-style: `beforeRequest`
+runs in registration order, but `afterResponse` runs in the *reverse* order —
+the first interceptor registered wraps every other one and is the last to see
+the response. Register an interceptor first if it needs to bracket everything
+else's work (e.g. a timer measuring total call overhead); register it last if
+it needs to sit closest to the actual network call (e.g. a timer measuring
+only network latency).
+
 ### Pre-built interceptors
 
 A few ready-to-use interceptors cover the common cases so you don't have to

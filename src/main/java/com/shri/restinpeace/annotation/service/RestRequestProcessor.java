@@ -5,6 +5,7 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -86,8 +87,11 @@ public class RestRequestProcessor {
 		if (INTERCEPTORS.isEmpty()) {
 			return;
 		}
-		for (RequestInterceptor interceptor : INTERCEPTORS) {
-			interceptor.afterResponse(context, response.getStatus(), response.getBody());
+		// LIFO, mirroring beforeRequest: the first interceptor registered wraps every
+		// other one and is notified last, symmetric with it running beforeRequest first.
+		ListIterator<RequestInterceptor> iterator = INTERCEPTORS.listIterator(INTERCEPTORS.size());
+		while (iterator.hasPrevious()) {
+			iterator.previous().afterResponse(context, response.getStatus(), response.getBody());
 		}
 	}
 
