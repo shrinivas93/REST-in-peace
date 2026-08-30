@@ -120,7 +120,7 @@ public class RestRequestProcessor {
 		if (value instanceof String) {
 			return bodyRequest.body((String) value);
 		}
-		return bodyRequest.body(value);
+		return bodyRequest.body(value).contentType("application/json");
 	}
 
 	private String resolvePathParams(String urlTemplate, Method method, Object[] args) {

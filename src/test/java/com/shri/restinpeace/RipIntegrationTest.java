@@ -1,6 +1,7 @@
 package com.shri.restinpeace;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -185,6 +186,7 @@ class RipIntegrationTest {
 		assertEquals("POST", request.method);
 		assertEquals("/items/xyz", request.path);
 		assertEquals("raw-body-content", request.body);
+		assertFalse(request.header("Content-Type").startsWith("application/json"));
 	}
 
 	@Test
@@ -198,6 +200,7 @@ class RipIntegrationTest {
 		assertEquals("PUT", request.method);
 		assertTrue(request.body.contains("\"name\":\"Shrinivas\""));
 		assertTrue(request.body.contains("\"age\":1993"));
+		assertTrue(request.header("Content-Type").startsWith("application/json"));
 	}
 
 	@Test
