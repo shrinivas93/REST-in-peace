@@ -30,14 +30,12 @@ for reference rather than tracked in code. Check items off as they land.
       Central Portal account, GPG key, publishing token). Preserved on the
       `feature/maven-central-publishing` branch (was PR #9, closed
       without merging) — pick it back up when ready.
-- [ ] **Refactor to idiomatic Java 8** — most of the codebase predates this
-      roadmap's own Java 8 usage (lambdas showed up with interceptors and
-      `Supplier`-based headers, but plenty of earlier code still uses
-      pre-8 patterns). Sweep it for places lambdas, method references,
-      functional interfaces, and streams would replace imperative loops or
-      anonymous classes — e.g. the `for` loops in `RestRequestProcessor`
-      and `RestClientValidator`. Must stay within the actual Java 8 API
-      surface, not just source/target 8 — verify locally with
-      `mvn -Dmaven.compiler.release=8 clean test`, since a newer local JDK's
-      compiler silently allows post-8 APIs (like `List.of`) that fail CI's
-      real Java 8 build.
+- [x] **Refactor to idiomatic Java 8** — swept `RestRequestProcessor`,
+      `RestClientValidator`, and `RestClientInvocationHandler` for imperative
+      loops and manual `Optional` isPresent/get patterns, replacing them with
+      `forEach`, method references, streams, and `orElseThrow`/`ifPresent`.
+      Left the parallel-array parameter loops and the `Matcher`-based path
+      param loop as-is (no genuine Java 8 improvement without a side-effecting
+      stream or a Java 9+ API). Verified with
+      `mvn -Dmaven.compiler.release=8 clean test` and a live run against
+      httpbin.org (PR #34).
