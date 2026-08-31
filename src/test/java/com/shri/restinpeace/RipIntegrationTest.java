@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -41,6 +42,7 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.interceptor.CorrelationIdInterceptor;
 import com.shri.restinpeace.interceptor.HeaderInterceptor;
@@ -124,6 +126,25 @@ class RipIntegrationTest {
 
 		@GET("http://localhost:{port}/payload/{id}")
 		CompletableFuture<Payload> getPayloadAsync(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/flaky/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
+		String getFlaky(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/flaky/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
+		CompletableFuture<String> getFlakyAsync(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/always-503/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
+		String getAlwaysFailingWithRetry(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/always-503/{id}")
+		String getAlwaysFailingWithoutRetry(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:1/unreachable")
+		@Retry(times = 3, delayMillis = 5)
+		String getUnreachableWithRetry();
 	}
 
 	@RestClient
@@ -145,6 +166,8 @@ class RipIntegrationTest {
 	private static HttpServer server;
 	private static int port;
 	private static final AtomicReference<CapturedRequest> LAST_REQUEST = new AtomicReference<>();
+	private static final AtomicInteger FLAKY_ATTEMPTS = new AtomicInteger();
+	private static final AtomicInteger ALWAYS_FAILING_ATTEMPTS = new AtomicInteger();
 
 	@BeforeAll
 	static void startServer() throws IOException {
@@ -163,6 +186,8 @@ class RipIntegrationTest {
 	@BeforeEach
 	void resetCapturedRequest() {
 		LAST_REQUEST.set(null);
+		FLAKY_ATTEMPTS.set(0);
+		ALWAYS_FAILING_ATTEMPTS.set(0);
 		RIP.clearInterceptors();
 	}
 
@@ -179,6 +204,19 @@ class RipIntegrationTest {
 			exchange.sendResponseHeaders(200, response.length);
 			try (OutputStream os = exchange.getResponseBody()) {
 				os.write(response);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/flaky/")) {
+			boolean stillFailing = FLAKY_ATTEMPTS.getAndIncrement() < 2;
+			byte[] response = (stillFailing ? "" : "ok").getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(stillFailing ? 503 : 200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/always-503/")) {
+			ALWAYS_FAILING_ATTEMPTS.incrementAndGet();
+			exchange.sendResponseHeaders(503, 0);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(new byte[0]);
 			}
 		} else {
 			byte[] response = "ok".getBytes(StandardCharsets.UTF_8);
@@ -621,6 +659,67 @@ class RipIntegrationTest {
 
 		String headerId = LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME);
 		assertEquals(headerId, idSeenByOtherInterceptor.get());
+	}
+
+	@Test
+	void retry_withTransientFailure_succeedsAfterRetrying() {
+		List<Integer> statuses = new ArrayList<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				statuses.add(status);
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getFlaky(port, "x");
+
+		assertEquals("ok", result);
+		assertEquals(Arrays.asList(503, 503, 200), statuses);
+	}
+
+	@Test
+	void retry_withPermanentFailure_stopsAfterConfiguredAttemptsAndReturnsLastResponse() {
+		List<Integer> statuses = new ArrayList<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				statuses.add(status);
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getAlwaysFailingWithRetry(port, "x");
+
+		assertEquals(Arrays.asList(503, 503, 503), statuses);
+		assertEquals(3, ALWAYS_FAILING_ATTEMPTS.get());
+	}
+
+	@Test
+	void withoutRetryAnnotation_doesNotRetryOnFailure() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getAlwaysFailingWithoutRetry(port, "x");
+
+		assertEquals(1, ALWAYS_FAILING_ATTEMPTS.get());
+	}
+
+	@Test
+	void retry_onTransportFailure_retriesAndEventuallyThrows() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		assertThrows(RuntimeException.class, api::getUnreachableWithRetry);
+	}
+
+	@Test
+	void retry_withCompletableFuture_succeedsAfterRetryingWithoutBlocking()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		CompletableFuture<String> future = api.getFlakyAsync(port, "y");
+
+		assertEquals("ok", future.get(5, TimeUnit.SECONDS));
+		assertEquals(3, FLAKY_ATTEMPTS.get());
 	}
 
 }

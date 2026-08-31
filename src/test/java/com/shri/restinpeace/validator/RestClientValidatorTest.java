@@ -19,6 +19,7 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 
 class RestClientValidatorTest {
@@ -107,6 +108,20 @@ class RestClientValidatorTest {
 		CompletableFuture<List<String>> foo();
 	}
 
+	@RestClient
+	public interface ValidRetry {
+		@GET("http://example.com")
+		@Retry(times = 3)
+		String foo();
+	}
+
+	@RestClient
+	public interface InvalidRetryTimes {
+		@GET("http://example.com")
+		@Retry(times = 0)
+		String foo();
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -189,6 +204,18 @@ class RestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(UnsupportedCompletableFutureTypeParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
+	}
+
+	@Test
+	void validate_validRetry_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidRetry.class));
+	}
+
+	@Test
+	void validate_retryWithNonPositiveTimes_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(InvalidRetryTimes.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("times must be at least 1"));
 	}
 
 }
