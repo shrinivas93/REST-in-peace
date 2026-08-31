@@ -10,7 +10,9 @@ methods like any other Java call.
 ## Features
 
 - Declarative REST clients defined as annotated Java interfaces
-- `@BaseUrl` declares a base URL once instead of repeating it on every method
+- `@BaseUrl` declares a base URL once instead of repeating it on every
+  method, or pass one to `RIP.getClient(...)` when it's only known at
+  runtime (e.g. one per deployment environment)
 - All seven common HTTP verbs: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
@@ -19,6 +21,8 @@ methods like any other Java call.
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
+- A non-2xx response always throws `RestInPeaceHttpException`, with
+  `@ErrorType` to deserialize the error body into a class
 - `CompletableFuture<T>` return types fire requests asynchronously
 - `@Retry` re-issues a failed request with configurable backoff, for both
   synchronous and async methods
@@ -124,6 +128,23 @@ own full URL. A relative method URL on an interface with no `@BaseUrl` fails
 validation. `@BaseUrl` can itself contain a `{placeholder}`, resolved by a
 `@PathParam` the same as any method URL.
 
+#### Choosing the base URL per environment
+
+`@BaseUrl`'s value has to be a compile-time constant, so it can't itself
+hold something environment-dependent. For an app that deploys the same
+`@RestClient` interface against a different base URL per environment (dev,
+staging, prod), pass the resolved URL to `RIP.getClient(...)` instead:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, System.getenv("USER_API_BASE_URL"));
+```
+
+This takes priority over `@BaseUrl` on the interface, so `@BaseUrl` is
+optional when every relative method URL is covered by the runtime value.
+Precedence, most specific first: an absolute method URL always wins, then
+the `baseUrl` passed to `getClient(...)`, then `@BaseUrl` on the interface —
+a relative method URL covered by none of these fails validation.
+
 ### HTTP method annotations
 
 One of `@GET`, `@POST`, `@PUT`, `@PATCH`, `@DELETE`, `@HEAD`, `@OPTIONS` on
@@ -203,7 +224,48 @@ void fireEvent(@Body Event event);               // response body discarded
 
 `String` gives you the raw response body. `void` fires the request and
 discards the response. Anything else is deserialized from the response body
-as JSON, the same way `@Body` serializes non-`String` request bodies.
+as JSON, the same way `@Body` serializes non-`String` request bodies. These
+rules apply to a successful (2xx) response — see below for anything else.
+
+## Error handling
+
+A response outside the 200–299 range always throws
+`RestInPeaceHttpException`, whatever the method's return type — including
+`void`:
+
+```java
+try {
+    User user = userApi.getUser("42");
+} catch (RestInPeaceHttpException e) {
+    System.out.println(e.getStatus());     // e.g. 404
+    System.out.println(e.getRawBody());    // the raw response body, always available
+}
+```
+
+By default `getErrorBody()` just returns the same raw body as `getRawBody()`.
+Annotate the method with `@ErrorType` to have the error body deserialized
+into a class instead, the same way a successful response is deserialized
+into the return type:
+
+```java
+@GET("/users/{id}")
+@ErrorType(ApiError.class)
+User getUser(@PathParam("id") String id);
+```
+
+```java
+catch (RestInPeaceHttpException e) {
+    ApiError error = e.getErrorBody();
+    System.out.println(error.code);
+}
+```
+
+`getErrorBody()` is an unchecked generic getter — it trusts the caller to
+ask for the same type the method's `@ErrorType` declared (or `String` if it
+has none). A transport failure (no response at all - a connection refused,
+a timeout) throws the underlying transport exception directly, not
+`RestInPeaceHttpException`, which specifically means "the server answered,
+and the answer was an error."
 
 ## Async
 
@@ -287,8 +349,12 @@ Both methods are observers: `beforeRequest` can add headers or abort the
 call by throwing, and `afterResponse` sees the status and response body (a
 `String`, a deserialized object, or `null` for `void` methods) once the
 response is back — but neither can cause a request to be re-sent on its
-own; see [`@Retry`](#retries) above for that. `RIP.clearInterceptors()`
-removes everything that's registered.
+own; see [`@Retry`](#retries) above for that. On an error response,
+`afterResponse` still runs and sees the same body a catch block would get
+from [`RestInPeaceHttpException.getErrorBody()`](#error-handling) - the raw
+body, or the `@ErrorType`-deserialized one if the method declares it - the
+call to `afterResponse` happens before the exception is thrown.
+`RIP.clearInterceptors()` removes everything that's registered.
 
 When several interceptors are registered, they run "onion"-style: `beforeRequest`
 runs in registration order, but `afterResponse` runs in the *reverse* order —

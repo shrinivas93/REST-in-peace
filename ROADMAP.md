@@ -52,9 +52,26 @@ for reference rather than tracked in code. Check items off as they land.
       relative method URL with no `@BaseUrl` on the interface fails
       validation. `@BaseUrl` can itself hold a `{placeholder}`, resolved the
       same as any method URL.
-- [ ] **Typed error handling** — map a non-2xx response to a typed exception
-      carrying the deserialized error body, instead of flowing through as a
-      normal return value.
+- [x] **Runtime base URL for multi-environment deployments** —
+      `RIP.getClient(Class, String)` resolves relative method URLs against a
+      base URL supplied at call time instead of `@BaseUrl` on the interface,
+      since an annotation value has to be a compile-time constant and can't
+      itself hold something environment-dependent (an env var, a config
+      value). Takes priority over `@BaseUrl` when both are present, so
+      `@BaseUrl` is optional once every relative URL is covered by the
+      runtime value. Precedence: absolute method URL, then this override,
+      then `@BaseUrl`.
+- [x] **Typed error handling** — a non-2xx response always throws
+      `RestInPeaceHttpException` (status + raw body), whatever the method's
+      return type, instead of flowing through as a normal return value like
+      before. `@ErrorType(SomeClass.class)` deserializes the error body into
+      that class instead of leaving it as the raw string; a transport
+      failure (no response at all) still throws directly, not this
+      exception. Required unifying `RestRequestProcessor`'s retry executors
+      around `HttpResponse<String>` instead of being generic over the
+      success return type, since deciding success-vs-error now has to
+      happen after fetching the raw body, not by asking Unirest to
+      deserialize into the success shape unconditionally.
 - [ ] **`@QueryMap`/`@HeaderMap` and multipart/file upload** — `@Body`
       currently only covers a raw string or a whole JSON-serialized object;
       no support for a dynamic set of query params/headers or form/file

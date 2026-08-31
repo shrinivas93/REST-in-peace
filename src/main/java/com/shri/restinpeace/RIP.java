@@ -1,6 +1,5 @@
 package com.shri.restinpeace;
 
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 
 import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
@@ -23,8 +22,6 @@ import kong.unirest.Unirest;
  */
 public class RIP {
 
-	private static final InvocationHandler REST_CLIENT_INVOCATION_HANDLER = new RestClientInvocationHandler();
-
 	private RIP() {
 		// private constructor to hide the implicit public one
 	}
@@ -40,11 +37,35 @@ public class RIP {
 	 * @throws RestInPeaceException if the interface is missing
 	 *                              {@code @RestClient} or fails validation
 	 */
-	@SuppressWarnings("unchecked")
 	public static <T> T getClient(Class<T> restClient) {
+		return getClient(restClient, null);
+	}
+
+	/**
+	 * Same as {@link #getClient(Class)}, but every relative method URL is
+	 * resolved against {@code baseUrl} instead of the interface's
+	 * {@code @BaseUrl} - for a base URL that's only known at runtime (e.g.
+	 * an app that deploys the same {@code @RestClient} interface against a
+	 * different environment per deployment, read from an env var or config
+	 * file). An absolute method URL still ignores this, same as it ignores
+	 * {@code @BaseUrl}; {@code @BaseUrl} on the interface is itself optional
+	 * when every relative method URL is covered by {@code baseUrl} here.
+	 *
+	 * @param <T>        the rest client interface type
+	 * @param restClient an interface annotated with
+	 *                    {@link com.shri.restinpeace.annotation.marker.RestClient @RestClient}
+	 * @param baseUrl    the runtime base URL to resolve relative method URLs
+	 *                    against, or {@code null} to require {@code @BaseUrl}
+	 *                    on the interface instead
+	 * @return a proxy instance implementing {@code restClient}
+	 * @throws RestInPeaceException if the interface is missing
+	 *                              {@code @RestClient} or fails validation
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T> T getClient(Class<T> restClient, String baseUrl) {
 
 		try {
-			RestClientValidator.validate(restClient);
+			RestClientValidator.validate(restClient, baseUrl);
 		} catch (RestInPeaceValidationException e) {
 			throw new RestInPeaceException(String.format("The rest client %s failed during validation with %s errors.",
 					restClient.getName(), e.getValidationResult().getErrors().size()), e);
@@ -55,7 +76,7 @@ public class RIP {
 					restClient.getName(), RestClient.class.getName()));
 		}
 		return (T) Proxy.newProxyInstance(restClient.getClassLoader(), new Class[] { restClient },
-				REST_CLIENT_INVOCATION_HANDLER);
+				new RestClientInvocationHandler(baseUrl));
 	}
 
 	/**

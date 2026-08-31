@@ -63,6 +63,25 @@ public class RestClientValidator {
 	 * @throws RestInPeaceValidationException if any validation error is found
 	 */
 	public static <T> void validate(Class<T> restClient) throws RestInPeaceValidationException {
+		validate(restClient, null);
+	}
+
+	/**
+	 * Same as {@link #validate(Class)}, but a relative method URL is
+	 * validated against {@code baseUrlOverride} instead of requiring
+	 * {@code @BaseUrl} on the interface - for
+	 * {@link com.shri.restinpeace.RIP#getClient(Class, String)}, where the
+	 * base URL is supplied at runtime instead of declared on the interface.
+	 *
+	 * @param <T>             the rest client interface type
+	 * @param restClient      the interface to validate
+	 * @param baseUrlOverride the runtime base URL a relative method URL is
+	 *                        validated against, or {@code null} to require
+	 *                        {@code @BaseUrl} on the interface instead
+	 * @throws RestInPeaceValidationException if any validation error is found
+	 */
+	public static <T> void validate(Class<T> restClient, String baseUrlOverride)
+			throws RestInPeaceValidationException {
 
 		ValidationResult validationResult = new ValidationResult();
 
@@ -94,7 +113,7 @@ public class RestClientValidator {
 						restClient.getName(), method.getName()));
 			}
 			if (httpMethodAnnotationCount == 1) {
-				validateRestClientMethod(method, validationResult);
+				validateRestClientMethod(method, baseUrlOverride, validationResult);
 			}
 		});
 
@@ -104,14 +123,15 @@ public class RestClientValidator {
 
 	}
 
-	private static void validateRestClientMethod(Method method, ValidationResult validationResult) {
+	private static void validateRestClientMethod(Method method, String baseUrlOverride,
+			ValidationResult validationResult) {
 		Stream.of(method.getAnnotations())
 				.filter(annotation -> annotation.annotationType().getAnnotation(HTTPMethodMarker.class) != null)
 				.findFirst().ifPresent(httpMethodAnnotation -> {
 					HTTPMethod httpMethod = httpMethodAnnotation.annotationType().getAnnotation(HTTPMethodMarker.class)
 							.value();
 					String url = getUrlValue(httpMethodAnnotation, httpMethod);
-					validateUrl(method, url, validationResult);
+					validateUrl(method, url, baseUrlOverride, validationResult);
 					validateBody(method, httpMethod, validationResult);
 					validateReturnType(method, validationResult);
 					validateRetry(method, validationResult);
@@ -183,17 +203,19 @@ public class RestClientValidator {
 		}
 	}
 
-	private static void validateUrl(Method method, String url, ValidationResult validationResult) {
+	private static void validateUrl(Method method, String url, String baseUrlOverride,
+			ValidationResult validationResult) {
 		String effectiveUrl = url;
 		if (!isAbsoluteUrl(url)) {
-			BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
-			if (baseUrl == null) {
+			String base = resolveBase(method, baseUrlOverride);
+			if (base == null) {
 				validationResult.addError(String.format(
-						"The method %s.%s has a relative URL '%s' but the interface is not annotated with @BaseUrl.",
+						"The method %s.%s has a relative URL '%s' but the interface is not annotated with @BaseUrl "
+								+ "and no runtime base URL was given to RIP.getClient(...).",
 						method.getDeclaringClass().getName(), method.getName(), url));
 				return;
 			}
-			effectiveUrl = combineWithBaseUrl(baseUrl.value(), url);
+			effectiveUrl = combineWithBaseUrl(base, url);
 		}
 		if (!isURLValid(effectiveUrl)) {
 			validationResult.addError(String.format("The method %s.%s has an invalid URL '%s'.",
@@ -213,6 +235,14 @@ public class RestClientValidator {
 
 	private static boolean isAbsoluteUrl(String url) {
 		return url.startsWith("http://") || url.startsWith("https://");
+	}
+
+	private static String resolveBase(Method method, String baseUrlOverride) {
+		if (baseUrlOverride != null) {
+			return baseUrlOverride;
+		}
+		BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
+		return baseUrl == null ? null : baseUrl.value();
 	}
 
 	private static String combineWithBaseUrl(String base, String url) {

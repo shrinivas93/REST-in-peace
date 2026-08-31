@@ -22,15 +22,17 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.error.ErrorType;
+import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
-import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 
@@ -57,8 +59,25 @@ public class RestRequestProcessor {
 		return thread;
 	});
 
-	/** Creates a processor. Cheap and stateless beyond the shared interceptor registry. */
+	private final String baseUrlOverride;
+
+	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RestRequestProcessor() {
+		this(null);
+	}
+
+	/**
+	 * Creates a processor that resolves every relative method URL against
+	 * {@code baseUrlOverride} instead of the interface's {@code @BaseUrl},
+	 * for a base URL that's only known at runtime (e.g. per deployment
+	 * environment). An absolute method URL still ignores this, same as it
+	 * ignores {@code @BaseUrl}.
+	 *
+	 * @param baseUrlOverride the runtime base URL, or {@code null} to fall
+	 *                        back to the interface's {@code @BaseUrl}
+	 */
+	public RestRequestProcessor(String baseUrlOverride) {
+		this.baseUrlOverride = baseUrlOverride;
 	}
 
 	/**
@@ -99,15 +118,8 @@ public class RestRequestProcessor {
 		if (returnType == CompletableFuture.class) {
 			return processAsync(request, method, context);
 		}
-		if (returnType == String.class) {
-			return executeSyncWithRetry(method, context, request::asString).getBody();
-		}
-		if (returnType == void.class) {
-			executeSyncWithRetry(method, context, request::asString);
-			return null;
-		}
-		HttpRequest<?> finalRequest = request;
-		return executeSyncWithRetry(method, context, () -> finalRequest.asObject(returnType)).getBody();
+		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context, request::asString);
+		return decodeOrThrow(response, method, returnType);
 	}
 
 	private HttpRequest<?> applyInterceptors(HttpRequest<?> request, RequestContext context) {
@@ -119,44 +131,81 @@ public class RestRequestProcessor {
 		return request;
 	}
 
-	private void notifyAfterResponse(RequestContext context, HttpResponse<?> response) {
+	private void notifyAfterResponse(RequestContext context, HttpResponse<String> response, Method method,
+			Class<?> returnType) {
 		if (INTERCEPTORS.isEmpty()) {
 			return;
 		}
+		Object body = decodeBody(response, method, returnType);
 		// LIFO, mirroring beforeRequest: the first interceptor registered wraps every
 		// other one and is notified last, symmetric with it running beforeRequest first.
 		List<RequestInterceptor> reversed = new ArrayList<>(INTERCEPTORS);
 		Collections.reverse(reversed);
-		reversed.forEach(interceptor -> interceptor.afterResponse(context, response.getStatus(), response.getBody()));
+		reversed.forEach(interceptor -> interceptor.afterResponse(context, response.getStatus(), body));
 	}
 
 	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, RequestContext context) {
 		Class<?> innerType = resolveFutureInnerType(method);
-		if (innerType == String.class) {
-			return executeAsyncWithRetry(method, context, request::asStringAsync).thenApply(HttpResponse::getBody);
-		}
-		if (innerType == Void.class) {
-			return executeAsyncWithRetry(method, context, request::asStringAsync).thenApply(response -> null);
-		}
-		return executeAsyncWithRetry(method, context, () -> request.asObjectAsync(innerType))
-				.thenApply(HttpResponse::getBody);
+		return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
+				.thenApply(response -> decodeOrThrow(response, method, innerType));
 	}
 
-	private <T> HttpResponse<T> executeSyncWithRetry(Method method, RequestContext context,
-			Supplier<HttpResponse<T>> call) {
+	/**
+	 * Decodes a settled response, throwing {@link RestInPeaceHttpException}
+	 * for a non-2xx status instead of returning a value.
+	 */
+	private Object decodeOrThrow(HttpResponse<String> response, Method method, Class<?> returnType) {
+		if (!isSuccessStatus(response.getStatus())) {
+			throw new RestInPeaceHttpException(response.getStatus(), response.getBody(),
+					decodeBody(response, method, returnType));
+		}
+		return decodeBody(response, method, returnType);
+	}
+
+	/**
+	 * Decodes a response's body for a success status (into {@code returnType},
+	 * the same as {@link #decodeOrThrow}'s success case) or a non-2xx one
+	 * (into the method's {@code @ErrorType}, or left as the raw body if it
+	 * has none) - without throwing either way, for reporting to
+	 * interceptors mid-retry as well as for the final settled response.
+	 */
+	private Object decodeBody(HttpResponse<String> response, Method method, Class<?> returnType) {
+		String rawBody = response.getBody();
+		if (!isSuccessStatus(response.getStatus())) {
+			ErrorType errorType = method.getAnnotation(ErrorType.class);
+			if (errorType != null && rawBody != null && !rawBody.isEmpty()) {
+				return Unirest.config().getObjectMapper().readValue(rawBody, errorType.value());
+			}
+			return rawBody;
+		}
+		if (returnType == String.class) {
+			return rawBody;
+		}
+		if (returnType == void.class || returnType == Void.class) {
+			return null;
+		}
+		return Unirest.config().getObjectMapper().readValue(rawBody, returnType);
+	}
+
+	private static boolean isSuccessStatus(int status) {
+		return status >= 200 && status < 300;
+	}
+
+	private HttpResponse<String> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
+			Supplier<HttpResponse<String>> call) {
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
-			HttpResponse<T> response = call.get();
-			notifyAfterResponse(context, response);
+			HttpResponse<String> response = call.get();
+			notifyAfterResponse(context, response, method, returnType);
 			return response;
 		}
 		long delay = retry.delayMillis();
 		for (int attempt = 1;; attempt++) {
-			HttpResponse<T> response = null;
+			HttpResponse<String> response = null;
 			RuntimeException failure = null;
 			try {
 				response = call.get();
-				notifyAfterResponse(context, response);
+				notifyAfterResponse(context, response, method, returnType);
 			} catch (RuntimeException e) {
 				failure = e;
 			}
@@ -172,24 +221,24 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private <T> CompletableFuture<HttpResponse<T>> executeAsyncWithRetry(Method method, RequestContext context,
-			Supplier<CompletableFuture<HttpResponse<T>>> call) {
+	private CompletableFuture<HttpResponse<String>> executeAsyncWithRetry(Method method, Class<?> returnType,
+			RequestContext context, Supplier<CompletableFuture<HttpResponse<String>>> call) {
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
 			return call.get().thenApply(response -> {
-				notifyAfterResponse(context, response);
+				notifyAfterResponse(context, response, method, returnType);
 				return response;
 			});
 		}
-		return attemptAsync(call, context, retry, 1, retry.delayMillis());
+		return attemptAsync(call, method, returnType, context, retry, 1, retry.delayMillis());
 	}
 
-	private <T> CompletableFuture<HttpResponse<T>> attemptAsync(Supplier<CompletableFuture<HttpResponse<T>>> call,
-			RequestContext context, Retry retry, int attempt, long delay) {
-		CompletableFuture<HttpResponse<T>> result = new CompletableFuture<>();
+	private CompletableFuture<HttpResponse<String>> attemptAsync(Supplier<CompletableFuture<HttpResponse<String>>> call,
+			Method method, Class<?> returnType, RequestContext context, Retry retry, int attempt, long delay) {
+		CompletableFuture<HttpResponse<String>> result = new CompletableFuture<>();
 		call.get().whenComplete((response, failure) -> {
 			if (response != null) {
-				notifyAfterResponse(context, response);
+				notifyAfterResponse(context, response, method, returnType);
 			}
 			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retry.retryOnStatus());
 			if (!retryable || attempt >= retry.times()) {
@@ -201,13 +250,15 @@ public class RestRequestProcessor {
 				return;
 			}
 			RETRY_SCHEDULER.schedule(
-					() -> attemptAsync(call, context, retry, attempt + 1, nextDelay(delay, retry)).whenComplete((r, t) -> {
-						if (t != null) {
-							result.completeExceptionally(t);
-						} else {
-							result.complete(r);
-						}
-					}), delay, TimeUnit.MILLISECONDS);
+					() -> attemptAsync(call, method, returnType, context, retry, attempt + 1, nextDelay(delay, retry))
+							.whenComplete((r, t) -> {
+								if (t != null) {
+									result.completeExceptionally(t);
+								} else {
+									result.complete(r);
+								}
+							}),
+					delay, TimeUnit.MILLISECONDS);
 		});
 		return result;
 	}
@@ -269,8 +320,12 @@ public class RestRequestProcessor {
 		if (isAbsoluteUrl(url)) {
 			return url;
 		}
-		BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
-		String base = baseUrl.value();
+		String base;
+		if (baseUrlOverride != null) {
+			base = baseUrlOverride;
+		} else {
+			base = method.getDeclaringClass().getAnnotation(BaseUrl.class).value();
+		}
 		if (base.endsWith("/") && url.startsWith("/")) {
 			return base + url.substring(1);
 		}

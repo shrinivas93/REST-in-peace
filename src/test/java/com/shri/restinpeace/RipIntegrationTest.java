@@ -30,6 +30,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
@@ -45,6 +46,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.CorrelationIdInterceptor;
 import com.shri.restinpeace.interceptor.HeaderInterceptor;
 import com.shri.restinpeace.interceptor.LoggingInterceptor;
@@ -146,6 +148,20 @@ class RipIntegrationTest {
 		@GET("http://localhost:1/unreachable")
 		@Retry(times = 3, delayMillis = 5)
 		String getUnreachableWithRetry();
+
+		@GET("http://localhost:{port}/error/{id}")
+		String getWithUntypedError(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/error/{id}")
+		@ErrorType(ApiError.class)
+		String getWithTypedError(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/error/{id}")
+		@ErrorType(ApiError.class)
+		CompletableFuture<String> getWithTypedErrorAsync(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/always-503/{id}")
+		void pingAlwaysFailing(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
 	@RestClient
@@ -178,6 +194,19 @@ class RipIntegrationTest {
 		String get(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
+	@RestClient
+	private interface RuntimeBaseUrlApi {
+		@GET("/items/{id}")
+		String get(@PathParam("id") String id);
+	}
+
+	@RestClient
+	@BaseUrl("http://localhost:1")
+	private interface RuntimeBaseUrlOverridesAnnotationApi {
+		@GET("/items/{id}")
+		String get(@PathParam("id") String id);
+	}
+
 	public static final class Payload {
 		public String name;
 		public int age;
@@ -186,6 +215,11 @@ class RipIntegrationTest {
 			this.name = name;
 			this.age = age;
 		}
+	}
+
+	public static final class ApiError {
+		public String code;
+		public String message;
 	}
 
 	private static HttpServer server;
@@ -242,6 +276,13 @@ class RipIntegrationTest {
 			exchange.sendResponseHeaders(503, 0);
 			try (OutputStream os = exchange.getResponseBody()) {
 				os.write(new byte[0]);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/error/")) {
+			byte[] response = "{\"code\":\"INVALID\",\"message\":\"nope\"}".getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			exchange.sendResponseHeaders(422, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
 			}
 		} else {
 			byte[] response = "ok".getBytes(StandardCharsets.UTF_8);
@@ -704,7 +745,7 @@ class RipIntegrationTest {
 	}
 
 	@Test
-	void retry_withPermanentFailure_stopsAfterConfiguredAttemptsAndReturnsLastResponse() {
+	void retry_withPermanentFailure_stopsAfterConfiguredAttemptsAndThrows() {
 		List<Integer> statuses = new ArrayList<>();
 		RIP.addInterceptor(new RequestInterceptor() {
 			@Override
@@ -714,8 +755,10 @@ class RipIntegrationTest {
 		});
 		LocalApi api = RIP.getClient(LocalApi.class);
 
-		api.getAlwaysFailingWithRetry(port, "x");
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getAlwaysFailingWithRetry(port, "x"));
 
+		assertEquals(503, exception.getStatus());
 		assertEquals(Arrays.asList(503, 503, 503), statuses);
 		assertEquals(3, ALWAYS_FAILING_ATTEMPTS.get());
 	}
@@ -724,7 +767,7 @@ class RipIntegrationTest {
 	void withoutRetryAnnotation_doesNotRetryOnFailure() {
 		LocalApi api = RIP.getClient(LocalApi.class);
 
-		api.getAlwaysFailingWithoutRetry(port, "x");
+		assertThrows(RestInPeaceHttpException.class, () -> api.getAlwaysFailingWithoutRetry(port, "x"));
 
 		assertEquals(1, ALWAYS_FAILING_ATTEMPTS.get());
 	}
@@ -785,6 +828,91 @@ class RipIntegrationTest {
 
 		assertEquals("ok", result);
 		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void getClient_withRuntimeBaseUrl_resolvesRelativeUrlWithNoBaseUrlAnnotation() {
+		RuntimeBaseUrlApi api = RIP.getClient(RuntimeBaseUrlApi.class, "http://localhost:" + port);
+
+		String result = api.get("abc");
+
+		assertEquals("ok", result);
+		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void getClient_withRuntimeBaseUrl_takesPriorityOverInterfaceBaseUrlAnnotation() {
+		RuntimeBaseUrlOverridesAnnotationApi api = RIP.getClient(RuntimeBaseUrlOverridesAnnotationApi.class,
+				"http://localhost:" + port);
+
+		String result = api.get("abc");
+
+		assertEquals("ok", result);
+		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void get_withNonSuccessStatusAndNoErrorType_throwsWithRawBody() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getWithUntypedError(port, "x"));
+
+		assertEquals(422, exception.getStatus());
+		assertEquals("{\"code\":\"INVALID\",\"message\":\"nope\"}", exception.getRawBody());
+		assertEquals(exception.getRawBody(), exception.getErrorBody());
+	}
+
+	@Test
+	void get_withNonSuccessStatusAndErrorType_throwsWithDeserializedErrorBody() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getWithTypedError(port, "x"));
+
+		assertEquals(422, exception.getStatus());
+		ApiError error = exception.getErrorBody();
+		assertEquals("INVALID", error.code);
+		assertEquals("nope", error.message);
+	}
+
+	@Test
+	void getAsync_withNonSuccessStatusAndErrorType_completesExceptionally() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		CompletableFuture<String> future = api.getWithTypedErrorAsync(port, "x");
+
+		ExecutionException executionException = assertThrows(ExecutionException.class,
+				() -> future.get(5, TimeUnit.SECONDS));
+		assertTrue(executionException.getCause() instanceof RestInPeaceHttpException);
+		RestInPeaceHttpException httpException = (RestInPeaceHttpException) executionException.getCause();
+		assertEquals(422, httpException.getStatus());
+		ApiError error = httpException.getErrorBody();
+		assertEquals("INVALID", error.code);
+	}
+
+	@Test
+	void get_withVoidReturnTypeAndNonSuccessStatus_stillThrows() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		assertThrows(RestInPeaceHttpException.class, () -> api.pingAlwaysFailing(port, "x"));
+	}
+
+	@Test
+	void interceptor_afterResponse_onErrorStatus_seesDeserializedErrorBody() {
+		List<Object> bodies = new ArrayList<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void afterResponse(RequestContext context, int status, Object body) {
+				bodies.add(body);
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		assertThrows(RestInPeaceHttpException.class, () -> api.getWithTypedError(port, "x"));
+
+		assertEquals(1, bodies.size());
+		assertTrue(bodies.get(0) instanceof ApiError);
 	}
 
 }

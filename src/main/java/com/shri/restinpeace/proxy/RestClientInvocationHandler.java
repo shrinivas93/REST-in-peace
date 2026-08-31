@@ -21,10 +21,22 @@ import com.shri.restinpeace.exception.RestInPeaceException;
  */
 public class RestClientInvocationHandler implements InvocationHandler {
 
-	private RestRequestProcessor restRequestProcessor = new RestRequestProcessor();
+	private final RestRequestProcessor restRequestProcessor;
 
-	/** Creates a handler backed by a fresh {@link RestRequestProcessor}. */
+	/** Creates a handler backed by a fresh {@link RestRequestProcessor} with no runtime base URL override. */
 	public RestClientInvocationHandler() {
+		this(null);
+	}
+
+	/**
+	 * Creates a handler backed by a fresh {@link RestRequestProcessor} that
+	 * resolves every relative method URL against {@code baseUrlOverride}.
+	 *
+	 * @param baseUrlOverride the runtime base URL, or {@code null} to fall
+	 *                        back to the interface's {@code @BaseUrl}
+	 */
+	public RestClientInvocationHandler(String baseUrlOverride) {
+		this.restRequestProcessor = new RestRequestProcessor(baseUrlOverride);
 	}
 
 	@Override
