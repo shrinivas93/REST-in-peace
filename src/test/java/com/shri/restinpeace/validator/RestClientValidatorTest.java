@@ -9,6 +9,7 @@ import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Test;
 
+import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
@@ -122,6 +123,33 @@ class RestClientValidatorTest {
 		String foo();
 	}
 
+	@RestClient
+	public interface RelativeUrlWithoutBaseUrl {
+		@GET("/items/{id}")
+		String foo(@PathParam("id") String id);
+	}
+
+	@RestClient
+	@BaseUrl("http://example.com")
+	public interface RelativeUrlWithBaseUrl {
+		@GET("/items/{id}")
+		String foo(@PathParam("id") String id);
+	}
+
+	@RestClient
+	@BaseUrl("http://example.com")
+	public interface AbsoluteUrlOverridesBaseUrl {
+		@GET("http://override.example.com/items")
+		String foo();
+	}
+
+	@RestClient
+	@BaseUrl("http://localhost:{port}")
+	public interface BaseUrlWithPlaceholder {
+		@GET("/items/{id}")
+		String foo(@PathParam("port") int port, @PathParam("id") String id);
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -216,6 +244,29 @@ class RestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(InvalidRetryTimes.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("times must be at least 1"));
+	}
+
+	@Test
+	void validate_relativeUrlWithoutBaseUrl_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(RelativeUrlWithoutBaseUrl.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("relative URL '/items/{id}' but the interface is not annotated with @BaseUrl"));
+	}
+
+	@Test
+	void validate_relativeUrlWithBaseUrl_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(RelativeUrlWithBaseUrl.class));
+	}
+
+	@Test
+	void validate_absoluteUrlIgnoresBaseUrl_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(AbsoluteUrlOverridesBaseUrl.class));
+	}
+
+	@Test
+	void validate_baseUrlWithPlaceholder_matchedAcrossBaseAndPath_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(BaseUrlWithPlaceholder.class));
 	}
 
 }

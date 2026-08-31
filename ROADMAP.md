@@ -45,8 +45,13 @@ for reference rather than tracked in code. Check items off as they land.
       blocking loop) and `CompletableFuture` ones (each retry scheduled on a
       background thread instead of blocking the caller). Every attempt is
       still reported to registered interceptors' `afterResponse`.
-- [ ] **`@BaseUrl` + relative paths** — let a `@RestClient` interface declare
-      a base URL once instead of repeating the full URL on every method.
+- [x] **`@BaseUrl` + relative paths** — a `@RestClient` interface can declare
+      a base URL once; methods use a relative path instead of repeating the
+      full URL. A method URL that's already absolute ignores `@BaseUrl` and
+      is used as-is, so a method can opt out with its own full URL. A
+      relative method URL with no `@BaseUrl` on the interface fails
+      validation. `@BaseUrl` can itself hold a `{placeholder}`, resolved the
+      same as any method URL.
 - [ ] **Typed error handling** — map a non-2xx response to a typed exception
       carrying the deserialized error body, instead of flowing through as a
       normal return value.
