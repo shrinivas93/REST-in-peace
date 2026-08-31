@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `RIP.getClient(Class, String)` resolves relative method URLs against a
   base URL supplied at call time, for multi-environment deployments where
   the base URL isn't known until runtime. Takes priority over `@BaseUrl`.
+- `@ErrorType(SomeClass.class)` deserializes a non-2xx response's error body
+  into that class instead of the raw string.
+
+### Changed
+
+- A non-2xx response now always throws `RestInPeaceHttpException` (status +
+  raw body), whatever the method's return type - previously the response
+  flowed through as a normal return value with no error signal.
 
 ### Fixed
 

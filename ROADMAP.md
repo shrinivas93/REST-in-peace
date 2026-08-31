@@ -61,9 +61,17 @@ for reference rather than tracked in code. Check items off as they land.
       `@BaseUrl` is optional once every relative URL is covered by the
       runtime value. Precedence: absolute method URL, then this override,
       then `@BaseUrl`.
-- [ ] **Typed error handling** — map a non-2xx response to a typed exception
-      carrying the deserialized error body, instead of flowing through as a
-      normal return value.
+- [x] **Typed error handling** — a non-2xx response always throws
+      `RestInPeaceHttpException` (status + raw body), whatever the method's
+      return type, instead of flowing through as a normal return value like
+      before. `@ErrorType(SomeClass.class)` deserializes the error body into
+      that class instead of leaving it as the raw string; a transport
+      failure (no response at all) still throws directly, not this
+      exception. Required unifying `RestRequestProcessor`'s retry executors
+      around `HttpResponse<String>` instead of being generic over the
+      success return type, since deciding success-vs-error now has to
+      happen after fetching the raw body, not by asking Unirest to
+      deserialize into the success shape unconditionally.
 - [ ] **`@QueryMap`/`@HeaderMap` and multipart/file upload** — `@Body`
       currently only covers a raw string or a whole JSON-serialized object;
       no support for a dynamic set of query params/headers or form/file
