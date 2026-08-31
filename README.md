@@ -10,7 +10,9 @@ methods like any other Java call.
 ## Features
 
 - Declarative REST clients defined as annotated Java interfaces
-- `@BaseUrl` declares a base URL once instead of repeating it on every method
+- `@BaseUrl` declares a base URL once instead of repeating it on every
+  method, or pass one to `RIP.getClient(...)` when it's only known at
+  runtime (e.g. one per deployment environment)
 - All seven common HTTP verbs: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
@@ -123,6 +125,23 @@ ignores `@BaseUrl` and is used as-is — a method can always opt out with its
 own full URL. A relative method URL on an interface with no `@BaseUrl` fails
 validation. `@BaseUrl` can itself contain a `{placeholder}`, resolved by a
 `@PathParam` the same as any method URL.
+
+#### Choosing the base URL per environment
+
+`@BaseUrl`'s value has to be a compile-time constant, so it can't itself
+hold something environment-dependent. For an app that deploys the same
+`@RestClient` interface against a different base URL per environment (dev,
+staging, prod), pass the resolved URL to `RIP.getClient(...)` instead:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, System.getenv("USER_API_BASE_URL"));
+```
+
+This takes priority over `@BaseUrl` on the interface, so `@BaseUrl` is
+optional when every relative method URL is covered by the runtime value.
+Precedence, most specific first: an absolute method URL always wins, then
+the `baseUrl` passed to `getClient(...)`, then `@BaseUrl` on the interface —
+a relative method URL covered by none of these fails validation.
 
 ### HTTP method annotations
 

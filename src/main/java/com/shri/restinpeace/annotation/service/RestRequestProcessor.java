@@ -57,8 +57,25 @@ public class RestRequestProcessor {
 		return thread;
 	});
 
-	/** Creates a processor. Cheap and stateless beyond the shared interceptor registry. */
+	private final String baseUrlOverride;
+
+	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RestRequestProcessor() {
+		this(null);
+	}
+
+	/**
+	 * Creates a processor that resolves every relative method URL against
+	 * {@code baseUrlOverride} instead of the interface's {@code @BaseUrl},
+	 * for a base URL that's only known at runtime (e.g. per deployment
+	 * environment). An absolute method URL still ignores this, same as it
+	 * ignores {@code @BaseUrl}.
+	 *
+	 * @param baseUrlOverride the runtime base URL, or {@code null} to fall
+	 *                        back to the interface's {@code @BaseUrl}
+	 */
+	public RestRequestProcessor(String baseUrlOverride) {
+		this.baseUrlOverride = baseUrlOverride;
 	}
 
 	/**
@@ -269,8 +286,12 @@ public class RestRequestProcessor {
 		if (isAbsoluteUrl(url)) {
 			return url;
 		}
-		BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
-		String base = baseUrl.value();
+		String base;
+		if (baseUrlOverride != null) {
+			base = baseUrlOverride;
+		} else {
+			base = method.getDeclaringClass().getAnnotation(BaseUrl.class).value();
+		}
 		if (base.endsWith("/") && url.startsWith("/")) {
 			return base + url.substring(1);
 		}

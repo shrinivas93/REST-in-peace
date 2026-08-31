@@ -178,6 +178,19 @@ class RipIntegrationTest {
 		String get(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
+	@RestClient
+	private interface RuntimeBaseUrlApi {
+		@GET("/items/{id}")
+		String get(@PathParam("id") String id);
+	}
+
+	@RestClient
+	@BaseUrl("http://localhost:1")
+	private interface RuntimeBaseUrlOverridesAnnotationApi {
+		@GET("/items/{id}")
+		String get(@PathParam("id") String id);
+	}
+
 	public static final class Payload {
 		public String name;
 		public int age;
@@ -782,6 +795,27 @@ class RipIntegrationTest {
 		AbsoluteUrlOverridesBaseUrlApi api = RIP.getClient(AbsoluteUrlOverridesBaseUrlApi.class);
 
 		String result = api.get(port, "abc");
+
+		assertEquals("ok", result);
+		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void getClient_withRuntimeBaseUrl_resolvesRelativeUrlWithNoBaseUrlAnnotation() {
+		RuntimeBaseUrlApi api = RIP.getClient(RuntimeBaseUrlApi.class, "http://localhost:" + port);
+
+		String result = api.get("abc");
+
+		assertEquals("ok", result);
+		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void getClient_withRuntimeBaseUrl_takesPriorityOverInterfaceBaseUrlAnnotation() {
+		RuntimeBaseUrlOverridesAnnotationApi api = RIP.getClient(RuntimeBaseUrlOverridesAnnotationApi.class,
+				"http://localhost:" + port);
+
+		String result = api.get("abc");
 
 		assertEquals("ok", result);
 		assertEquals("/items/abc", LAST_REQUEST.get().path);

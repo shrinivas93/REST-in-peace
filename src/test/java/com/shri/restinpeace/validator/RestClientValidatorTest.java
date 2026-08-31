@@ -269,4 +269,10 @@ class RestClientValidatorTest {
 		assertDoesNotThrow(() -> RestClientValidator.validate(BaseUrlWithPlaceholder.class));
 	}
 
+	@Test
+	void validate_relativeUrlWithRuntimeBaseUrlOverride_passesEvenWithoutBaseUrlAnnotation() {
+		assertDoesNotThrow(
+				() -> RestClientValidator.validate(RelativeUrlWithoutBaseUrl.class, "http://example.com"));
+	}
+
 }
