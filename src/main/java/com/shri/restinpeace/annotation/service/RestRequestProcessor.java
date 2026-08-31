@@ -9,6 +9,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
@@ -20,7 +25,9 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.exception.RestInPeaceException;
@@ -43,6 +50,12 @@ import kong.unirest.Unirest;
 public class RestRequestProcessor {
 
 	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
+
+	private static final ScheduledExecutorService RETRY_SCHEDULER = Executors.newSingleThreadScheduledExecutor(runnable -> {
+		Thread thread = new Thread(runnable, "rip-retry-scheduler");
+		thread.setDaemon(true);
+		return thread;
+	});
 
 	/** Creates a processor. Cheap and stateless beyond the shared interceptor registry. */
 	public RestRequestProcessor() {
@@ -75,7 +88,7 @@ public class RestRequestProcessor {
 	 *         {@code void} methods
 	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
-		String url = resolvePathParams(getUrlTemplate(method, httpMethod), method, args);
+		String url = resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
 		RequestContext context = new RequestContext(httpMethod, url);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
@@ -87,17 +100,14 @@ public class RestRequestProcessor {
 			return processAsync(request, method, context);
 		}
 		if (returnType == String.class) {
-			HttpResponse<String> response = request.asString();
-			notifyAfterResponse(context, response);
-			return response.getBody();
+			return executeSyncWithRetry(method, context, request::asString).getBody();
 		}
 		if (returnType == void.class) {
-			notifyAfterResponse(context, request.asString());
+			executeSyncWithRetry(method, context, request::asString);
 			return null;
 		}
-		HttpResponse<?> response = request.asObject(returnType);
-		notifyAfterResponse(context, response);
-		return response.getBody();
+		HttpRequest<?> finalRequest = request;
+		return executeSyncWithRetry(method, context, () -> finalRequest.asObject(returnType)).getBody();
 	}
 
 	private HttpRequest<?> applyInterceptors(HttpRequest<?> request, RequestContext context) {
@@ -123,21 +133,100 @@ public class RestRequestProcessor {
 	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, RequestContext context) {
 		Class<?> innerType = resolveFutureInnerType(method);
 		if (innerType == String.class) {
-			return request.asStringAsync().thenApply(response -> {
-				notifyAfterResponse(context, response);
-				return response.getBody();
-			});
+			return executeAsyncWithRetry(method, context, request::asStringAsync).thenApply(HttpResponse::getBody);
 		}
 		if (innerType == Void.class) {
-			return request.asStringAsync().thenApply(response -> {
+			return executeAsyncWithRetry(method, context, request::asStringAsync).thenApply(response -> null);
+		}
+		return executeAsyncWithRetry(method, context, () -> request.asObjectAsync(innerType))
+				.thenApply(HttpResponse::getBody);
+	}
+
+	private <T> HttpResponse<T> executeSyncWithRetry(Method method, RequestContext context,
+			Supplier<HttpResponse<T>> call) {
+		Retry retry = method.getAnnotation(Retry.class);
+		if (retry == null) {
+			HttpResponse<T> response = call.get();
+			notifyAfterResponse(context, response);
+			return response;
+		}
+		long delay = retry.delayMillis();
+		for (int attempt = 1;; attempt++) {
+			HttpResponse<T> response = null;
+			RuntimeException failure = null;
+			try {
+				response = call.get();
 				notifyAfterResponse(context, response);
-				return null;
+			} catch (RuntimeException e) {
+				failure = e;
+			}
+			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retry.retryOnStatus());
+			if (!retryable || attempt >= retry.times()) {
+				if (failure != null) {
+					throw failure;
+				}
+				return response;
+			}
+			sleep(delay);
+			delay = nextDelay(delay, retry);
+		}
+	}
+
+	private <T> CompletableFuture<HttpResponse<T>> executeAsyncWithRetry(Method method, RequestContext context,
+			Supplier<CompletableFuture<HttpResponse<T>>> call) {
+		Retry retry = method.getAnnotation(Retry.class);
+		if (retry == null) {
+			return call.get().thenApply(response -> {
+				notifyAfterResponse(context, response);
+				return response;
 			});
 		}
-		return request.asObjectAsync(innerType).thenApply(response -> {
-			notifyAfterResponse(context, response);
-			return response.getBody();
+		return attemptAsync(call, context, retry, 1, retry.delayMillis());
+	}
+
+	private <T> CompletableFuture<HttpResponse<T>> attemptAsync(Supplier<CompletableFuture<HttpResponse<T>>> call,
+			RequestContext context, Retry retry, int attempt, long delay) {
+		CompletableFuture<HttpResponse<T>> result = new CompletableFuture<>();
+		call.get().whenComplete((response, failure) -> {
+			if (response != null) {
+				notifyAfterResponse(context, response);
+			}
+			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retry.retryOnStatus());
+			if (!retryable || attempt >= retry.times()) {
+				if (failure != null) {
+					result.completeExceptionally(failure);
+				} else {
+					result.complete(response);
+				}
+				return;
+			}
+			RETRY_SCHEDULER.schedule(
+					() -> attemptAsync(call, context, retry, attempt + 1, nextDelay(delay, retry)).whenComplete((r, t) -> {
+						if (t != null) {
+							result.completeExceptionally(t);
+						} else {
+							result.complete(r);
+						}
+					}), delay, TimeUnit.MILLISECONDS);
 		});
+		return result;
+	}
+
+	private static boolean isRetryableStatus(int status, int[] retryOnStatus) {
+		return IntStream.of(retryOnStatus).anyMatch(code -> code == status);
+	}
+
+	private static long nextDelay(long delay, Retry retry) {
+		return (long) (delay * retry.backoffMultiplier());
+	}
+
+	private static void sleep(long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new RestInPeaceException("Interrupted while waiting to retry.", e);
+		}
 	}
 
 	private Class<?> resolveFutureInnerType(Method method) {
@@ -174,6 +263,25 @@ public class RestRequestProcessor {
 		default:
 			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
 		}
+	}
+
+	private String applyBaseUrl(Method method, String url) {
+		if (isAbsoluteUrl(url)) {
+			return url;
+		}
+		BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
+		String base = baseUrl.value();
+		if (base.endsWith("/") && url.startsWith("/")) {
+			return base + url.substring(1);
+		}
+		if (!base.endsWith("/") && !url.startsWith("/")) {
+			return base + "/" + url;
+		}
+		return base + url;
+	}
+
+	private static boolean isAbsoluteUrl(String url) {
+		return url.startsWith("http://") || url.startsWith("https://");
 	}
 
 	private HttpRequest<?> createRequest(HTTPMethod httpMethod, String url) {

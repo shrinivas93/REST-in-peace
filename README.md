@@ -10,6 +10,7 @@ methods like any other Java call.
 ## Features
 
 - Declarative REST clients defined as annotated Java interfaces
+- `@BaseUrl` declares a base URL once instead of repeating it on every method
 - All seven common HTTP verbs: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
@@ -19,6 +20,8 @@ methods like any other Java call.
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
 - `CompletableFuture<T>` return types fire requests asynchronously
+- `@Retry` re-issues a failed request with configurable backoff, for both
+  synchronous and async methods
 - Global interceptors for cross-cutting concerns (auth headers, logging)
   without touching individual `@RestClient` interfaces
 - Interfaces are validated up front — misconfigured clients fail fast at
@@ -100,6 +103,26 @@ of failing later on the first call.
 
 Marks an interface as a REST client. Required on every interface passed to
 `RIP.getClient(...)`.
+
+### `@BaseUrl`
+
+Declares the base URL once on the interface, so methods can use a relative
+path instead of repeating the full URL every time:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+```
+
+A method URL that's already absolute (starts with `http://` or `https://`)
+ignores `@BaseUrl` and is used as-is — a method can always opt out with its
+own full URL. A relative method URL on an interface with no `@BaseUrl` fails
+validation. `@BaseUrl` can itself contain a `{placeholder}`, resolved by a
+`@PathParam` the same as any method URL.
 
 ### HTTP method annotations
 
@@ -214,6 +237,33 @@ own afterward. Two ways to deal with that:
 - Or call `kong.unirest.Unirest.shutDown()` when you're done making
   requests.
 
+## Retries
+
+Annotate a method with `@Retry` to re-issue a request that fails with a
+transport error (connection refused, timeout) or one of a configurable set
+of status codes:
+
+```java
+@GET("https://api.example.com/users/{id}")
+@Retry(times = 3, delayMillis = 200, backoffMultiplier = 2.0)
+User getUser(@PathParam("id") String id);
+```
+
+`times` is the maximum number of attempts in total (default 3); `delayMillis`
+is how long to wait before the first retry (default 200); `backoffMultiplier`
+is what that delay is multiplied by after each attempt (default 2.0 - use
+`1.0` for a fixed delay instead of exponential backoff). `retryOnStatus`
+controls which HTTP status codes count as retryable (default `429, 502, 503,
+504`) - a transport error is always retried regardless of this list. `times`
+must be at least 1, or the method fails validation.
+
+`@Retry` works on both a synchronous return type and a `CompletableFuture`
+one - retrying an async call schedules the next attempt on a background
+thread instead of blocking the caller. Every attempt, including ones that
+get retried, is still reported to any registered interceptor's
+`afterResponse`, so a `LoggingInterceptor` or similar sees each individual
+attempt, not just the final outcome.
+
 ## Interceptors
 
 Register a global hook that runs on every request/response made through
@@ -233,11 +283,11 @@ RIP.addInterceptor(new RequestInterceptor() {
 });
 ```
 
-Both methods are observers, not a retry pipeline: `beforeRequest` can add
-headers or abort the call by throwing, and `afterResponse` sees the status
-and response body (a `String`, a deserialized object, or `null` for `void`
-methods) once the response is back — but neither can cause a request to be
-re-sent, so this isn't a mechanism for retry policies. `RIP.clearInterceptors()`
+Both methods are observers: `beforeRequest` can add headers or abort the
+call by throwing, and `afterResponse` sees the status and response body (a
+`String`, a deserialized object, or `null` for `void` methods) once the
+response is back — but neither can cause a request to be re-sent on its
+own; see [`@Retry`](#retries) above for that. `RIP.clearInterceptors()`
 removes everything that's registered.
 
 When several interceptors are registered, they run "onion"-style: `beforeRequest`

@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `CONTRIBUTING.md` and this changelog.
+- `@Retry(times, delayMillis, backoffMultiplier, retryOnStatus)` re-issues a
+  request that fails with a transport error or a matching status code, for
+  both synchronous and `CompletableFuture` return types.
+- `@BaseUrl` on a `@RestClient` interface, so methods can use a relative
+  path instead of repeating the full URL. An absolute method URL ignores
+  `@BaseUrl` and is used as-is.
 
 ### Fixed
 

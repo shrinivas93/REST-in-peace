@@ -39,3 +39,27 @@ for reference rather than tracked in code. Check items off as they land.
       stream or a Java 9+ API). Verified with
       `mvn -Dmaven.compiler.release=8 clean test` and a live run against
       httpbin.org (PR #34).
+- [x] **Retry support** — `@Retry(times, delayMillis, backoffMultiplier,
+      retryOnStatus)` re-issues a request that fails with a transport error
+      or a matching status code. Works for both synchronous methods (a
+      blocking loop) and `CompletableFuture` ones (each retry scheduled on a
+      background thread instead of blocking the caller). Every attempt is
+      still reported to registered interceptors' `afterResponse`.
+- [x] **`@BaseUrl` + relative paths** — a `@RestClient` interface can declare
+      a base URL once; methods use a relative path instead of repeating the
+      full URL. A method URL that's already absolute ignores `@BaseUrl` and
+      is used as-is, so a method can opt out with its own full URL. A
+      relative method URL with no `@BaseUrl` on the interface fails
+      validation. `@BaseUrl` can itself hold a `{placeholder}`, resolved the
+      same as any method URL.
+- [ ] **Typed error handling** — map a non-2xx response to a typed exception
+      carrying the deserialized error body, instead of flowing through as a
+      normal return value.
+- [ ] **`@QueryMap`/`@HeaderMap` and multipart/file upload** — `@Body`
+      currently only covers a raw string or a whole JSON-serialized object;
+      no support for a dynamic set of query params/headers or form/file
+      uploads.
+- [ ] **Per-call timeout** — no way to override the client's configured
+      connect/read timeout for one slow endpoint.
+- [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
+      `@RestClient` interfaces without hitting real HTTP.
