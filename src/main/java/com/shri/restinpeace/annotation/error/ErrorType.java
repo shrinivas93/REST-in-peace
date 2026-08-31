@@ -14,11 +14,11 @@ import java.lang.annotation.Target;
  * {@link com.shri.restinpeace.exception.RestInPeaceHttpException#getErrorBody()}
  * returns; without it, that's the raw body as a {@code String}.
  *
- * <pre>{@code
- * @GET("/users/{id}")
- * @ErrorType(ApiError.class)
- * User getUser(@PathParam("id") String id);
- * }</pre>
+ * <pre>
+ * {@literal @}GET("/users/{id}")
+ * {@literal @}ErrorType(ApiError.class)
+ * User getUser({@literal @}PathParam("id") String id);
+ * </pre>
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
