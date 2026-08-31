@@ -21,6 +21,8 @@ methods like any other Java call.
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
+- A non-2xx response always throws `RestInPeaceHttpException`, with
+  `@ErrorType` to deserialize the error body into a class
 - `CompletableFuture<T>` return types fire requests asynchronously
 - `@Retry` re-issues a failed request with configurable backoff, for both
   synchronous and async methods
@@ -222,7 +224,48 @@ void fireEvent(@Body Event event);               // response body discarded
 
 `String` gives you the raw response body. `void` fires the request and
 discards the response. Anything else is deserialized from the response body
-as JSON, the same way `@Body` serializes non-`String` request bodies.
+as JSON, the same way `@Body` serializes non-`String` request bodies. These
+rules apply to a successful (2xx) response — see below for anything else.
+
+## Error handling
+
+A response outside the 200–299 range always throws
+`RestInPeaceHttpException`, whatever the method's return type — including
+`void`:
+
+```java
+try {
+    User user = userApi.getUser("42");
+} catch (RestInPeaceHttpException e) {
+    System.out.println(e.getStatus());     // e.g. 404
+    System.out.println(e.getRawBody());    // the raw response body, always available
+}
+```
+
+By default `getErrorBody()` just returns the same raw body as `getRawBody()`.
+Annotate the method with `@ErrorType` to have the error body deserialized
+into a class instead, the same way a successful response is deserialized
+into the return type:
+
+```java
+@GET("/users/{id}")
+@ErrorType(ApiError.class)
+User getUser(@PathParam("id") String id);
+```
+
+```java
+catch (RestInPeaceHttpException e) {
+    ApiError error = e.getErrorBody();
+    System.out.println(error.code);
+}
+```
+
+`getErrorBody()` is an unchecked generic getter — it trusts the caller to
+ask for the same type the method's `@ErrorType` declared (or `String` if it
+has none). A transport failure (no response at all - a connection refused,
+a timeout) throws the underlying transport exception directly, not
+`RestInPeaceHttpException`, which specifically means "the server answered,
+and the answer was an error."
 
 ## Async
 
@@ -306,8 +349,12 @@ Both methods are observers: `beforeRequest` can add headers or abort the
 call by throwing, and `afterResponse` sees the status and response body (a
 `String`, a deserialized object, or `null` for `void` methods) once the
 response is back — but neither can cause a request to be re-sent on its
-own; see [`@Retry`](#retries) above for that. `RIP.clearInterceptors()`
-removes everything that's registered.
+own; see [`@Retry`](#retries) above for that. On an error response,
+`afterResponse` still runs and sees the same body a catch block would get
+from [`RestInPeaceHttpException.getErrorBody()`](#error-handling) - the raw
+body, or the `@ErrorType`-deserialized one if the method declares it - the
+call to `afterResponse` happens before the exception is thrown.
+`RIP.clearInterceptors()` removes everything that's registered.
 
 When several interceptors are registered, they run "onion"-style: `beforeRequest`
 runs in registration order, but `afterResponse` runs in the *reverse* order —
