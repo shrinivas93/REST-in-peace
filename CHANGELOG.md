@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `@BaseUrl` on a `@RestClient` interface, so methods can use a relative
   path instead of repeating the full URL. An absolute method URL ignores
   `@BaseUrl` and is used as-is.
+- `RIP.getClient(Class, String)` resolves relative method URLs against a
+  base URL supplied at call time, for multi-environment deployments where
+  the base URL isn't known until runtime. Takes priority over `@BaseUrl`.
 
 ### Fixed
 

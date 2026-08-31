@@ -52,6 +52,15 @@ for reference rather than tracked in code. Check items off as they land.
       relative method URL with no `@BaseUrl` on the interface fails
       validation. `@BaseUrl` can itself hold a `{placeholder}`, resolved the
       same as any method URL.
+- [x] **Runtime base URL for multi-environment deployments** —
+      `RIP.getClient(Class, String)` resolves relative method URLs against a
+      base URL supplied at call time instead of `@BaseUrl` on the interface,
+      since an annotation value has to be a compile-time constant and can't
+      itself hold something environment-dependent (an env var, a config
+      value). Takes priority over `@BaseUrl` when both are present, so
+      `@BaseUrl` is optional once every relative URL is covered by the
+      runtime value. Precedence: absolute method URL, then this override,
+      then `@BaseUrl`.
 - [ ] **Typed error handling** — map a non-2xx response to a typed exception
       carrying the deserialized error body, instead of flowing through as a
       normal return value.
