@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
@@ -183,12 +184,23 @@ public class RestClientValidator {
 	}
 
 	private static void validateUrl(Method method, String url, ValidationResult validationResult) {
-		if (!isURLValid(url)) {
+		String effectiveUrl = url;
+		if (!isAbsoluteUrl(url)) {
+			BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
+			if (baseUrl == null) {
+				validationResult.addError(String.format(
+						"The method %s.%s has a relative URL '%s' but the interface is not annotated with @BaseUrl.",
+						method.getDeclaringClass().getName(), method.getName(), url));
+				return;
+			}
+			effectiveUrl = combineWithBaseUrl(baseUrl.value(), url);
+		}
+		if (!isURLValid(effectiveUrl)) {
 			validationResult.addError(String.format("The method %s.%s has an invalid URL '%s'.",
-					method.getDeclaringClass().getName(), method.getName(), url));
+					method.getDeclaringClass().getName(), method.getName(), effectiveUrl));
 			return;
 		}
-		Set<String> urlPathParams = extractPathParams(url);
+		Set<String> urlPathParams = extractPathParams(effectiveUrl);
 		Set<String> methodPathParams = Stream.of(method.getParameters())
 				.map(parameter -> parameter.getAnnotation(PathParam.class)).filter(Objects::nonNull)
 				.map(PathParam::value).collect(Collectors.toSet());
@@ -197,6 +209,20 @@ public class RestClientValidator {
 				.forEach(urlPathParam -> validationResult.addError(String.format(
 						"The method %s.%s has path param '%s' in its URL that is not annotated on any parameter with @PathParam.",
 						method.getDeclaringClass().getName(), method.getName(), urlPathParam)));
+	}
+
+	private static boolean isAbsoluteUrl(String url) {
+		return url.startsWith("http://") || url.startsWith("https://");
+	}
+
+	private static String combineWithBaseUrl(String base, String url) {
+		if (base.endsWith("/") && url.startsWith("/")) {
+			return base + url.substring(1);
+		}
+		if (!base.endsWith("/") && !url.startsWith("/")) {
+			return base + "/" + url;
+		}
+		return base + url;
 	}
 
 	private static Set<String> extractPathParams(String url) {

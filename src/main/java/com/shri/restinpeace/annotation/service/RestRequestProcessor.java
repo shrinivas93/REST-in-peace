@@ -25,6 +25,7 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -87,7 +88,7 @@ public class RestRequestProcessor {
 	 *         {@code void} methods
 	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
-		String url = resolvePathParams(getUrlTemplate(method, httpMethod), method, args);
+		String url = resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
 		RequestContext context = new RequestContext(httpMethod, url);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
@@ -262,6 +263,25 @@ public class RestRequestProcessor {
 		default:
 			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
 		}
+	}
+
+	private String applyBaseUrl(Method method, String url) {
+		if (isAbsoluteUrl(url)) {
+			return url;
+		}
+		BaseUrl baseUrl = method.getDeclaringClass().getAnnotation(BaseUrl.class);
+		String base = baseUrl.value();
+		if (base.endsWith("/") && url.startsWith("/")) {
+			return base + url.substring(1);
+		}
+		if (!base.endsWith("/") && !url.startsWith("/")) {
+			return base + "/" + url;
+		}
+		return base + url;
+	}
+
+	private static boolean isAbsoluteUrl(String url) {
+		return url.startsWith("http://") || url.startsWith("https://");
 	}
 
 	private HttpRequest<?> createRequest(HTTPMethod httpMethod, String url) {

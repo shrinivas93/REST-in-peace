@@ -10,6 +10,7 @@ methods like any other Java call.
 ## Features
 
 - Declarative REST clients defined as annotated Java interfaces
+- `@BaseUrl` declares a base URL once instead of repeating it on every method
 - All seven common HTTP verbs: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
@@ -102,6 +103,26 @@ of failing later on the first call.
 
 Marks an interface as a REST client. Required on every interface passed to
 `RIP.getClient(...)`.
+
+### `@BaseUrl`
+
+Declares the base URL once on the interface, so methods can use a relative
+path instead of repeating the full URL every time:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+```
+
+A method URL that's already absolute (starts with `http://` or `https://`)
+ignores `@BaseUrl` and is used as-is — a method can always opt out with its
+own full URL. A relative method URL on an interface with no `@BaseUrl` fails
+validation. `@BaseUrl` can itself contain a `{placeholder}`, resolved by a
+`@PathParam` the same as any method URL.
 
 ### HTTP method annotations
 
