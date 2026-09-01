@@ -18,6 +18,8 @@ methods like any other Java call.
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
 - `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
   known until runtime
+- `@Multipart`/`@Part` for `multipart/form-data` uploads (form fields and
+  files)
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
@@ -230,6 +232,25 @@ String createRaw(@Body String rawJson);
 ```
 
 At most one parameter per method may be annotated `@Body`.
+
+### `@Multipart` / `@Part`
+
+Sends a `multipart/form-data` body instead of `@Body`'s JSON/raw-string one —
+for file uploads and classic HTML-form-style POSTs:
+
+```java
+@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatar(@PathParam("id") String id, @Part("caption") String caption, @Part("file") File avatar);
+```
+
+`@Multipart` goes on the method (same HTTP methods `@Body` supports —
+`GET`/`HEAD`/`OPTIONS` fail validation); `@Part` goes on each field, with a
+`String` sent as a plain form field and a `File` sent as a file part. A
+method can't combine `@Multipart` with a `@Body` parameter, and needs at
+least one `@Part` to be worth declaring multipart at all. `@Part`'s
+`required` works the same as `@QueryParam`'s — `false` by default, silently
+skipping a `null` argument; `true` throws at call time instead.
 
 ## Return types
 

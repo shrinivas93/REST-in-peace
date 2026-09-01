@@ -80,11 +80,16 @@ for reference rather than tracked in code. Check items off as they land.
       map or a `null` entry value is skipped, not an error. At most one
       parameter per method may carry each annotation, and it must be a
       `Map`, both checked at `RestClientValidator` time.
-- [ ] **Multipart/file upload** — `@Body` currently only covers a raw string
-      or a whole JSON-serialized object; no `@Multipart`/`@Part` support for
-      form/file uploads. Split out from the item above since it needs
-      Unirest's `MultipartBody` API and a different request-building path,
-      not just another parameter annotation.
+- [x] **Multipart/file upload** — `@Multipart` on a method builds a
+      `multipart/form-data` body from its `@Part`-annotated parameters
+      instead of `@Body`'s JSON/raw-string one, via Unirest's `MultipartBody`.
+      `@Part` supports `String` (a form field) and `File` (a file part) in
+      v1; `byte[]`/`InputStream` support and a `@PartMap` (mirroring
+      `@QueryMap`/`@HeaderMap`) were deliberately deferred rather than
+      bundled in. `@Multipart` and a `@Body` parameter are mutually
+      exclusive on one method; a `@Part` with no `@Multipart`, a
+      `@Multipart` with no `@Part`s, a wrong-typed `@Part`, and `@Multipart`
+      on a non-body-supporting HTTP method are all validation errors.
 - [ ] **Per-call timeout** — no way to override the client's configured
       connect/read timeout for one slow endpoint.
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
