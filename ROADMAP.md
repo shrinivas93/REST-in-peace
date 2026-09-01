@@ -98,6 +98,17 @@ for reference rather than tracked in code. Check items off as they land.
       `@Multipart`, a `@Multipart` with no `@Part`/`@PartMap`, a wrong-typed
       `@Part`, a non-`Map` `@PartMap`, and `@Multipart` on a
       non-body-supporting HTTP method are all validation errors.
+- [x] **Response headers** — `RipResponse<T>` (or
+      `CompletableFuture<RipResponse<T>>` for an async method) wraps `T`
+      with the response's status code and headers, for a method that needs
+      more than just the body. `T` is decoded by the same rules as a plain
+      return type; `RipResponse<T>` only ever wraps a successful response -
+      a non-2xx status still throws `RestInPeaceHttpException` rather than
+      being wrapped. `getHeader(name)` looks up a header case-insensitively
+      and returns its first value; `getHeaders()` returns every value as a
+      `Map<String, List<String>>`. A raw `RipResponse` with no type
+      parameter, or one with an unsupported type parameter (same rule as
+      `CompletableFuture<T>`), fails validation.
 - [ ] **Per-call timeout** — no way to override the client's configured
       connect/read timeout for one slow endpoint.
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their

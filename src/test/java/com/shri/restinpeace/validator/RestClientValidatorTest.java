@@ -12,6 +12,7 @@ import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Test;
 
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
@@ -116,6 +117,31 @@ class RestClientValidatorTest {
 	public interface UnsupportedCompletableFutureTypeParam {
 		@GET("http://example.com")
 		CompletableFuture<List<String>> foo();
+	}
+
+	@RestClient
+	public interface ValidRipResponse {
+		@GET("http://example.com/{id}")
+		RipResponse<String> get(@PathParam("id") String id);
+	}
+
+	@RestClient
+	public interface ValidRipResponseOfCompletableFuture {
+		@GET("http://example.com/{id}")
+		CompletableFuture<RipResponse<String>> get(@PathParam("id") String id);
+	}
+
+	@RestClient
+	@SuppressWarnings("rawtypes")
+	public interface RawRipResponse {
+		@GET("http://example.com")
+		RipResponse foo();
+	}
+
+	@RestClient
+	public interface UnsupportedRipResponseTypeParam {
+		@GET("http://example.com")
+		RipResponse<List<String>> foo();
 	}
 
 	@RestClient
@@ -346,6 +372,30 @@ class RestClientValidatorTest {
 	void validate_unsupportedCompletableFutureTypeParam_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(UnsupportedCompletableFutureTypeParam.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
+	}
+
+	@Test
+	void validate_validRipResponse_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidRipResponse.class));
+	}
+
+	@Test
+	void validate_validRipResponseOfCompletableFuture_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidRipResponseOfCompletableFuture.class));
+	}
+
+	@Test
+	void validate_rawRipResponse_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(RawRipResponse.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("raw RipResponse"));
+	}
+
+	@Test
+	void validate_unsupportedRipResponseTypeParam_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(UnsupportedRipResponseTypeParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
 	}
 
