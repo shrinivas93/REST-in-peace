@@ -35,6 +35,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
@@ -56,6 +57,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.CorrelationIdInterceptor;
@@ -231,6 +233,17 @@ class RipIntegrationTest {
 		@GET("http://localhost:{port}/items/{id}")
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
 		RipResponse<String> getWithResponseAndRetry(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/slow/{id}")
+		String getSlow(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/slow/{id}")
+		@Timeout(readMillis = 50)
+		String getSlowWithShortTimeout(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/slow/{id}")
+		@Timeout(readMillis = 5_000)
+		String getSlowWithLongTimeoutOverride(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
 	@RestClient
@@ -345,6 +358,17 @@ class RipIntegrationTest {
 			exchange.sendResponseHeaders(503, 0);
 			try (OutputStream os = exchange.getResponseBody()) {
 				os.write(new byte[0]);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/slow/")) {
+			try {
+				Thread.sleep(300);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+			byte[] response = "ok".getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
 			}
 		} else if (exchange.getRequestURI().getPath().startsWith("/error/")) {
 			byte[] response = "{\"code\":\"INVALID\",\"message\":\"nope\"}".getBytes(StandardCharsets.UTF_8);
@@ -806,6 +830,48 @@ class RipIntegrationTest {
 		assertEquals(200, response.getStatus());
 		assertEquals("application/json", response.getHeader("Content-Type"));
 		assertEquals("Shrinivas", response.getBody().name);
+	}
+
+	@Test
+	void get_withNoTimeoutAnnotation_toleratesSlowResponse() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getSlow(port, "abc");
+
+		assertEquals("ok", result);
+	}
+
+	@Test
+	void get_withShortTimeoutAnnotation_throwsOnSlowResponse() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		assertThrows(RuntimeException.class, () -> api.getSlowWithShortTimeout(port, "abc"));
+	}
+
+	@Test
+	void get_withClientConfigReadTimeout_throwsOnSlowResponse() {
+		LocalApi api = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().readTimeoutMillis(50).build());
+
+		assertThrows(RuntimeException.class, () -> api.getSlow(port, "abc"));
+	}
+
+	@Test
+	void get_withMethodTimeoutOverridingShortClientConfig_succeeds() {
+		LocalApi api = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().readTimeoutMillis(50).build());
+
+		String result = api.getSlowWithLongTimeoutOverride(port, "abc");
+
+		assertEquals("ok", result);
+	}
+
+	@Test
+	void getClient_withUnreachableProxy_throws() {
+		LocalApi api = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().proxy("localhost", 1).build());
+
+		assertThrows(RuntimeException.class, () -> api.getSlow(port, "abc"));
 	}
 
 	@Test

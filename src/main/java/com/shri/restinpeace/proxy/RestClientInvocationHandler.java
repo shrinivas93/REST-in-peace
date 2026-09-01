@@ -11,6 +11,7 @@ import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.service.RestRequestProcessor;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
+import com.shri.restinpeace.RipClientConfig;
 
 /**
  * JDK dynamic proxy handler backing every client returned by
@@ -25,7 +26,7 @@ public class RestClientInvocationHandler implements InvocationHandler {
 
 	/** Creates a handler backed by a fresh {@link RestRequestProcessor} with no runtime base URL override. */
 	public RestClientInvocationHandler() {
-		this(null);
+		this((String) null);
 	}
 
 	/**
@@ -37,6 +38,16 @@ public class RestClientInvocationHandler implements InvocationHandler {
 	 */
 	public RestClientInvocationHandler(String baseUrlOverride) {
 		this.restRequestProcessor = new RestRequestProcessor(baseUrlOverride);
+	}
+
+	/**
+	 * Creates a handler backed by a fresh {@link RestRequestProcessor} built
+	 * from {@code config}.
+	 *
+	 * @param config the per-client settings
+	 */
+	public RestClientInvocationHandler(RipClientConfig config) {
+		this.restRequestProcessor = new RestRequestProcessor(config);
 	}
 
 	@Override
