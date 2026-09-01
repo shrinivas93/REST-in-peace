@@ -1,6 +1,7 @@
 package com.shri.restinpeace.validator;
 
 import java.io.File;
+import java.io.InputStream;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -34,6 +35,7 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
+import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.retry.Retry;
@@ -153,6 +155,8 @@ public class RestClientValidator {
 		boolean multipart = method.getAnnotation(Multipart.class) != null;
 		List<Parameter> parts = Stream.of(method.getParameters())
 				.filter(parameter -> parameter.getAnnotation(Part.class) != null).collect(Collectors.toList());
+		List<Parameter> partMaps = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(PartMap.class) != null).collect(Collectors.toList());
 
 		if (multipart && !BODY_SUPPORTED_METHODS.contains(httpMethod)) {
 			validationResult.addError(String.format(
@@ -160,9 +164,9 @@ public class RestClientValidator {
 					method.getDeclaringClass().getName(), method.getName(), httpMethod));
 		}
 
-		if (multipart && parts.isEmpty()) {
+		if (multipart && parts.isEmpty() && partMaps.isEmpty()) {
 			validationResult.addError(String.format(
-					"The method %s.%s is annotated with @Multipart but has no @Part parameters.",
+					"The method %s.%s is annotated with @Multipart but has no @Part or @PartMap parameters.",
 					method.getDeclaringClass().getName(), method.getName()));
 		}
 
@@ -178,10 +182,22 @@ public class RestClientValidator {
 					method.getDeclaringClass().getName(), method.getName()));
 		}
 
-		parts.stream().filter(parameter -> parameter.getType() != String.class && parameter.getType() != File.class)
+		if (!multipart && !partMaps.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @PartMap parameter but is not annotated with @Multipart.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		parts.stream().filter(parameter -> !isSupportedPartType(parameter.getType()))
 				.forEach(parameter -> validationResult.addError(String.format(
-						"The method %s.%s has a @Part parameter of type %s - only String and File are supported.",
+						"The method %s.%s has a @Part parameter of type %s - only String, File, byte[], and InputStream are supported.",
 						method.getDeclaringClass().getName(), method.getName(), parameter.getType().getName())));
+
+		validateMapParam(method, PartMap.class, "@PartMap", validationResult);
+	}
+
+	private static boolean isSupportedPartType(Class<?> type) {
+		return type == String.class || type == File.class || type == byte[].class || type == InputStream.class;
 	}
 
 	private static void validateMapParam(Method method, Class<? extends Annotation> annotationType,

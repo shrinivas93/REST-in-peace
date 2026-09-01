@@ -8,13 +8,14 @@ import java.lang.annotation.Target;
 
 /**
  * Marks a method as sending a {@code multipart/form-data} body built from
- * its {@link Part @Part}-annotated parameters, instead of the JSON/raw-string
- * body a {@link Body @Body} parameter would send. Valid only on
+ * its {@link Part @Part}/{@link PartMap @PartMap}-annotated parameters,
+ * instead of the JSON/raw-string body a {@link Body @Body} parameter would
+ * send. Valid only on
  * {@code @POST}, {@code @PUT}, {@code @PATCH}, and {@code @DELETE} methods -
  * using it on {@code @GET}, {@code @HEAD}, or {@code @OPTIONS} fails
  * validation, same as {@code @Body}. A method can't combine {@code @Multipart}
- * with a {@code @Body} parameter, and needs at least one {@code @Part}
- * parameter to be worth declaring multipart at all.
+ * with a {@code @Body} parameter, and needs at least one {@code @Part}/
+ * {@code @PartMap} parameter to be worth declaring multipart at all.
  *
  * <pre>{@literal @}POST("/users/{id}/avatar")
  * {@literal @}Multipart

@@ -1,6 +1,7 @@
 package com.shri.restinpeace.annotation.service;
 
 import java.io.File;
+import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -31,6 +32,7 @@ import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
+import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -410,8 +412,12 @@ public class RestRequestProcessor {
 			if (part != null) {
 				Object value = resolveValue(argValue, part.required(), RIPConstant.DEFAULT, part.value());
 				if (value != null) {
-					applyPart(multipartBody, part.value(), value);
+					applyPartValue(multipartBody, part.value(), part.fileName(), value);
 				}
+			}
+
+			if (parameter.getAnnotation(PartMap.class) != null && argValue != null) {
+				applyPartMap(multipartBody, (Map<?, ?>) argValue);
 			}
 
 			Body body = parameter.getAnnotation(Body.class);
@@ -422,11 +428,33 @@ public class RestRequestProcessor {
 		return request;
 	}
 
-	private void applyPart(MultipartBody multipartBody, String name, Object value) {
+	private void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
+		partMap.forEach((name, value) -> {
+			if (value != null) {
+				applyPartValue(multipartBody, String.valueOf(name), "", value);
+			}
+		});
+	}
+
+	private void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
+		boolean hasFileName = fileName != null && !fileName.isEmpty();
+		String effectiveFileName = hasFileName ? fileName : name;
 		if (value instanceof String) {
 			multipartBody.field(name, (String) value);
+		} else if (value instanceof File) {
+			if (hasFileName) {
+				multipartBody.field(name, (File) value, effectiveFileName);
+			} else {
+				multipartBody.field(name, (File) value);
+			}
+		} else if (value instanceof byte[]) {
+			multipartBody.field(name, (byte[]) value, effectiveFileName);
+		} else if (value instanceof InputStream) {
+			multipartBody.field(name, (InputStream) value, effectiveFileName);
 		} else {
-			multipartBody.field(name, (File) value);
+			throw new RestInPeaceException(String.format(
+					"Unsupported @Part/@PartMap value type %s for part '%s' - only String, File, byte[], and InputStream are supported.",
+					value.getClass().getName(), name));
 		}
 	}
 

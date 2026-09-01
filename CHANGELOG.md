@@ -25,8 +25,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   runtime. Combines with fixed `@QueryParam`/`@HeaderParam` on the same
   method.
 - `@Multipart`/`@Part` send a `multipart/form-data` body - a `String` part
-  as a plain form field, a `File` part as a file upload - instead of
-  `@Body`'s JSON/raw-string body.
+  as a plain form field, a `File`/`byte[]`/`InputStream` part as a file
+  upload (`@Part`'s `fileName` names a `byte[]`/`InputStream` part or
+  overrides a `File`'s own name) - instead of `@Body`'s JSON/raw-string body.
+- `@PartMap` adds one multipart part per entry of an annotated
+  `Map<String, ?>` parameter, for a set of part names not known until
+  runtime. Combines with fixed `@Part`s on the same method.
 
 ### Changed
 
