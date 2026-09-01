@@ -7,11 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -45,6 +47,8 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
+import com.shri.restinpeace.annotation.request.Multipart;
+import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -122,6 +126,16 @@ class RipIntegrationTest {
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithHeaderMap(@PathParam("port") int port, @PathParam("id") String id,
 				@HeaderMap Map<String, String> headers);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipart(@PathParam("port") int port, @PathParam("id") String id,
+				@Part("caption") String caption, @Part("file") File file);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithRequiredCaption(@PathParam("port") int port, @PathParam("id") String id,
+				@Part(value = "caption", required = true) String caption, @Part("file") File file);
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMissingRequiredQuery(@PathParam("port") int port, @PathParam("id") String id,
@@ -490,6 +504,45 @@ class RipIntegrationTest {
 
 		assertEquals("acme", LAST_REQUEST.get().header("X-Tenant"));
 		assertNull(LAST_REQUEST.get().header("X-Skip"));
+	}
+
+	@Test
+	void multipart_withStringAndFileParts_sendsMultipartFormData() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+
+		String result = api.uploadMultipart(port, "abc", "a caption", file);
+
+		assertEquals("ok", result);
+		CapturedRequest request = LAST_REQUEST.get();
+		assertTrue(request.header("Content-Type").startsWith("multipart/form-data"));
+		assertTrue(request.body.contains("name=\"caption\""));
+		assertTrue(request.body.contains("a caption"));
+		assertTrue(request.body.contains("name=\"file\""));
+		assertTrue(request.body.contains(file.getName()));
+		assertTrue(request.body.contains("file contents"));
+	}
+
+	@Test
+	void multipart_withNullOptionalPart_skipsThatField() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+
+		api.uploadMultipart(port, "abc", null, file);
+
+		assertFalse(LAST_REQUEST.get().body.contains("name=\"caption\""));
+	}
+
+	@Test
+	void multipart_withMissingRequiredPart_throwsRestInPeaceException() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = new File("unused.txt");
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> api.uploadMultipartWithRequiredCaption(port, "abc", null, file));
+		assertTrue(exception.getMessage().contains("Missing required value"));
 	}
 
 	@Test

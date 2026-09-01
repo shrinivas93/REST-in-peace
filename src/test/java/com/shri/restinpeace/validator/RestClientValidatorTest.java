@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -21,6 +22,8 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.Multipart;
+import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -185,6 +188,47 @@ class RestClientValidatorTest {
 		String foo(@HeaderMap String notAMap);
 	}
 
+	@RestClient
+	public interface ValidMultipart {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("caption") String caption, @Part("file") File file);
+	}
+
+	@RestClient
+	public interface MultipartOnGet {
+		@GET("http://example.com")
+		@Multipart
+		String foo(@Part("caption") String caption);
+	}
+
+	@RestClient
+	public interface MultipartWithoutParts {
+		@POST("http://example.com")
+		@Multipart
+		String foo();
+	}
+
+	@RestClient
+	public interface MultipartAndBody {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("caption") String caption, @Body String body);
+	}
+
+	@RestClient
+	public interface PartWithoutMultipart {
+		@POST("http://example.com")
+		String foo(@Part("caption") String caption);
+	}
+
+	@RestClient
+	public interface PartWrongType {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("count") int count);
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -345,6 +389,51 @@ class RestClientValidatorTest {
 				() -> RestClientValidator.validate(HeaderMapNotAMap.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("parameter annotated with @HeaderMap that is not a Map"));
+	}
+
+	@Test
+	void validate_validMultipart_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidMultipart.class));
+	}
+
+	@Test
+	void validate_multipartOnGet_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipartOnGet.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@Multipart but HTTP method GET does not support a request body"));
+	}
+
+	@Test
+	void validate_multipartWithoutParts_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipartWithoutParts.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@Multipart but has no @Part parameters"));
+	}
+
+	@Test
+	void validate_multipartAndBody_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipartAndBody.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@Multipart and also has a @Body parameter"));
+	}
+
+	@Test
+	void validate_partWithoutMultipart_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(PartWithoutMultipart.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has a @Part parameter but is not annotated with @Multipart"));
+	}
+
+	@Test
+	void validate_partWrongType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(PartWrongType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("only String and File are supported"));
 	}
 
 }

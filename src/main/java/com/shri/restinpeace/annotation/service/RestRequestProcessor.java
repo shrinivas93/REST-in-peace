@@ -1,5 +1,6 @@
 package com.shri.restinpeace.annotation.service;
 
+import java.io.File;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -28,6 +29,8 @@ import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
+import com.shri.restinpeace.annotation.request.Multipart;
+import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -42,6 +45,7 @@ import com.shri.restinpeace.interceptor.RequestInterceptor;
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
+import kong.unirest.MultipartBody;
 import kong.unirest.Unirest;
 
 /**
@@ -366,6 +370,12 @@ public class RestRequestProcessor {
 	private HttpRequest<?> applyParams(HttpRequest<?> request, Method method, Object[] args) {
 		Parameter[] parameters = method.getParameters();
 
+		MultipartBody multipartBody = null;
+		if (method.getAnnotation(Multipart.class) != null) {
+			multipartBody = ((HttpRequestWithBody) request).multiPartContent();
+			request = multipartBody;
+		}
+
 		for (int i = 0; i < parameters.length; i++) {
 			Parameter parameter = parameters[i];
 			Object argValue = args == null ? null : args[i];
@@ -396,12 +406,28 @@ public class RestRequestProcessor {
 				applyHeaderMap(request, (Map<?, ?>) argValue);
 			}
 
+			Part part = parameter.getAnnotation(Part.class);
+			if (part != null) {
+				Object value = resolveValue(argValue, part.required(), RIPConstant.DEFAULT, part.value());
+				if (value != null) {
+					applyPart(multipartBody, part.value(), value);
+				}
+			}
+
 			Body body = parameter.getAnnotation(Body.class);
 			if (body != null && argValue != null) {
 				request = applyBody(request, method, argValue);
 			}
 		}
 		return request;
+	}
+
+	private void applyPart(MultipartBody multipartBody, String name, Object value) {
+		if (value instanceof String) {
+			multipartBody.field(name, (String) value);
+		} else {
+			multipartBody.field(name, (File) value);
+		}
 	}
 
 	private void applyQueryMap(HttpRequest<?> request, Map<?, ?> queryMap) {
