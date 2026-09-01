@@ -90,7 +90,10 @@ for reference rather than tracked in code. Check items off as they land.
       `Map<String, ?>` parameter adds one part per entry for a set of names
       not known until runtime, mirroring `@QueryMap`/`@HeaderMap`; a `null`
       map or `null` entry value is skipped, and at most one `@PartMap`
-      parameter per method is allowed. `@Multipart` and a `@Body` parameter
+      parameter per method is allowed. Wrap a `File`/`byte[]`/`InputStream`
+      entry value in `PartValue.of(value, fileName)` to send it under a name
+      other than its map key, since a `@PartMap` entry has no per-entry
+      `fileName` attribute the way a fixed `@Part` does. `@Multipart` and a `@Body` parameter
       are mutually exclusive on one method; a `@Part`/`@PartMap` with no
       `@Multipart`, a `@Multipart` with no `@Part`/`@PartMap`, a wrong-typed
       `@Part`, a non-`Map` `@PartMap`, and `@Multipart` on a

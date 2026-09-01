@@ -1,6 +1,8 @@
 package com.shri.restinpeace.annotation.service;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -43,6 +45,7 @@ import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
+import com.shri.restinpeace.multipart.PartValue;
 
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
@@ -428,6 +431,14 @@ public class RestRequestProcessor {
 		return request;
 	}
 
+	private static InputStream openFile(File file) {
+		try {
+			return new FileInputStream(file);
+		} catch (FileNotFoundException e) {
+			throw new RestInPeaceException(String.format("The file '%s' does not exist.", file.getPath()), e);
+		}
+	}
+
 	private void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
 		partMap.forEach((name, value) -> {
 			if (value != null) {
@@ -437,24 +448,34 @@ public class RestRequestProcessor {
 	}
 
 	private void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
-		boolean hasFileName = fileName != null && !fileName.isEmpty();
-		String effectiveFileName = hasFileName ? fileName : name;
-		if (value instanceof String) {
-			multipartBody.field(name, (String) value);
-		} else if (value instanceof File) {
+		Object effectiveValue = value;
+		String effectiveFileName = fileName;
+		if (value instanceof PartValue) {
+			effectiveValue = ((PartValue) value).getValue();
+			effectiveFileName = ((PartValue) value).getFileName();
+		}
+		boolean hasFileName = effectiveFileName != null && !effectiveFileName.isEmpty();
+		String resolvedFileName = hasFileName ? effectiveFileName : name;
+		if (effectiveValue instanceof String) {
+			multipartBody.field(name, (String) effectiveValue);
+		} else if (effectiveValue instanceof File) {
 			if (hasFileName) {
-				multipartBody.field(name, (File) value, effectiveFileName);
+				// MultipartBody's (name, File, String) overload sets the part's content
+				// type, not its file name - there's no direct File+fileName overload, so
+				// the file is streamed instead to reach the (name, InputStream, String)
+				// overload that does set the file name.
+				multipartBody.field(name, openFile((File) effectiveValue), resolvedFileName);
 			} else {
-				multipartBody.field(name, (File) value);
+				multipartBody.field(name, (File) effectiveValue);
 			}
-		} else if (value instanceof byte[]) {
-			multipartBody.field(name, (byte[]) value, effectiveFileName);
-		} else if (value instanceof InputStream) {
-			multipartBody.field(name, (InputStream) value, effectiveFileName);
+		} else if (effectiveValue instanceof byte[]) {
+			multipartBody.field(name, (byte[]) effectiveValue, resolvedFileName);
+		} else if (effectiveValue instanceof InputStream) {
+			multipartBody.field(name, (InputStream) effectiveValue, resolvedFileName);
 		} else {
 			throw new RestInPeaceException(String.format(
 					"Unsupported @Part/@PartMap value type %s for part '%s' - only String, File, byte[], and InputStream are supported.",
-					value.getClass().getName(), name));
+					effectiveValue == null ? "null" : effectiveValue.getClass().getName(), name));
 		}
 	}
 
