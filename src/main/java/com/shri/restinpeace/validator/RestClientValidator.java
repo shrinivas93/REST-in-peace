@@ -2,12 +2,15 @@ package com.shri.restinpeace.validator;
 
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -27,7 +30,9 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
@@ -135,7 +140,25 @@ public class RestClientValidator {
 					validateBody(method, httpMethod, validationResult);
 					validateReturnType(method, validationResult);
 					validateRetry(method, validationResult);
+					validateMapParam(method, QueryMap.class, "@QueryMap", validationResult);
+					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
 				});
+	}
+
+	private static void validateMapParam(Method method, Class<? extends Annotation> annotationType,
+			String annotationName, ValidationResult validationResult) {
+		List<Parameter> annotated = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(annotationType) != null).collect(Collectors.toList());
+
+		if (annotated.size() > 1) {
+			validationResult.addError(String.format("The method %s.%s has more than one parameter annotated with %s.",
+					method.getDeclaringClass().getName(), method.getName(), annotationName));
+		}
+
+		annotated.stream().filter(parameter -> !Map.class.isAssignableFrom(parameter.getType()))
+				.forEach(parameter -> validationResult.addError(String.format(
+						"The method %s.%s has a parameter annotated with %s that is not a Map.",
+						method.getDeclaringClass().getName(), method.getName(), annotationName)));
 	}
 
 	private static void validateRetry(Method method, ValidationResult validationResult) {

@@ -16,6 +16,8 @@ methods like any other Java call.
 - All seven common HTTP verbs: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`,
   `HEAD`, `OPTIONS`
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
+- `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
+  known until runtime
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
@@ -190,6 +192,28 @@ Sets an HTTP header, with the same `required`/`defaultValue` semantics as
 @GET("https://api.example.com/items")
 String search(@HeaderParam(value = "Authorization", required = true) String token);
 ```
+
+### `@QueryMap` / `@HeaderMap`
+
+For a set of query params or headers whose names aren't known until
+runtime — a search endpoint's open-ended filter set, or caller-supplied
+headers in a multi-tenant app — annotate a `Map<String, ?>` parameter
+instead of adding one `@QueryParam`/`@HeaderParam` per name. Each map entry
+becomes one query param or header; a `null` map, or a `null` entry value,
+is skipped rather than throwing:
+
+```java
+@GET("https://api.example.com/search")
+String search(@QueryParam("q") String query, @QueryMap Map<String, String> filters);
+
+@GET("https://api.example.com/users/{id}")
+User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHeaders);
+```
+
+`@QueryMap`/`@HeaderMap` can be combined with fixed `@QueryParam`/`@HeaderParam`
+parameters on the same method — the fixed ones for names you always know,
+the map for everything else. At most one parameter per method may be
+annotated `@QueryMap`, and at most one `@HeaderMap`.
 
 ### `@Body`
 
