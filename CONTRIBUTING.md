@@ -47,20 +47,28 @@ mvn javadoc:javadoc
 ## Git workflow
 
 - Branch from `develop`, open your PR against `develop`.
-- `develop` → `master` only happens when cutting a release — never push or
-  merge directly to `master` otherwise.
+- `master` is only ever updated by merging a pull request from `develop` —
+  **never push or merge directly to `master`**, including when cutting a
+  release. `master` is branch-protected to require a pull request (with CI
+  passing) before merging; the one exception is `release.yml`'s own
+  version-bump/tag commit (see below), which is bypass-listed for the
+  `github-actions` bot specifically since `maven-release-plugin` pushes it
+  directly by design.
 - Every PR and every push to `develop`/`master` runs the CI workflow
   (`.github/workflows/ci.yml`): build + full test suite on Java 8.
 
 ## Release process (maintainers)
 
-Releases are cut by running the **Release** workflow
-(`.github/workflows/release.yml`) via `workflow_dispatch` against `master`.
-It uses `maven-release-plugin` to tag the release and bump `master` to the
-next `-SNAPSHOT`, creates the GitHub Release, and dispatches
-`maven-publish.yml` (publishes the jar + javadoc jar to GitHub Packages) and
-`javadoc.yml` (rebuilds and deploys the hosted API docs) against the exact
-release tag.
+1. Open and merge a pull request from `develop` into `master` (this is the
+   only way `master` advances outside of the release commit itself).
+2. Run the **Release** workflow (`.github/workflows/release.yml`) via
+   `workflow_dispatch` against `master`. It uses `maven-release-plugin` to
+   tag the release and bump `master` to the next `-SNAPSHOT` (its commits
+   push directly to `master`, exempted from the PR requirement above),
+   creates the GitHub Release, and dispatches `maven-publish.yml`
+   (publishes the jar + javadoc jar to GitHub Packages) and `javadoc.yml`
+   (rebuilds and deploys the hosted API docs) against the exact release
+   tag.
 
 Update `CHANGELOG.md` under `[Unreleased]` as part of any user-facing change;
 it gets turned into a versioned section when the next release is cut.
