@@ -33,6 +33,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   runtime. Combines with fixed `@Part`s on the same method. Wrap a
   `File`/`byte[]`/`InputStream` entry value in `PartValue.of(value,
   fileName)` to send it under a name other than its map key.
+- `RipResponse<T>` return type (or `CompletableFuture<RipResponse<T>>` for
+  an async method) wraps `T` with the response's status code and headers,
+  for a method that needs more than just the body. `T` is decoded by the
+  same rules as a plain return type. A non-2xx response still throws
+  `RestInPeaceHttpException` rather than being wrapped.
 
 ### Changed
 

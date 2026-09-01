@@ -35,6 +35,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -210,6 +211,26 @@ class RipIntegrationTest {
 
 		@GET("http://localhost:{port}/always-503/{id}")
 		void pingAlwaysFailing(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload/{id}")
+		RipResponse<Payload> getPayloadWithResponse(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload/{id}")
+		CompletableFuture<RipResponse<Payload>> getPayloadWithResponseAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
+
+		@GET("http://localhost:{port}/items/{id}")
+		RipResponse<String> getWithResponseString(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/items/{id}")
+		RipResponse<Void> getWithResponseVoid(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/error/{id}")
+		RipResponse<String> getErrorWithResponse(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/items/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
+		RipResponse<String> getWithResponseAndRetry(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
 	@RestClient
@@ -721,6 +742,70 @@ class RipIntegrationTest {
 		api.ping(port, "abc");
 
 		assertEquals("GET", LAST_REQUEST.get().method);
+	}
+
+	@Test
+	void get_withRipResponseOfPojo_exposesStatusHeadersAndDeserializedBody() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<Payload> response = api.getPayloadWithResponse(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertEquals("application/json", response.getHeader("Content-Type"));
+		assertEquals("application/json", response.getHeader("content-type"));
+		assertEquals("Shrinivas", response.getBody().name);
+		assertEquals(1993, response.getBody().age);
+	}
+
+	@Test
+	void get_withRipResponseOfString_exposesRawBody() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<String> response = api.getWithResponseString(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertEquals("ok", response.getBody());
+	}
+
+	@Test
+	void get_withRipResponseOfVoid_hasNullBodyButRealStatus() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<Void> response = api.getWithResponseVoid(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertNull(response.getBody());
+	}
+
+	@Test
+	void get_withRipResponseAndRetry_succeedsAfterRetryingAndStillExposesHeaders() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<String> response = api.getWithResponseAndRetry(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertEquals("ok", response.getBody());
+	}
+
+	@Test
+	void get_withRipResponseOnNonSuccessStatus_stillThrowsInsteadOfWrapping() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getErrorWithResponse(port, "abc"));
+		assertEquals(422, exception.getStatus());
+	}
+
+	@Test
+	void getAsync_withRipResponseOfPojo_completesWithStatusHeadersAndBody()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<Payload> response = api.getPayloadWithResponseAsync(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertEquals(200, response.getStatus());
+		assertEquals("application/json", response.getHeader("Content-Type"));
+		assertEquals("Shrinivas", response.getBody().name);
 	}
 
 	@Test

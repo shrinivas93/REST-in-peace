@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -46,7 +47,9 @@ import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
+import com.shri.restinpeace.RipResponse;
 
+import kong.unirest.Headers;
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
@@ -114,8 +117,9 @@ public class RestRequestProcessor {
 	 * @param method     the interface method that was called
 	 * @param httpMethod the HTTP method it maps to
 	 * @param args       the call's argument values, in declaration order
-	 * @return the call's result: the raw body, a deserialized object, a
-	 *         {@code CompletableFuture} of either, or {@code null} for
+	 * @return the call's result: the raw body, a deserialized object, either
+	 *         wrapped in a {@link RipResponse} for its status/headers, a
+	 *         {@code CompletableFuture} of any of those, or {@code null} for
 	 *         {@code void} methods
 	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
@@ -129,6 +133,11 @@ public class RestRequestProcessor {
 		Class<?> returnType = method.getReturnType();
 		if (returnType == CompletableFuture.class) {
 			return processAsync(request, method, context);
+		}
+		if (returnType == RipResponse.class) {
+			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
+			HttpResponse<String> response = executeSyncWithRetry(method, innerType, context, request::asString);
+			return wrapResponse(response, decodeOrThrow(response, method, innerType));
 		}
 		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context, request::asString);
 		return decodeOrThrow(response, method, returnType);
@@ -157,7 +166,13 @@ public class RestRequestProcessor {
 	}
 
 	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, RequestContext context) {
-		Class<?> innerType = resolveFutureInnerType(method);
+		Type futureInnerType = resolveFutureInnerType(method);
+		if (isRipResponseType(futureInnerType)) {
+			Class<?> innerType = resolveWrappedType(futureInnerType, method);
+			return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
+					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, method, innerType)));
+		}
+		Class<?> innerType = requireClass(futureInnerType, method);
 		return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
 				.thenApply(response -> decodeOrThrow(response, method, innerType));
 	}
@@ -292,19 +307,52 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private Class<?> resolveFutureInnerType(Method method) {
+	private Type resolveFutureInnerType(Method method) {
 		Type genericReturnType = method.getGenericReturnType();
 		if (!(genericReturnType instanceof ParameterizedType)) {
 			throw new RestInPeaceException(
 					String.format("The method %s returns a raw CompletableFuture with no type parameter.", method));
 		}
-		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
-		if (!(innerType instanceof Class)) {
+		return ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+	}
+
+	private static boolean isRipResponseType(Type type) {
+		return type instanceof ParameterizedType && ((ParameterizedType) type).getRawType() == RipResponse.class;
+	}
+
+	/**
+	 * Extracts a {@code RipResponse<T>}'s {@code T}, given either a method's
+	 * {@code RipResponse<T>} return type or a {@code CompletableFuture<T>}'s
+	 * inner {@code RipResponse<T>} type argument.
+	 */
+	private Class<?> resolveWrappedType(Type ripResponseType, Method method) {
+		if (!(ripResponseType instanceof ParameterizedType)) {
+			throw new RestInPeaceException(
+					String.format("The method %s returns a raw RipResponse with no type parameter.", method));
+		}
+		Type innerType = ((ParameterizedType) ripResponseType).getActualTypeArguments()[0];
+		return requireClass(innerType, method);
+	}
+
+	private Class<?> requireClass(Type type, Method method) {
+		if (!(type instanceof Class)) {
 			throw new RestInPeaceException(String.format(
 					"The method %s returns CompletableFuture<%s>, which is not a supported type parameter.", method,
-					innerType));
+					type));
 		}
-		return (Class<?>) innerType;
+		return (Class<?>) type;
+	}
+
+	private static Object wrapResponse(HttpResponse<String> response, Object decodedBody) {
+		return new RipResponse<>(response.getStatus(), toHeaderMap(response.getHeaders()), decodedBody);
+	}
+
+	private static Map<String, List<String>> toHeaderMap(Headers headers) {
+		Map<String, List<String>> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+		headers.all().forEach(header -> result.computeIfAbsent(header.getName(), key -> new ArrayList<>())
+				.add(header.getValue()));
+		result.replaceAll((name, values) -> Collections.unmodifiableList(values));
+		return Collections.unmodifiableMap(result);
 	}
 
 	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {
