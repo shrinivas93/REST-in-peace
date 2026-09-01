@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
@@ -226,21 +227,33 @@ public class RestClientValidator {
 	}
 
 	private static void validateReturnType(Method method, ValidationResult validationResult) {
-		if (method.getReturnType() != CompletableFuture.class) {
-			return;
+		Class<?> returnType = method.getReturnType();
+		if (returnType == CompletableFuture.class) {
+			validateParameterizedReturnType(method, method.getGenericReturnType(), "CompletableFuture", true,
+					validationResult);
+		} else if (returnType == RipResponse.class) {
+			validateParameterizedReturnType(method, method.getGenericReturnType(), "RipResponse", false,
+					validationResult);
 		}
-		Type genericReturnType = method.getGenericReturnType();
+	}
+
+	private static void validateParameterizedReturnType(Method method, Type genericReturnType, String typeName,
+			boolean allowRipResponseInner, ValidationResult validationResult) {
 		if (!(genericReturnType instanceof ParameterizedType)) {
-			validationResult.addError(String.format(
-					"The method %s.%s returns a raw CompletableFuture with no type parameter.",
-					method.getDeclaringClass().getName(), method.getName()));
+			validationResult.addError(String.format("The method %s.%s returns a raw %s with no type parameter.",
+					method.getDeclaringClass().getName(), method.getName(), typeName));
 			return;
 		}
 		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		if (allowRipResponseInner && innerType instanceof ParameterizedType
+				&& ((ParameterizedType) innerType).getRawType() == RipResponse.class) {
+			validateParameterizedReturnType(method, innerType, "RipResponse", false, validationResult);
+			return;
+		}
 		if (!(innerType instanceof Class)) {
 			validationResult.addError(String.format(
-					"The method %s.%s returns CompletableFuture<%s>, which is not a supported type parameter.",
-					method.getDeclaringClass().getName(), method.getName(), innerType));
+					"The method %s.%s returns %s<%s>, which is not a supported type parameter.",
+					method.getDeclaringClass().getName(), method.getName(), typeName, innerType));
 		}
 	}
 

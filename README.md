@@ -26,6 +26,8 @@ methods like any other Java call.
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
+- `RipResponse<T>` wraps `T` with the response's status code and headers,
+  for a method that needs more than just the body
 - A non-2xx response always throws `RestInPeaceHttpException`, with
   `@ErrorType` to deserialize the error body into a class
 - `CompletableFuture<T>` return types fire requests asynchronously
@@ -316,6 +318,31 @@ void fireEvent(@Body Event event);               // response body discarded
 discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies. These
 rules apply to a successful (2xx) response — see below for anything else.
+
+### Response headers and status: `RipResponse<T>`
+
+The rules above give you the body only. Declare `RipResponse<T>` instead of
+`T` (or `CompletableFuture<RipResponse<T>>` for an async method) when a call
+also needs the status code or a response header:
+
+```java
+@GET("https://api.example.com/users/{id}")
+RipResponse<User> getUser(@PathParam("id") String id);
+```
+
+```java
+RipResponse<User> response = userApi.getUser("42");
+System.out.println(response.getStatus());               // e.g. 200
+System.out.println(response.getHeader("ETag"));          // first value, case-insensitive lookup
+System.out.println(response.getHeaders());                // Map<String, List<String>>, every value
+User user = response.getBody();                          // decoded exactly like a plain T return
+```
+
+`T` is decoded by the same rules as a plain return type (`String` for the
+raw body, `Void` to discard it, anything else deserialized from JSON).
+`RipResponse<T>` only ever wraps a successful response — a non-2xx status
+still throws `RestInPeaceHttpException` as described below, it's never
+wrapped.
 
 ## Error handling
 
