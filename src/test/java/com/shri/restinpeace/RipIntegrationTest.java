@@ -62,6 +62,7 @@ import com.shri.restinpeace.interceptor.HeaderInterceptor;
 import com.shri.restinpeace.interceptor.LoggingInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
+import com.shri.restinpeace.multipart.PartValue;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -143,6 +144,11 @@ class RipIntegrationTest {
 		@Multipart
 		String uploadMultipartWithBytesAndStream(@PathParam("port") int port, @PathParam("id") String id,
 				@Part(value = "data", fileName = "data.bin") byte[] data, @Part("stream") InputStream stream);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithRenamedFile(@PathParam("port") int port, @PathParam("id") String id,
+				@Part(value = "file", fileName = "renamed.txt") File file);
 
 		@POST("http://localhost:{port}/items/{id}")
 		@Multipart
@@ -576,6 +582,20 @@ class RipIntegrationTest {
 	}
 
 	@Test
+	void multipart_withFilePartAndFileName_overridesFileNameNotContentType() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+
+		api.uploadMultipartWithRenamedFile(port, "abc", file);
+
+		CapturedRequest request = LAST_REQUEST.get();
+		assertTrue(request.body.contains("filename=\"renamed.txt\""));
+		assertFalse(request.body.contains(file.getName()));
+		assertTrue(request.body.contains("file contents"));
+	}
+
+	@Test
 	void partMap_withMixedValueTypes_sendsEachAsAppropriatePart() {
 		LocalApi api = RIP.getClient(LocalApi.class);
 		Map<String, Object> parts = new LinkedHashMap<>();
@@ -591,6 +611,37 @@ class RipIntegrationTest {
 		assertTrue(request.body.contains("name=\"data\""));
 		assertTrue(request.body.contains("filename=\"data\""));
 		assertTrue(request.body.contains("byte contents"));
+	}
+
+	@Test
+	void partMap_withPartValue_sendsGivenFileNameInsteadOfKey() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> parts = new LinkedHashMap<>();
+		parts.put("file", PartValue.of("byte contents".getBytes(StandardCharsets.UTF_8), "photo.jpg"));
+
+		String result = api.uploadMultipartWithPartMap(port, "abc", parts);
+
+		assertEquals("ok", result);
+		CapturedRequest request = LAST_REQUEST.get();
+		assertTrue(request.body.contains("name=\"file\""));
+		assertTrue(request.body.contains("filename=\"photo.jpg\""));
+		assertFalse(request.body.contains("filename=\"file\""));
+		assertTrue(request.body.contains("byte contents"));
+	}
+
+	@Test
+	void partMap_withPartValueWrappingFile_overridesFileName() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+		Map<String, Object> parts = new LinkedHashMap<>();
+		parts.put("file", PartValue.of(file, "renamed.txt"));
+
+		api.uploadMultipartWithPartMap(port, "abc", parts);
+
+		CapturedRequest request = LAST_REQUEST.get();
+		assertTrue(request.body.contains("filename=\"renamed.txt\""));
+		assertFalse(request.body.contains(file.getName()));
 	}
 
 	@Test

@@ -285,6 +285,18 @@ String upload(@PartMap Map<String, Object> parts);
 most one `@PartMap` parameter per method is allowed, same as `@QueryMap`/
 `@HeaderMap`.
 
+A `@PartMap` entry has no per-entry `fileName` to set, unlike a fixed
+`@Part` - wrap a `File`/`byte[]`/`InputStream` value in `PartValue.of(value,
+fileName)` when an entry needs a name other than its key:
+
+```java
+Map<String, Object> parts = new LinkedHashMap<>();
+parts.put("caption", "vacation photo");                          // plain form field
+parts.put("thumb", photoBytes);                                  // filename defaults to "thumb"
+parts.put("file", PartValue.of(photoBytes, "photo.jpg"));        // filename "photo.jpg" instead of "file"
+api.upload(parts);
+```
+
 ## Return types
 
 A method's declared return type controls what you get back:

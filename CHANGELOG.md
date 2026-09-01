@@ -30,7 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overrides a `File`'s own name) - instead of `@Body`'s JSON/raw-string body.
 - `@PartMap` adds one multipart part per entry of an annotated
   `Map<String, ?>` parameter, for a set of part names not known until
-  runtime. Combines with fixed `@Part`s on the same method.
+  runtime. Combines with fixed `@Part`s on the same method. Wrap a
+  `File`/`byte[]`/`InputStream` entry value in `PartValue.of(value,
+  fileName)` to send it under a name other than its map key.
 
 ### Changed
 
