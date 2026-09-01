@@ -20,6 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the base URL isn't known until runtime. Takes priority over `@BaseUrl`.
 - `@ErrorType(SomeClass.class)` deserializes a non-2xx response's error body
   into that class instead of the raw string.
+- `@QueryMap`/`@HeaderMap` add one query param/header per entry of an
+  annotated `Map<String, ?>` parameter, for a set of names not known until
+  runtime. Combines with fixed `@QueryParam`/`@HeaderParam` on the same
+  method.
 
 ### Changed
 

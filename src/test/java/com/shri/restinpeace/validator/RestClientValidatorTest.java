@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,10 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryMap;
+import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 
@@ -150,6 +154,37 @@ class RestClientValidatorTest {
 		String foo(@PathParam("port") int port, @PathParam("id") String id);
 	}
 
+	@RestClient
+	public interface ValidQueryAndHeaderMap {
+		@GET("http://example.com")
+		String foo(@QueryParam("fixed") String fixed, @QueryMap Map<String, String> filters,
+				@HeaderMap Map<String, Object> headers);
+	}
+
+	@RestClient
+	public interface MultipleQueryMaps {
+		@GET("http://example.com")
+		String foo(@QueryMap Map<String, String> a, @QueryMap Map<String, String> b);
+	}
+
+	@RestClient
+	public interface MultipleHeaderMaps {
+		@GET("http://example.com")
+		String foo(@HeaderMap Map<String, String> a, @HeaderMap Map<String, String> b);
+	}
+
+	@RestClient
+	public interface QueryMapNotAMap {
+		@GET("http://example.com")
+		String foo(@QueryMap String notAMap);
+	}
+
+	@RestClient
+	public interface HeaderMapNotAMap {
+		@GET("http://example.com")
+		String foo(@HeaderMap String notAMap);
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -273,6 +308,43 @@ class RestClientValidatorTest {
 	void validate_relativeUrlWithRuntimeBaseUrlOverride_passesEvenWithoutBaseUrlAnnotation() {
 		assertDoesNotThrow(
 				() -> RestClientValidator.validate(RelativeUrlWithoutBaseUrl.class, "http://example.com"));
+	}
+
+	@Test
+	void validate_validQueryAndHeaderMap_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidQueryAndHeaderMap.class));
+	}
+
+	@Test
+	void validate_multipleQueryMaps_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleQueryMaps.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one parameter annotated with @QueryMap"));
+	}
+
+	@Test
+	void validate_multipleHeaderMaps_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleHeaderMaps.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one parameter annotated with @HeaderMap"));
+	}
+
+	@Test
+	void validate_queryMapNotAMap_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(QueryMapNotAMap.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("parameter annotated with @QueryMap that is not a Map"));
+	}
+
+	@Test
+	void validate_headerMapNotAMap_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(HeaderMapNotAMap.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("parameter annotated with @HeaderMap that is not a Map"));
 	}
 
 }

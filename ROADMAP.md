@@ -72,10 +72,19 @@ for reference rather than tracked in code. Check items off as they land.
       success return type, since deciding success-vs-error now has to
       happen after fetching the raw body, not by asking Unirest to
       deserialize into the success shape unconditionally.
-- [ ] **`@QueryMap`/`@HeaderMap` and multipart/file upload** — `@Body`
-      currently only covers a raw string or a whole JSON-serialized object;
-      no support for a dynamic set of query params/headers or form/file
-      uploads.
+- [x] **`@QueryMap`/`@HeaderMap`** — a `Map<String, ?>` parameter annotated
+      `@QueryMap`/`@HeaderMap` adds one query param/header per entry, for a
+      set of names not known until runtime (a search endpoint's open-ended
+      filter set, caller-supplied headers in a multi-tenant app). Combines
+      with fixed `@QueryParam`/`@HeaderParam` on the same method. A `null`
+      map or a `null` entry value is skipped, not an error. At most one
+      parameter per method may carry each annotation, and it must be a
+      `Map`, both checked at `RestClientValidator` time.
+- [ ] **Multipart/file upload** — `@Body` currently only covers a raw string
+      or a whole JSON-serialized object; no `@Multipart`/`@Part` support for
+      form/file uploads. Split out from the item above since it needs
+      Unirest's `MultipartBody` API and a different request-building path,
+      not just another parameter annotation.
 - [ ] **Per-call timeout** — no way to override the client's configured
       connect/read timeout for one slow endpoint.
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
