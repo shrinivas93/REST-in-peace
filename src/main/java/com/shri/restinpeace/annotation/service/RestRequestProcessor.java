@@ -40,6 +40,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.exception.RestInPeaceException;
@@ -47,6 +48,7 @@ import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
+import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
 import kong.unirest.Headers;
@@ -54,7 +56,9 @@ import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
+import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
+import kong.unirest.UnirestInstance;
 
 /**
  * Builds and executes the actual HTTP request for a {@code @RestClient}
@@ -75,10 +79,11 @@ public class RestRequestProcessor {
 	});
 
 	private final String baseUrlOverride;
+	private final UnirestInstance unirestInstance;
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RestRequestProcessor() {
-		this(null);
+		this((String) null);
 	}
 
 	/**
@@ -86,13 +91,49 @@ public class RestRequestProcessor {
 	 * {@code baseUrlOverride} instead of the interface's {@code @BaseUrl},
 	 * for a base URL that's only known at runtime (e.g. per deployment
 	 * environment). An absolute method URL still ignores this, same as it
-	 * ignores {@code @BaseUrl}.
+	 * ignores {@code @BaseUrl}. Requests still go through the shared static
+	 * {@code Unirest} client.
 	 *
 	 * @param baseUrlOverride the runtime base URL, or {@code null} to fall
 	 *                        back to the interface's {@code @BaseUrl}
 	 */
 	public RestRequestProcessor(String baseUrlOverride) {
 		this.baseUrlOverride = baseUrlOverride;
+		this.unirestInstance = null;
+	}
+
+	/**
+	 * Creates a processor from a {@link RipClientConfig}. Requests go through
+	 * a dedicated {@code UnirestInstance} - instead of the shared static
+	 * {@code Unirest} client - whenever {@code config} sets a connect/read
+	 * timeout or a proxy, since those settings live on a client instance,
+	 * not per request.
+	 *
+	 * @param config the per-client settings
+	 */
+	public RestRequestProcessor(RipClientConfig config) {
+		this.baseUrlOverride = config.getBaseUrl();
+		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
+				|| config.getProxyHost() != null;
+		if (!needsOwnInstance) {
+			this.unirestInstance = null;
+			return;
+		}
+		this.unirestInstance = Unirest.spawnInstance();
+		if (config.getConnectTimeoutMillis() != null) {
+			unirestInstance.config().connectTimeout(config.getConnectTimeoutMillis());
+		}
+		if (config.getReadTimeoutMillis() != null) {
+			unirestInstance.config().socketTimeout(config.getReadTimeoutMillis());
+		}
+		if (config.getProxyHost() != null) {
+			if (config.getProxyUsername() != null) {
+				unirestInstance.config().proxy(config.getProxyHost(), config.getProxyPort(), config.getProxyUsername(),
+						config.getProxyPassword());
+			} else {
+				unirestInstance.config().proxy(config.getProxyHost(), config.getProxyPort());
+			}
+		}
 	}
 
 	/**
@@ -127,6 +168,7 @@ public class RestRequestProcessor {
 		RequestContext context = new RequestContext(httpMethod, url);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
+		applyTimeout(request, method);
 		request = applyParams(request, method, args);
 		request = applyInterceptors(request, context);
 
@@ -201,7 +243,7 @@ public class RestRequestProcessor {
 		if (!isSuccessStatus(response.getStatus())) {
 			ErrorType errorType = method.getAnnotation(ErrorType.class);
 			if (errorType != null && rawBody != null && !rawBody.isEmpty()) {
-				return Unirest.config().getObjectMapper().readValue(rawBody, errorType.value());
+				return getObjectMapper().readValue(rawBody, errorType.value());
 			}
 			return rawBody;
 		}
@@ -211,7 +253,7 @@ public class RestRequestProcessor {
 		if (returnType == void.class || returnType == Void.class) {
 			return null;
 		}
-		return Unirest.config().getObjectMapper().readValue(rawBody, returnType);
+		return getObjectMapper().readValue(rawBody, returnType);
 	}
 
 	private static boolean isSuccessStatus(int status) {
@@ -400,6 +442,9 @@ public class RestRequestProcessor {
 	}
 
 	private HttpRequest<?> createRequest(HTTPMethod httpMethod, String url) {
+		if (unirestInstance != null) {
+			return createRequest(unirestInstance, httpMethod, url);
+		}
 		switch (httpMethod) {
 		case GET:
 			return Unirest.get(url);
@@ -418,6 +463,44 @@ public class RestRequestProcessor {
 		default:
 			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
 		}
+	}
+
+	private HttpRequest<?> createRequest(UnirestInstance instance, HTTPMethod httpMethod, String url) {
+		switch (httpMethod) {
+		case GET:
+			return instance.get(url);
+		case HEAD:
+			return instance.head(url);
+		case OPTIONS:
+			return instance.options(url);
+		case POST:
+			return instance.post(url);
+		case PUT:
+			return instance.put(url);
+		case PATCH:
+			return instance.patch(url);
+		case DELETE:
+			return instance.delete(url);
+		default:
+			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
+		}
+	}
+
+	private void applyTimeout(HttpRequest<?> request, Method method) {
+		Timeout timeout = method.getAnnotation(Timeout.class);
+		if (timeout == null) {
+			return;
+		}
+		if (timeout.connectMillis() >= 0) {
+			request.connectTimeout(timeout.connectMillis());
+		}
+		if (timeout.readMillis() >= 0) {
+			request.socketTimeout(timeout.readMillis());
+		}
+	}
+
+	private ObjectMapper getObjectMapper() {
+		return unirestInstance != null ? unirestInstance.config().getObjectMapper() : Unirest.config().getObjectMapper();
 	}
 
 	private HttpRequest<?> applyParams(HttpRequest<?> request, Method method, Object[] args) {

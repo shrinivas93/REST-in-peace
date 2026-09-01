@@ -38,7 +38,7 @@ public class RIP {
 	 *                              {@code @RestClient} or fails validation
 	 */
 	public static <T> T getClient(Class<T> restClient) {
-		return getClient(restClient, null);
+		return getClient(restClient, (String) null);
 	}
 
 	/**
@@ -77,6 +77,39 @@ public class RIP {
 		}
 		return (T) Proxy.newProxyInstance(restClient.getClassLoader(), new Class[] { restClient },
 				new RestClientInvocationHandler(baseUrl));
+	}
+
+	/**
+	 * Same as {@link #getClient(Class)}, but resolves the base URL,
+	 * connect/read timeout, and proxy from {@code config} instead of the
+	 * interface's {@code @BaseUrl} and the shared client's global config -
+	 * for a {@code @RestClient} whose environment (base URL, timeout,
+	 * proxy) differs from every other client's. See {@link RipClientConfig}.
+	 *
+	 * @param <T>        the rest client interface type
+	 * @param restClient an interface annotated with
+	 *                    {@link com.shri.restinpeace.annotation.marker.RestClient @RestClient}
+	 * @param config     the per-client settings
+	 * @return a proxy instance implementing {@code restClient}
+	 * @throws RestInPeaceException if the interface is missing
+	 *                              {@code @RestClient} or fails validation
+	 */
+	@SuppressWarnings("unchecked")
+	public static <T> T getClient(Class<T> restClient, RipClientConfig config) {
+
+		try {
+			RestClientValidator.validate(restClient, config.getBaseUrl());
+		} catch (RestInPeaceValidationException e) {
+			throw new RestInPeaceException(String.format("The rest client %s failed during validation with %s errors.",
+					restClient.getName(), e.getValidationResult().getErrors().size()), e);
+		}
+
+		if (null == restClient.getAnnotation(RestClient.class)) {
+			throw new RestInPeaceException(String.format("The interface %s is not annotated with %s.",
+					restClient.getName(), RestClient.class.getName()));
+		}
+		return (T) Proxy.newProxyInstance(restClient.getClassLoader(), new Class[] { restClient },
+				new RestClientInvocationHandler(config));
 	}
 
 	/**

@@ -40,6 +40,7 @@ import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
@@ -149,7 +150,25 @@ public class RestClientValidator {
 					validateMapParam(method, QueryMap.class, "@QueryMap", validationResult);
 					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
 					validateMultipart(method, httpMethod, validationResult);
+					validateTimeout(method, validationResult);
 				});
+	}
+
+	private static void validateTimeout(Method method, ValidationResult validationResult) {
+		Timeout timeout = method.getAnnotation(Timeout.class);
+		if (timeout == null) {
+			return;
+		}
+		if (timeout.connectMillis() < -1) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Timeout but connectMillis must be -1 (unset) or a non-negative number of milliseconds.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+		if (timeout.readMillis() < -1) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Timeout but readMillis must be -1 (unset) or a non-negative number of milliseconds.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
 	}
 
 	private static void validateMultipart(Method method, HTTPMethod httpMethod, ValidationResult validationResult) {
