@@ -11,8 +11,9 @@ import com.shri.restinpeace.constant.HTTPRequestParam;
 
 /**
  * One field of a {@link Multipart @Multipart} method's multipart body. Only
- * valid on a method also annotated {@code @Multipart}; only {@code String}
- * (a plain form field) and {@code java.io.File} (a file part) parameters are
+ * valid on a method also annotated {@code @Multipart}; {@code String} (a
+ * plain form field), {@code java.io.File}, {@code byte[]}, and
+ * {@code java.io.InputStream} (all sent as a file part) parameters are
  * supported.
  */
 @Documented
@@ -27,6 +28,17 @@ public @interface Part {
 	 * @return the field name
 	 */
 	String value();
+
+	/**
+	 * The file name sent for a {@code byte[]}/{@code java.io.InputStream}
+	 * value, or to override a {@code java.io.File} value's own name.
+	 * Ignored for a {@code String} value. Defaults to {@link #value()} when
+	 * left unset, since {@code byte[]}/{@code InputStream} have no name of
+	 * their own to fall back on.
+	 *
+	 * @return the file name, or {@code ""} to use {@link #value()}
+	 */
+	String fileName() default "";
 
 	/**
 	 * If true, a {@code null} argument throws a

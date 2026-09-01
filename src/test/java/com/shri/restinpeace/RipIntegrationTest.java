@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -49,6 +50,7 @@ import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
+import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -136,6 +138,16 @@ class RipIntegrationTest {
 		@Multipart
 		String uploadMultipartWithRequiredCaption(@PathParam("port") int port, @PathParam("id") String id,
 				@Part(value = "caption", required = true) String caption, @Part("file") File file);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithBytesAndStream(@PathParam("port") int port, @PathParam("id") String id,
+				@Part(value = "data", fileName = "data.bin") byte[] data, @Part("stream") InputStream stream);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithPartMap(@PathParam("port") int port, @PathParam("id") String id,
+				@PartMap Map<String, Object> parts);
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMissingRequiredQuery(@PathParam("port") int port, @PathParam("id") String id,
@@ -543,6 +555,75 @@ class RipIntegrationTest {
 		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
 				() -> api.uploadMultipartWithRequiredCaption(port, "abc", null, file));
 		assertTrue(exception.getMessage().contains("Missing required value"));
+	}
+
+	@Test
+	void multipart_withBytePartAndFileName_sendsGivenFileNameAndBytes() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		byte[] data = "byte contents".getBytes(StandardCharsets.UTF_8);
+		InputStream stream = new ByteArrayInputStream("stream contents".getBytes(StandardCharsets.UTF_8));
+
+		String result = api.uploadMultipartWithBytesAndStream(port, "abc", data, stream);
+
+		assertEquals("ok", result);
+		CapturedRequest request = LAST_REQUEST.get();
+		assertTrue(request.body.contains("name=\"data\""));
+		assertTrue(request.body.contains("filename=\"data.bin\""));
+		assertTrue(request.body.contains("byte contents"));
+		assertTrue(request.body.contains("name=\"stream\""));
+		assertTrue(request.body.contains("filename=\"stream\""));
+		assertTrue(request.body.contains("stream contents"));
+	}
+
+	@Test
+	void partMap_withMixedValueTypes_sendsEachAsAppropriatePart() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> parts = new LinkedHashMap<>();
+		parts.put("caption", "a caption");
+		parts.put("data", "byte contents".getBytes(StandardCharsets.UTF_8));
+
+		String result = api.uploadMultipartWithPartMap(port, "abc", parts);
+
+		assertEquals("ok", result);
+		CapturedRequest request = LAST_REQUEST.get();
+		assertTrue(request.body.contains("name=\"caption\""));
+		assertTrue(request.body.contains("a caption"));
+		assertTrue(request.body.contains("name=\"data\""));
+		assertTrue(request.body.contains("filename=\"data\""));
+		assertTrue(request.body.contains("byte contents"));
+	}
+
+	@Test
+	void partMap_withNullMap_sendsNoParts() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.uploadMultipartWithPartMap(port, "abc", null);
+
+		assertEquals("ok", result);
+	}
+
+	@Test
+	void partMap_withNullValue_skipsThatEntry() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> parts = new LinkedHashMap<>();
+		parts.put("caption", "a caption");
+		parts.put("skip", null);
+
+		api.uploadMultipartWithPartMap(port, "abc", parts);
+
+		assertTrue(LAST_REQUEST.get().body.contains("name=\"caption\""));
+		assertFalse(LAST_REQUEST.get().body.contains("name=\"skip\""));
+	}
+
+	@Test
+	void partMap_withUnsupportedValueType_throwsRestInPeaceException() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> parts = new LinkedHashMap<>();
+		parts.put("bad", 42);
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> api.uploadMultipartWithPartMap(port, "abc", parts));
+		assertTrue(exception.getMessage().contains("Unsupported"));
 	}
 
 	@Test

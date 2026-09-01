@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -24,6 +25,7 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
+import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -229,6 +231,40 @@ class RestClientValidatorTest {
 		String foo(@Part("count") int count);
 	}
 
+	@RestClient
+	public interface ValidPartBytesAndStream {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("data") byte[] data, @Part("stream") InputStream stream);
+	}
+
+	@RestClient
+	public interface ValidPartMapOnly {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@PartMap Map<String, Object> parts);
+	}
+
+	@RestClient
+	public interface PartMapWithoutMultipart {
+		@POST("http://example.com")
+		String foo(@PartMap Map<String, Object> parts);
+	}
+
+	@RestClient
+	public interface PartMapNotAMap {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@PartMap String notAMap);
+	}
+
+	@RestClient
+	public interface MultiplePartMaps {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@PartMap Map<String, Object> first, @PartMap Map<String, Object> second);
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -409,7 +445,7 @@ class RestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(MultipartWithoutParts.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("@Multipart but has no @Part parameters"));
+				.contains("@Multipart but has no @Part or @PartMap parameters"));
 	}
 
 	@Test
@@ -433,7 +469,41 @@ class RestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(PartWrongType.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("only String and File are supported"));
+				.contains("only String, File, byte[], and InputStream are supported"));
+	}
+
+	@Test
+	void validate_partBytesAndStream_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidPartBytesAndStream.class));
+	}
+
+	@Test
+	void validate_partMapOnly_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidPartMapOnly.class));
+	}
+
+	@Test
+	void validate_partMapWithoutMultipart_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(PartMapWithoutMultipart.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has a @PartMap parameter but is not annotated with @Multipart"));
+	}
+
+	@Test
+	void validate_partMapNotAMap_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(PartMapNotAMap.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("parameter annotated with @PartMap that is not a Map"));
+	}
+
+	@Test
+	void validate_multiplePartMaps_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultiplePartMaps.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one parameter annotated with @PartMap"));
 	}
 
 }
