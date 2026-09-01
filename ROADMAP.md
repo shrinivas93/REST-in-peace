@@ -113,3 +113,13 @@ for reference rather than tracked in code. Check items off as they land.
       connect/read timeout for one slow endpoint.
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
       `@RestClient` interfaces without hitting real HTTP.
+- [ ] **(Low priority) Fix branch protection on `master`** — repo process,
+      not a library feature. A ruleset requiring a pull request before
+      merging was set up on `master`, but the bypass entry for the release
+      automation didn't work on the first attempt (a role-based
+      "Repository admin" bypass doesn't cover a push made as the
+      `github-actions[bot]` app - adding the GitHub Actions app itself to
+      the bypass list was what actually worked) and the ruleset has since
+      been disabled entirely. Needs a proper, verified setup - PRs required
+      into `master`, with a working bypass for `release.yml`'s own
+      version-bump/tag push - before it's turned back on for real.
