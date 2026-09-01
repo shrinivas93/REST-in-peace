@@ -115,25 +115,26 @@ public class RestRequestProcessor {
 		this.baseUrlOverride = config.getBaseUrl();
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
 				|| config.getProxyHost() != null;
-		if (!needsOwnInstance) {
-			this.unirestInstance = null;
-			return;
-		}
-		this.unirestInstance = Unirest.spawnInstance();
+		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
+	}
+
+	private static UnirestInstance buildInstance(RipClientConfig config) {
+		UnirestInstance instance = Unirest.spawnInstance();
 		if (config.getConnectTimeoutMillis() != null) {
-			unirestInstance.config().connectTimeout(config.getConnectTimeoutMillis());
+			instance.config().connectTimeout(config.getConnectTimeoutMillis());
 		}
 		if (config.getReadTimeoutMillis() != null) {
-			unirestInstance.config().socketTimeout(config.getReadTimeoutMillis());
+			instance.config().socketTimeout(config.getReadTimeoutMillis());
 		}
 		if (config.getProxyHost() != null) {
 			if (config.getProxyUsername() != null) {
-				unirestInstance.config().proxy(config.getProxyHost(), config.getProxyPort(), config.getProxyUsername(),
+				instance.config().proxy(config.getProxyHost(), config.getProxyPort(), config.getProxyUsername(),
 						config.getProxyPassword());
 			} else {
-				unirestInstance.config().proxy(config.getProxyHost(), config.getProxyPort());
+				instance.config().proxy(config.getProxyHost(), config.getProxyPort());
 			}
 		}
+		return instance;
 	}
 
 	/**
