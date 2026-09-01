@@ -18,6 +18,9 @@ methods like any other Java call.
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
 - `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
   known until runtime
+- `@Multipart`/`@Part`/`@PartMap` for `multipart/form-data` uploads (form
+  fields, `File`/`byte[]`/`InputStream` file parts, and a dynamic set of
+  parts not known until runtime)
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
@@ -230,6 +233,69 @@ String createRaw(@Body String rawJson);
 ```
 
 At most one parameter per method may be annotated `@Body`.
+
+### `@Multipart` / `@Part` / `@PartMap`
+
+Sends a `multipart/form-data` body instead of `@Body`'s JSON/raw-string one —
+for file uploads and classic HTML-form-style POSTs:
+
+```java
+@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatar(@PathParam("id") String id, @Part("caption") String caption, @Part("file") File avatar);
+```
+
+`@Multipart` goes on the method (same HTTP methods `@Body` supports —
+`GET`/`HEAD`/`OPTIONS` fail validation); `@Part` goes on each field. A
+`String` is sent as a plain form field; `File`, `byte[]`, and `InputStream`
+are all sent as a file part. A method can't combine `@Multipart` with a
+`@Body` parameter, and needs at least one `@Part`/`@PartMap` to be worth
+declaring multipart at all. `@Part`'s `required` works the same as
+`@QueryParam`'s — `false` by default, silently skipping a `null` argument;
+`true` throws at call time instead.
+
+A `byte[]`/`InputStream` part has no filename of its own, so the multipart
+field needs one from somewhere — `@Part`'s `fileName` supplies it (also
+usable to override a `File` part's own name), defaulting to the part's
+`value()` when left unset:
+
+```java
+@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatarBytes(@PathParam("id") String id,
+        @Part(value = "file", fileName = "avatar.png") byte[] avatarBytes);
+```
+
+For a set of parts not known until runtime, `@PartMap` on a `Map<String, ?>`
+parameter adds one part per entry — the `@Part`/`@Multipart` counterpart to
+`@QueryMap`/`@HeaderMap`. Each value is handled the same way a `@Part` value
+would be, with the entry's key doubling as the filename for a
+`byte[]`/`InputStream` value:
+
+```java
+@POST("https://api.example.com/uploads")
+@Multipart
+String upload(@PartMap Map<String, Object> parts);
+
+// upload(mapOf("caption", "vacation photo", "file", photoBytes));
+```
+
+`@PartMap` combines with fixed `@Part` parameters on the same method, a
+`null` map or a `null` entry value is skipped rather than an error, and at
+most one `@PartMap` parameter per method is allowed, same as `@QueryMap`/
+`@HeaderMap`.
+
+A `@PartMap` entry has no per-entry `fileName` to set, unlike a fixed
+`@Part` - wrap a `File`/`byte[]`/`InputStream` value in `PartValue.of(value,
+fileName)` when an entry needs a name other than its key:
+
+```java
+Map<String, Object> parts = new LinkedHashMap<>();
+parts.put("caption", "vacation photo");                          // plain form field
+parts.put("thumb", photoBytes);                                  // filename defaults to "thumb"
+parts.put("file", PartValue.of(photoBytes, "photo.jpg"));        // filename "photo.jpg" instead of "file"
+api.upload(parts);
+```
 
 ## Return types
 

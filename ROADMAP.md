@@ -80,11 +80,24 @@ for reference rather than tracked in code. Check items off as they land.
       map or a `null` entry value is skipped, not an error. At most one
       parameter per method may carry each annotation, and it must be a
       `Map`, both checked at `RestClientValidator` time.
-- [ ] **Multipart/file upload** — `@Body` currently only covers a raw string
-      or a whole JSON-serialized object; no `@Multipart`/`@Part` support for
-      form/file uploads. Split out from the item above since it needs
-      Unirest's `MultipartBody` API and a different request-building path,
-      not just another parameter annotation.
+- [x] **Multipart/file upload** — `@Multipart` on a method builds a
+      `multipart/form-data` body from its `@Part`/`@PartMap`-annotated
+      parameters instead of `@Body`'s JSON/raw-string one, via Unirest's
+      `MultipartBody`. `@Part` supports `String` (a form field), `File`,
+      `byte[]`, and `InputStream` (all sent as a file part - `@Part`'s
+      `fileName` names a `byte[]`/`InputStream` part or overrides a `File`'s
+      own name, defaulting to the part's field name). `@PartMap` on a
+      `Map<String, ?>` parameter adds one part per entry for a set of names
+      not known until runtime, mirroring `@QueryMap`/`@HeaderMap`; a `null`
+      map or `null` entry value is skipped, and at most one `@PartMap`
+      parameter per method is allowed. Wrap a `File`/`byte[]`/`InputStream`
+      entry value in `PartValue.of(value, fileName)` to send it under a name
+      other than its map key, since a `@PartMap` entry has no per-entry
+      `fileName` attribute the way a fixed `@Part` does. `@Multipart` and a `@Body` parameter
+      are mutually exclusive on one method; a `@Part`/`@PartMap` with no
+      `@Multipart`, a `@Multipart` with no `@Part`/`@PartMap`, a wrong-typed
+      `@Part`, a non-`Map` `@PartMap`, and `@Multipart` on a
+      non-body-supporting HTTP method are all validation errors.
 - [ ] **Per-call timeout** — no way to override the client's configured
       connect/read timeout for one slow endpoint.
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
