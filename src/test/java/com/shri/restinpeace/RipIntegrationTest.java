@@ -14,9 +14,11 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -41,8 +43,10 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceException;
@@ -106,6 +110,18 @@ class RipIntegrationTest {
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithOptionalQuery(@PathParam("port") int port, @PathParam("id") String id,
 				@QueryParam(value = "q", defaultValue = "42") Integer q);
+
+		@GET("http://localhost:{port}/items/{id}")
+		String getWithQueryMap(@PathParam("port") int port, @PathParam("id") String id,
+				@QueryMap Map<String, String> filters);
+
+		@GET("http://localhost:{port}/items/{id}")
+		String getWithFixedQueryParamAndQueryMap(@PathParam("port") int port, @PathParam("id") String id,
+				@QueryParam("fixed") String fixed, @QueryMap Map<String, String> extra);
+
+		@GET("http://localhost:{port}/items/{id}")
+		String getWithHeaderMap(@PathParam("port") int port, @PathParam("id") String id,
+				@HeaderMap Map<String, String> headers);
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMissingRequiredQuery(@PathParam("port") int port, @PathParam("id") String id,
@@ -393,6 +409,87 @@ class RipIntegrationTest {
 		api.getWithOptionalQuery(port, "d", null);
 
 		assertEquals("q=42", LAST_REQUEST.get().query);
+	}
+
+	@Test
+	void queryMap_withEntries_sendsEachAsQueryParam() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, String> filters = new LinkedHashMap<>();
+		filters.put("status", "active");
+		filters.put("sort", "name");
+
+		api.getWithQueryMap(port, "abc", filters);
+
+		Set<String> queryParams = new HashSet<>(Arrays.asList(LAST_REQUEST.get().query.split("&")));
+		assertEquals(new HashSet<>(Arrays.asList("status=active", "sort=name")), queryParams);
+	}
+
+	@Test
+	void queryMap_withNullMap_sendsNoQueryParams() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getWithQueryMap(port, "abc", null);
+
+		assertNull(LAST_REQUEST.get().query);
+	}
+
+	@Test
+	void queryMap_withNullValue_skipsThatEntry() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, String> filters = new LinkedHashMap<>();
+		filters.put("status", "active");
+		filters.put("skip", null);
+
+		api.getWithQueryMap(port, "abc", filters);
+
+		assertEquals("status=active", LAST_REQUEST.get().query);
+	}
+
+	@Test
+	void queryMap_combinedWithFixedQueryParam_sendsBoth() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, String> extra = new LinkedHashMap<>();
+		extra.put("status", "active");
+
+		api.getWithFixedQueryParamAndQueryMap(port, "abc", "fixedValue", extra);
+
+		Set<String> queryParams = new HashSet<>(Arrays.asList(LAST_REQUEST.get().query.split("&")));
+		assertEquals(new HashSet<>(Arrays.asList("fixed=fixedValue", "status=active")), queryParams);
+	}
+
+	@Test
+	void headerMap_withEntries_sendsEachAsHeader() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, String> headers = new LinkedHashMap<>();
+		headers.put("X-Tenant", "acme");
+		headers.put("X-Trace-Id", "trace-123");
+
+		api.getWithHeaderMap(port, "abc", headers);
+
+		assertEquals("acme", LAST_REQUEST.get().header("X-Tenant"));
+		assertEquals("trace-123", LAST_REQUEST.get().header("X-Trace-Id"));
+	}
+
+	@Test
+	void headerMap_withNullMap_sendsNoExtraHeaders() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getWithHeaderMap(port, "abc", null);
+
+		assertEquals("ok", result);
+	}
+
+	@Test
+	void headerMap_withNullValue_skipsThatEntry() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, String> headers = new LinkedHashMap<>();
+		headers.put("X-Tenant", "acme");
+		headers.put("X-Skip", null);
+
+		api.getWithHeaderMap(port, "abc", headers);
+
+		assertEquals("acme", LAST_REQUEST.get().header("X-Tenant"));
+		assertNull(LAST_REQUEST.get().header("X-Skip"));
 	}
 
 	@Test

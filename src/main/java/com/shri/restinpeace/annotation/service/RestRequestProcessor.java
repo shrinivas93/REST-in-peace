@@ -7,6 +7,7 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -25,8 +26,10 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -385,12 +388,36 @@ public class RestRequestProcessor {
 				}
 			}
 
+			if (parameter.getAnnotation(QueryMap.class) != null && argValue != null) {
+				applyQueryMap(request, (Map<?, ?>) argValue);
+			}
+
+			if (parameter.getAnnotation(HeaderMap.class) != null && argValue != null) {
+				applyHeaderMap(request, (Map<?, ?>) argValue);
+			}
+
 			Body body = parameter.getAnnotation(Body.class);
 			if (body != null && argValue != null) {
 				request = applyBody(request, method, argValue);
 			}
 		}
 		return request;
+	}
+
+	private void applyQueryMap(HttpRequest<?> request, Map<?, ?> queryMap) {
+		queryMap.forEach((name, value) -> {
+			if (value != null) {
+				request.queryString(String.valueOf(name), value);
+			}
+		});
+	}
+
+	private void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
+		headerMap.forEach((name, value) -> {
+			if (value != null) {
+				request.header(String.valueOf(name), String.valueOf(value));
+			}
+		});
 	}
 
 	private HttpRequest<?> applyBody(HttpRequest<?> request, Method method, Object value) {
