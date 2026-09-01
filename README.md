@@ -33,6 +33,9 @@ methods like any other Java call.
 - `CompletableFuture<T>` return types fire requests asynchronously
 - `@Retry` re-issues a failed request with configurable backoff, for both
   synchronous and async methods
+- `@Timeout` overrides the connect/read timeout for one method;
+  `RipClientConfig` overrides base URL, timeout, and proxy for one client
+  (e.g. one per deployment environment)
 - Global interceptors for cross-cutting concerns (auth headers, logging)
   without touching individual `@RestClient` interfaces
 - Interfaces are validated up front — misconfigured clients fail fast at
@@ -151,6 +154,11 @@ optional when every relative method URL is covered by the runtime value.
 Precedence, most specific first: an absolute method URL always wins, then
 the `baseUrl` passed to `getClient(...)`, then `@BaseUrl` on the interface —
 a relative method URL covered by none of these fails validation.
+
+For more than just the base URL varying per environment — a connect/read
+timeout or a proxy that differs too — pass a
+[`RipClientConfig`](#per-client-configuration-timeout-and-proxy) to
+`getClient(...)` instead of a plain `String`.
 
 ### HTTP method annotations
 
@@ -442,6 +450,59 @@ thread instead of blocking the caller. Every attempt, including ones that
 get retried, is still reported to any registered interceptor's
 `afterResponse`, so a `LoggingInterceptor` or similar sees each individual
 attempt, not just the final outcome.
+
+## Timeouts
+
+Annotate a method with `@Timeout` to override the connect/read timeout for
+that method's calls only — an endpoint whose expected latency doesn't match
+the rest of the client (a slow report-export endpoint, a health check that
+should fail fast):
+
+```java
+@GET("https://api.example.com/reports/export")
+@Timeout(readMillis = 120_000)
+String exportReport();
+```
+
+`connectMillis` and `readMillis` are independent — set one, both, or
+neither — and both default to `-1`, meaning "leave this one at whatever it
+would otherwise be." `@Timeout` takes priority over a
+[`RipClientConfig`](#per-client-configuration-timeout-and-proxy)'s timeout,
+which in turn takes priority over the shared client's own configured
+default. A negative value other than `-1` fails validation.
+
+## Per-client configuration: timeout and proxy
+
+Pass a `RipClientConfig` to `getClient(...)` instead of a plain `String`
+base URL when a client's environment differs in more than just its base
+URL — a connect/read timeout, or a proxy:
+
+```java
+UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .baseUrl(prodBaseUrl)
+        .connectTimeoutMillis(2_000)
+        .readTimeoutMillis(10_000)
+        .proxy("proxy.example.com", 8080)   // or proxy(host, port, username, password)
+        .build());
+```
+
+Every setting is optional and independent. Setting a connect/read timeout
+or a proxy gives that client its own dedicated Unirest client instance
+(its own connection pool) instead of sharing the app-wide static one — a
+config with only `baseUrl` set keeps sharing it, same as
+`RIP.getClient(Class, String)`. Precedence is the same three-tier shape as
+`@BaseUrl`'s: a method's own setting (`@Timeout`, or an absolute URL) beats
+this config, which beats whatever's left as the shared client's own
+default.
+
+For anything `RipClientConfig` doesn't cover — TLS/mutual-TLS, connection
+pooling, cookies, compression, and everything else `kong.unirest.Config`
+exposes — configure `kong.unirest.Unirest`'s shared client directly (it's
+a hard dependency, always on the classpath) before making any calls, the
+same way you'd set a JSON `ObjectMapper`: RIP's JSON (de)serialization
+delegates entirely to whatever `ObjectMapper` is configured on the
+relevant Unirest client, which defaults to a `Gson`-backed one (bundled
+transitively via Unirest) unless you configure your own.
 
 ## Interceptors
 

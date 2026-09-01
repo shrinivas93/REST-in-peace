@@ -34,6 +34,20 @@ class RipTest {
 	}
 
 	@Test
+	void getClient_withRipClientConfig_returnsUsableProxy() {
+		ValidApi client = RIP.getClient(ValidApi.class, RipClientConfig.builder().connectTimeoutMillis(1_000).build());
+		assertNotNull(client);
+		assertTrue(ValidApi.class.isInstance(client));
+	}
+
+	@Test
+	void getClient_withRipClientConfigOnInvalidInterface_throwsRestInPeaceException() {
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> RIP.getClient(InvalidApi.class, RipClientConfig.builder().build()));
+		assertTrue(exception.getMessage().contains("failed during validation"));
+	}
+
+	@Test
 	void getClient_invalidInterface_throwsRestInPeaceException() {
 		RestInPeaceException exception = assertThrows(RestInPeaceException.class, () -> RIP.getClient(InvalidApi.class));
 		assertTrue(exception.getMessage().contains("failed during validation"));

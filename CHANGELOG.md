@@ -38,6 +38,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   for a method that needs more than just the body. `T` is decoded by the
   same rules as a plain return type. A non-2xx response still throws
   `RestInPeaceHttpException` rather than being wrapped.
+- `@Timeout(connectMillis, readMillis)` overrides the connect/read timeout
+  for one method's calls only.
+- `RipClientConfig`, passed to a new `RIP.getClient(Class, RipClientConfig)`
+  overload, overrides base URL, connect/read timeout, and proxy for one
+  client. `@Timeout` takes priority over `RipClientConfig`'s timeout, which
+  takes priority over the shared client's own configured default.
 
 ### Changed
 

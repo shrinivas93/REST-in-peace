@@ -31,6 +31,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 
 class RestClientValidatorTest {
@@ -155,6 +156,27 @@ class RestClientValidatorTest {
 	public interface InvalidRetryTimes {
 		@GET("http://example.com")
 		@Retry(times = 0)
+		String foo();
+	}
+
+	@RestClient
+	public interface ValidTimeout {
+		@GET("http://example.com")
+		@Timeout(connectMillis = 1_000, readMillis = 5_000)
+		String foo();
+	}
+
+	@RestClient
+	public interface InvalidTimeoutConnectMillis {
+		@GET("http://example.com")
+		@Timeout(connectMillis = -5)
+		String foo();
+	}
+
+	@RestClient
+	public interface InvalidTimeoutReadMillis {
+		@GET("http://example.com")
+		@Timeout(readMillis = -5)
 		String foo();
 	}
 
@@ -409,6 +431,25 @@ class RestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(InvalidRetryTimes.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("times must be at least 1"));
+	}
+
+	@Test
+	void validate_validTimeout_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidTimeout.class));
+	}
+
+	@Test
+	void validate_timeoutWithInvalidConnectMillis_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(InvalidTimeoutConnectMillis.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("connectMillis must be -1"));
+	}
+
+	@Test
+	void validate_timeoutWithInvalidReadMillis_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(InvalidTimeoutReadMillis.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("readMillis must be -1"));
 	}
 
 	@Test

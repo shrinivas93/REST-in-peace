@@ -109,7 +109,32 @@ for reference rather than tracked in code. Check items off as they land.
       `Map<String, List<String>>`. A raw `RipResponse` with no type
       parameter, or one with an unsupported type parameter (same rule as
       `CompletableFuture<T>`), fails validation.
-- [ ] **Per-call timeout** — no way to override the client's configured
-      connect/read timeout for one slow endpoint.
+- [x] **Per-call timeout and per-client config** — `@Timeout(connectMillis,
+      readMillis)` overrides the connect/read timeout for one method's
+      calls only; `RipClientConfig` (passed to `RIP.getClient(Class,
+      RipClientConfig)`) overrides base URL, connect/read timeout, and
+      proxy for one client, for an environment that differs from every
+      other client's. Precedence, most specific first: `@Timeout` (or an
+      absolute method URL) beats `RipClientConfig`, which beats the shared
+      client's own configured default. Setting a timeout or proxy on
+      `RipClientConfig` gives that client its own dedicated Unirest client
+      instance instead of sharing the app-wide static one; a config with
+      only a base URL keeps sharing it. Everything else `kong.unirest.Config`
+      exposes (TLS, connection pooling, the JSON `ObjectMapper`, ...) is
+      configured directly on `kong.unirest.Unirest`'s shared client rather
+      than wrapped by RIP - deliberately, to avoid owning security-sensitive
+      settings (`verifySsl`, mutual TLS) or duplicating a mechanism RIP
+      already has a better answer for (default headers, via
+      `HeaderInterceptor`).
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
       `@RestClient` interfaces without hitting real HTTP.
+- [ ] **(Low priority) Fix branch protection on `master`** — repo process,
+      not a library feature. A ruleset requiring a pull request before
+      merging was set up on `master`, but the bypass entry for the release
+      automation didn't work on the first attempt (a role-based
+      "Repository admin" bypass doesn't cover a push made as the
+      `github-actions[bot]` app - adding the GitHub Actions app itself to
+      the bypass list was what actually worked) and the ruleset has since
+      been disabled entirely. Needs a proper, verified setup - PRs required
+      into `master`, with a working bypass for `release.yml`'s own
+      version-bump/tag push - before it's turned back on for real.
