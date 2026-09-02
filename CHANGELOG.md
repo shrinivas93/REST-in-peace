@@ -58,6 +58,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A `Collection` argument to `@QueryParam`/a `@QueryMap` entry now repeats
   the query param once per element (`?tag=a&tag=b`) instead of being sent
   as one mangled value.
+- `@Url` binds a full URL as a `String` parameter, bypassing `@BaseUrl`/a
+  runtime base URL/`@PathParam` entirely, for a call whose URL isn't a
+  fixed template - a pagination `next` link, a HATEOAS action link from a
+  previous response. Only valid alongside an HTTP method annotation with
+  no static `value()`; `@QueryParam`/`@HeaderParam`/etc. still work
+  normally, appended to the given URL.
+- `RIP.setObjectMapper(ObjectMapper)` sets the JSON `ObjectMapper` used by
+  every client sharing the app-wide static Unirest client (Jackson, a
+  configured Gson, ...) instead of Unirest's default Gson-backed one.
+  `RipClientConfig.builder().objectMapper(...)` sets one for a single
+  `RipClientConfig`-configured client instead, since that client's own
+  dedicated Unirest instance isn't reachable via `RIP.setObjectMapper(...)`.
 
 ### Changed
 
@@ -74,6 +86,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the value previously produced a broken or subtly wrong URL (e.g. an
   unencoded `?` silently starting a query string partway through the
   path).
+- A response that fails to decode because no JSON `ObjectMapper` is
+  configured at all now throws `RestInPeaceException` naming the problem
+  and pointing at `RIP.setObjectMapper(...)`, instead of a bare
+  `kong.unirest.UnirestConfigException` with no mention of RIP.
 
 ## [1.0.0.4] - 2026-08-30
 

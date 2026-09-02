@@ -46,6 +46,7 @@ import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -67,6 +68,7 @@ import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
 import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
+import kong.unirest.UnirestConfigException;
 import kong.unirest.UnirestInstance;
 
 /**
@@ -115,15 +117,15 @@ public class RestRequestProcessor {
 	 * Creates a processor from a {@link RipClientConfig}. Requests go through
 	 * a dedicated {@code UnirestInstance} - instead of the shared static
 	 * {@code Unirest} client - whenever {@code config} sets a connect/read
-	 * timeout or a proxy, since those settings live on a client instance,
-	 * not per request.
+	 * timeout, a proxy, or an {@code objectMapper}, since those settings live
+	 * on a client instance, not per request.
 	 *
 	 * @param config the per-client settings
 	 */
 	public RestRequestProcessor(RipClientConfig config) {
 		this.baseUrlOverride = config.getBaseUrl();
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
-				|| config.getProxyHost() != null;
+				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
 	}
 
@@ -142,6 +144,9 @@ public class RestRequestProcessor {
 			} else {
 				instance.config().proxy(config.getProxyHost(), config.getProxyPort());
 			}
+		}
+		if (config.getObjectMapper() != null) {
+			instance.config().setObjectMapper(config.getObjectMapper());
 		}
 		return instance;
 	}
@@ -174,7 +179,7 @@ public class RestRequestProcessor {
 	 *         {@code void} methods
 	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
-		String url = resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
+		String url = resolveUrl(method, httpMethod, args);
 		RequestContext context = new RequestContext(httpMethod, url);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
@@ -454,6 +459,34 @@ public class RestRequestProcessor {
 		return Collections.unmodifiableMap(result);
 	}
 
+	/**
+	 * Resolves the method's request URL: a {@code @Url} parameter's runtime
+	 * value verbatim if present, bypassing {@code @BaseUrl}/a runtime base
+	 * URL/{@code @PathParam} entirely since there's no template for them to
+	 * apply to - otherwise the usual template resolution.
+	 */
+	private String resolveUrl(Method method, HTTPMethod httpMethod, Object[] args) {
+		String urlParamValue = resolveUrlParam(method, args);
+		if (urlParamValue != null) {
+			return urlParamValue;
+		}
+		return resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
+	}
+
+	private String resolveUrlParam(Method method, Object[] args) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			if (parameters[i].getAnnotation(Url.class) != null) {
+				Object value = args == null ? null : args[i];
+				if (value == null) {
+					throw new RestInPeaceException(String.format("Missing value for @Url parameter in method %s.", method));
+				}
+				return String.valueOf(value);
+			}
+		}
+		return null;
+	}
+
 	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {
 		switch (httpMethod) {
 		case GET:
@@ -557,7 +590,16 @@ public class RestRequestProcessor {
 	}
 
 	private ObjectMapper getObjectMapper() {
-		return unirestInstance != null ? unirestInstance.config().getObjectMapper() : Unirest.config().getObjectMapper();
+		try {
+			return unirestInstance != null ? unirestInstance.config().getObjectMapper()
+					: Unirest.config().getObjectMapper();
+		} catch (UnirestConfigException e) {
+			throw new RestInPeaceException(
+					"No JSON ObjectMapper is configured. RIP delegates JSON (de)serialization to the underlying "
+							+ "Unirest client's ObjectMapper - call RIP.setObjectMapper(...) (or "
+							+ "RipClientConfig.builder().objectMapper(...) for a per-client one) before making requests.",
+					e);
+		}
 	}
 
 	/**

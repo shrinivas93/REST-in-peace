@@ -11,7 +11,7 @@ public enum HTTPRequestParam {
 	PATH,
 	/** Bound via {@code @QueryParam}. */
 	QUERY,
-	/** Reserved; not currently bound by any annotation. */
+	/** Bound via {@code @Url}. */
 	URL
 
 }
