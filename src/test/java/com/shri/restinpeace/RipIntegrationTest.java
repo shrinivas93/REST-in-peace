@@ -53,6 +53,7 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
+import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
@@ -142,6 +143,15 @@ class RipIntegrationTest {
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithHeaderMap(@PathParam("port") int port, @PathParam("id") String id,
 				@HeaderMap Map<String, String> headers);
+
+		@GET("http://localhost:{port}/items/{id}")
+		@Headers({ "Cache-Control: no-cache", "X-Api-Version : 2" })
+		String getWithFixedHeaders(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/items/{id}")
+		@Headers({ "X-Custom: from-headers" })
+		String getWithFixedHeaderAndOverridingHeaderParam(@PathParam("port") int port, @PathParam("id") String id,
+				@HeaderParam("X-Custom") String custom);
 
 		@POST("http://localhost:{port}/items/{id}")
 		@Multipart
@@ -710,6 +720,25 @@ class RipIntegrationTest {
 
 		assertEquals("acme", LAST_REQUEST.get().header("X-Tenant"));
 		assertNull(LAST_REQUEST.get().header("X-Skip"));
+	}
+
+	@Test
+	void headers_fixedEntries_sendsEachAsHeaderWithTrimmedNameAndValue() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getWithFixedHeaders(port, "abc");
+
+		assertEquals("no-cache", LAST_REQUEST.get().header("Cache-Control"));
+		assertEquals("2", LAST_REQUEST.get().header("X-Api-Version"));
+	}
+
+	@Test
+	void headers_withOverridingHeaderParam_headerParamValueWins() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getWithFixedHeaderAndOverridingHeaderParam(port, "abc", "from-param");
+
+		assertEquals("from-param", LAST_REQUEST.get().header("X-Custom"));
 	}
 
 	@Test

@@ -18,6 +18,8 @@ methods like any other Java call.
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
 - `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
   known until runtime
+- `@Headers` sets fixed, always-the-same headers on a method, overridden by
+  `@HeaderParam`/`@HeaderMap` for the same header name
 - `@Url` binds a full URL as a parameter, bypassing `@BaseUrl`/`@PathParam`
   entirely, for a pagination `next` link or a HATEOAS action link that isn't
   a fixed template
@@ -280,6 +282,25 @@ the map for everything else. At most one parameter per method may be
 annotated `@QueryMap`, and at most one `@HeaderMap`. Like `@QueryParam`, a
 `@QueryMap` entry whose value is a `Collection` is repeated once per
 element.
+
+### `@Headers`
+
+Sets one or more fixed HTTP headers on a method — for a header whose value
+is always the same (`Accept`, `Cache-Control`, an API version), not derived
+from a call argument. Each entry is a `"Name: Value"` string, split on its
+first `:` with whitespace trimmed around both sides — `"Name:Value"`,
+`"Name : Value"`, and `"Name    :     Value"` are all equivalent:
+
+```java
+@GET("https://api.example.com/users")
+@Headers({ "Cache-Control: no-cache", "X-Api-Version: 2" })
+List<User> listUsers();
+```
+
+`@Headers` can be combined with `@HeaderParam`/`@HeaderMap` on the same
+method; if both set the same header name, `@HeaderParam`/`@HeaderMap` wins,
+since a per-call value is more specific than an always-on method annotation.
+An entry with no `:`, or an empty header name, fails validation.
 
 ### `@Body`
 
