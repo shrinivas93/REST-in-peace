@@ -19,8 +19,9 @@ methods like any other Java call.
 - `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
   known until runtime
 - `@Multipart`/`@Part`/`@PartMap` for `multipart/form-data` uploads (form
-  fields, `File`/`byte[]`/`InputStream` file parts, and a dynamic set of
-  parts not known until runtime)
+  fields, `File`/`byte[]`/`InputStream` file parts, a dynamic set of parts
+  not known until runtime, and an `UploadProgressListener` for progress
+  reporting on a large file part)
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
@@ -309,6 +310,26 @@ parts.put("thumb", photoBytes);                                  // filename def
 parts.put("file", PartValue.of(photoBytes, "photo.jpg"));        // filename "photo.jpg" instead of "file"
 api.upload(parts);
 ```
+
+Add an `UploadProgressListener` parameter to observe upload progress on a
+large `File`/`InputStream` part - only valid alongside `@Multipart`:
+
+```java
+@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatar(@PathParam("id") String id, @Part("file") File avatar, UploadProgressListener onProgress);
+```
+
+```java
+avatarApi.uploadAvatar("42", avatar, (field, bytesWritten, totalBytes) ->
+        System.out.printf("%s: %d / %d%n", field, bytesWritten, totalBytes));
+```
+
+It's only called for `File`/`InputStream` parts - a `String`/`byte[]` part
+is written in one shot with nothing meaningful to report. `field` is the
+part's name (its `@Part`/`@PartMap` key), needed to tell parts apart since
+calls for different parts interleave rather than running one at a time.
+Pass `null` for a call that doesn't need progress reporting.
 
 ## Return types
 

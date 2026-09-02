@@ -52,6 +52,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   both synchronous and `CompletableFuture<File>` methods.
 - `DownloadProgressListener` parameter reports `bytesWritten`/`totalBytes`
   as a `byte[]`/`File` method's response streams in.
+- `UploadProgressListener` parameter reports `field`/`bytesWritten`/
+  `totalBytes` as a `@Multipart` method's `File`/`InputStream` parts are
+  written to the request body.
 
 ### Changed
 

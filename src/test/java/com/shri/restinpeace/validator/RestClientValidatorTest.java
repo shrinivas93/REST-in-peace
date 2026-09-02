@@ -35,6 +35,7 @@ import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 
 class RestClientValidatorTest {
 
@@ -391,6 +392,26 @@ class RestClientValidatorTest {
 	public interface MultipleDownloadProgressListeners {
 		@GET("http://example.com")
 		byte[] foo(DownloadProgressListener first, DownloadProgressListener second);
+	}
+
+	@RestClient
+	public interface ValidUploadProgressListener {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("file") File file, UploadProgressListener listener);
+	}
+
+	@RestClient
+	public interface UploadProgressListenerWithoutMultipart {
+		@POST("http://example.com")
+		String foo(UploadProgressListener listener);
+	}
+
+	@RestClient
+	public interface MultipleUploadProgressListeners {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("file") File file, UploadProgressListener first, UploadProgressListener second);
 	}
 
 	@Test
@@ -760,6 +781,27 @@ class RestClientValidatorTest {
 				() -> RestClientValidator.validate(MultipleDownloadProgressListeners.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one DownloadProgressListener parameter"));
+	}
+
+	@Test
+	void validate_validUploadProgressListener_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidUploadProgressListener.class));
+	}
+
+	@Test
+	void validate_uploadProgressListenerWithoutMultipart_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(UploadProgressListenerWithoutMultipart.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("UploadProgressListener parameter but is not annotated with @Multipart"));
+	}
+
+	@Test
+	void validate_multipleUploadProgressListeners_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleUploadProgressListeners.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one UploadProgressListener parameter"));
 	}
 
 }
