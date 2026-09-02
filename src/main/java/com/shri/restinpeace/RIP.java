@@ -1,5 +1,6 @@
 package com.shri.restinpeace;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Proxy;
 
 import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
@@ -76,6 +77,10 @@ public class RIP {
 			throw new RestInPeaceException(String.format("The interface %s is not annotated with %s.",
 					restClient.getName(), RestClient.class.getName()));
 		}
+		T generated = tryGeneratedImpl(restClient, new RestRequestProcessor(baseUrl));
+		if (generated != null) {
+			return generated;
+		}
 		return (T) Proxy.newProxyInstance(restClient.getClassLoader(), new Class[] { restClient },
 				new RestClientInvocationHandler(baseUrl));
 	}
@@ -109,8 +114,39 @@ public class RIP {
 			throw new RestInPeaceException(String.format("The interface %s is not annotated with %s.",
 					restClient.getName(), RestClient.class.getName()));
 		}
+		T generated = tryGeneratedImpl(restClient, new RestRequestProcessor(config));
+		if (generated != null) {
+			return generated;
+		}
 		return (T) Proxy.newProxyInstance(restClient.getClassLoader(), new Class[] { restClient },
 				new RestClientInvocationHandler(config));
+	}
+
+	/**
+	 * Instantiates {@code restClient}'s compile-time-generated implementation
+	 * (see {@code com.shri.restinpeace.processor.RestClientProcessor}), if
+	 * one exists, backed by {@code processor}.
+	 *
+	 * @param <T>        the rest client interface type
+	 * @param restClient the interface to look up a generated implementation for
+	 * @param processor  the request processor to back it with
+	 * @return the generated implementation, or {@code null} if the
+	 *         annotation processor never ran on this interface (or skipped
+	 *         it, e.g. for a method outside the shape it supports), so the
+	 *         caller should fall back to the reflective proxy
+	 */
+	@SuppressWarnings("unchecked")
+	private static <T> T tryGeneratedImpl(Class<T> restClient, RestRequestProcessor processor) {
+		try {
+			Class<?> implClass = Class.forName(restClient.getName() + "_RipImpl");
+			Constructor<?> constructor = implClass.getConstructor(RestRequestProcessor.class);
+			return (T) constructor.newInstance(processor);
+		} catch (ClassNotFoundException e) {
+			return null;
+		} catch (ReflectiveOperationException e) {
+			throw new RestInPeaceException(
+					String.format("Generated client for %s could not be instantiated.", restClient.getName()), e);
+		}
 	}
 
 	/**

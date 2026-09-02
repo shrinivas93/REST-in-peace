@@ -1,9 +1,13 @@
 # Design: compile-time proxy generation
 
-Status: draft / not started. Roadmap item: "Compile-time proxy generation
-instead of a JDK dynamic proxy" in `ROADMAP.md`. This document sketches an
-approach; it is not a commitment to the exact shape below, and no code
-against it exists yet.
+Status: **step 1 landed** (see §8's rollout plan - `RestClientProcessor`,
+`RestRequestProcessor.processGeneratedRequest`, `RIP.getClient`'s
+generated-impl-first lookup, and `GeneratedApiTest`). Steps 2-4 (full
+feature parity, the compile-testing validation suite, the native-image
+smoke test) are not started. Roadmap item: "Compile-time proxy generation
+instead of a JDK dynamic proxy" in `ROADMAP.md`. The sections below are
+mostly the original sketch; §9 records what step 1 actually landed as and
+one real deviation from the sketch, discovered only while implementing it.
 
 ## 1. Problem
 
@@ -354,3 +358,105 @@ steps 1–3 changes behavior for a consumer who doesn't add the processor
 dependency), consistent with how every other roadmap item in this
 codebase has landed as a small, complete PR rather than a long-lived
 branch.
+
+## 9. What step 1 actually landed as
+
+Implementing the minimal prototype (§8 step 1) surfaced one real
+correction to §4.1's assumption and one deliberate scope-narrowing beyond
+what §4/§5 sketched. Recorded here rather than silently editing the
+sections above, since both were genuine discoveries, not just style
+choices.
+
+### 9.1 The processor lives in the main module, not a separate one - with a real bootstrapping catch
+
+§4.1 proposed a separate `rest-in-peace-processor` module partly as a
+style/dependency-footprint question. It turns out to also be load-bearing
+for a reason the original sketch missed entirely: **an annotation
+processor cannot process any source compiled in the same `javac`
+invocation that also compiles the processor itself.** `RestClientProcessor`
+compiled fine sitting in this module's own `src/main/java` - but the moment
+`META-INF/services/javax.annotation.processing.Processor` also sat in
+`src/main/resources`, `mvn compile` itself failed outright
+(`Provider com.shri.restinpeace.processor.RestClientProcessor not found`):
+javac discovers processors via SPI from the classpath *before* compiling,
+and `RestClientProcessor.class` doesn't exist yet at the start of the very
+invocation that's compiling it.
+
+Given the choice this forced - a genuinely separate Maven module, or some
+way to keep everything in one module - step 1 took the single-module path,
+using a fact the sketch didn't consider: Maven's `compile` and
+`test-compile` phases are two *separate* `javac` invocations, sequential
+within the same module. By the time `test-compile` runs, `compile`'s
+output (including the now fully-built `RestClientProcessor.class`) is
+already sitting in `target/classes`, which *is* on the test-compile
+classpath - so a test-scope `@RestClient` interface (`GeneratedApi`, added
+specifically for this) gets processed correctly, while `src/main/java`
+itself never tries to self-process. This needed one small `pom.xml`
+change: an explicit `default-compile` execution override setting
+`<proc>none</proc>`, applying only to the main-source compile (leaving
+`default-testCompile` on its default of "process annotations if a
+processor is found," which is what actually exercises the mechanism).
+
+This resolves the bootstrapping problem for developing and testing the
+processor *within this repository*, and - importantly - doesn't compromise
+the real-world goal either: a downstream consumer adding
+`rest-in-peace-1.0.0.x.jar` as an ordinary dependency hits neither
+constraint, since by the time their own build starts, our processor is
+already-compiled bytecode sitting in an already-published jar on their
+classpath - a completely separate `javac` invocation in a separate
+project, with no bootstrapping order problem at all. The `<proc>none</proc>`
+override is purely a "this module doesn't need to process its own
+(nonexistent) `@RestClient` interfaces during its own main build" setting,
+invisible to consumers. §7's separate-module open question is downgraded
+from "which is nicer" to "known to work either way, single-module chosen
+for step 1 to avoid a reactor restructure"; it may still be worth revisiting
+if the processor grows large enough that main-artifact bloat becomes a
+real concern for a consumer who never uses it.
+
+### 9.2 Deliberately narrower parameter shape than the general design
+
+§5's table describes `@QueryParam`'s general handling (including
+`required`/`defaultValue`, via the shared `resolveValue` helper). Step 1's
+`RestClientProcessor` only generates for a `@QueryParam` at its defaults
+(`required = false`, `defaultValue` unset) - a parameter using either
+falls the whole interface back to the reflective proxy, rather than
+reproducing `resolveValue`'s semantics in codegen. This was a scope
+decision to keep step 1's surface small and unambiguously correct, not a
+technical obstacle - `resolveValue` is a small, already-`private` static
+method on `RestRequestProcessor` and a natural candidate to become another
+literal-parameter call from generated code (alongside
+`processGeneratedRequest`) in a follow-up step.
+
+### 9.3 What's now real and testable
+
+- `RestRequestProcessor.processGeneratedRequest(...)`: the new
+  non-reflective entry point, reusing (not reimplementing)
+  `createRequest`, `applyQueryValue`, `applyInterceptors`,
+  `executeSyncWithRetry`, and `decodeOrThrow` - each of those needed only a
+  `method == null` guard where they read `method.getAnnotation(...)`
+  (`Retry` in `executeSyncWithRetry`, `ErrorType` in the private
+  `decodeBody`), since a call routed through the generated path has no
+  `Retry`/`ErrorType` to look up by construction (the processor never
+  generates for a method using either).
+- `RestClientProcessor`: walks each `@RestClient` interface's methods via
+  `javax.lang.model`, bails out (leaving the *whole* interface to the
+  reflective proxy) the moment any method or parameter falls outside the
+  supported shape, and otherwise emits `<Interface>_RipImpl` via
+  `Filer.createSourceFile`.
+- `RIP.getClient`'s three overloads all now try
+  `Class.forName(interfaceName + "_RipImpl")` (with a public constructor
+  taking a `RestRequestProcessor`) before falling back to
+  `Proxy.newProxyInstance`, exactly as §4.3 sketched, module-adjustment
+  aside.
+- `GeneratedApi`/`GeneratedApiTest`: a new top-level (not nested, per §7's
+  private/nested-interface open question - still unresolved for that case)
+  `@RestClient` interface and a test asserting both that
+  `RIP.getClient(GeneratedApi.class)` returns something whose class name
+  ends in `_RipImpl` (proving the generated path was actually taken, not
+  silently falling back) and that a real call through it produces the
+  expected request/response over a local `HttpServer`.
+- Verified: the full pre-existing `RipIntegrationTest`/
+  `RestClientValidatorTest` suite (177 tests, all still exercising nested
+  test interfaces the processor correctly skips) stays green and
+  unaffected, on both the default and a real JDK 8 toolchain, with a clean
+  `javadoc:javadoc`.

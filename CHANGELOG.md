@@ -76,6 +76,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   involved. Each entry is split on its first `:` with whitespace trimmed
   around both sides. Combines with `@HeaderParam`/`@HeaderMap` on the same
   method, which win over a `@Headers` entry of the same name.
+- (Step 1 of the "compile-time proxy generation" roadmap item) A
+  `RestClientProcessor` annotation processor now generates a real
+  `<Interface>_RipImpl` class - instead of a `java.lang.reflect.Proxy` - for
+  a `@RestClient` interface whose methods are all a single fixed HTTP verb
+  with only `@PathParam`/plain `@QueryParam` params and a
+  `void`/`String`/POJO return type; `RIP.getClient(...)` prefers it when
+  present. An interface with any method outside that shape is left entirely
+  to the existing reflective proxy - see
+  `docs/design/compile-time-proxy-generation.md`.
 
 ### Changed
 
