@@ -164,11 +164,15 @@ up.
       Collection<?>)` overload when the value is a `Collection`, repeating
       the param once per element (`?tag=a&tag=b`) instead of sending one
       mangled `toString()` value.
-- [ ] **`@Url`: a full dynamic URL as a parameter** — for APIs that hand you
-      a `next` link to call verbatim (pagination, HATEOAS). The
-      `HTTPRequestParam.URL` enum value already exists, marked "reserved;
-      not currently bound by any annotation" - someone already sketched this
-      and never finished it.
+- [x] **`@Url`: a full dynamic URL as a parameter** — a `String` parameter
+      annotated `@Url` is used as the method's entire URL verbatim, for a
+      pagination `next` link or a HATEOAS action link that isn't a fixed
+      template. Bypasses `@BaseUrl`/a runtime base URL/`@PathParam`
+      entirely (there's no template left for them to apply to);
+      `@QueryParam`/`@HeaderParam`/etc. still work normally. Only valid
+      alongside an HTTP method annotation with no static `value()` -
+      combining the two fails validation. Finally consumes the
+      `HTTPRequestParam.URL` enum value that had sat reserved and unused.
 - [ ] **`ObjectMapper` is a silent dependency** — RIP never validates or
       documents that JSON (de)serialization rides entirely on whatever
       `ObjectMapper` is configured on the relevant Unirest client (Gson by

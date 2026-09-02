@@ -40,9 +40,11 @@ import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
+import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
@@ -146,7 +148,10 @@ public class RestClientValidator {
 					HTTPMethod httpMethod = httpMethodAnnotation.annotationType().getAnnotation(HTTPMethodMarker.class)
 							.value();
 					String url = getUrlValue(httpMethodAnnotation, httpMethod);
-					validateUrl(method, url, baseUrlOverride, validationResult);
+					validateUrlParam(method, url, validationResult);
+					if (!hasUrlParam(method)) {
+						validateUrl(method, url, baseUrlOverride, validationResult);
+					}
 					validateBody(method, httpMethod, validationResult);
 					validateReturnType(method, validationResult);
 					validateRetry(method, validationResult);
@@ -324,6 +329,31 @@ public class RestClientValidator {
 			return innerType == byte[].class;
 		}
 		return false;
+	}
+
+	private static boolean hasUrlParam(Method method) {
+		return Stream.of(method.getParameters()).anyMatch(parameter -> parameter.getAnnotation(Url.class) != null);
+	}
+
+	private static void validateUrlParam(Method method, String url, ValidationResult validationResult) {
+		List<Parameter> urlParams = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(Url.class) != null).collect(Collectors.toList());
+
+		if (urlParams.size() > 1) {
+			validationResult.addError(String.format("The method %s.%s has more than one parameter annotated with @Url.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		urlParams.stream().filter(parameter -> parameter.getType() != String.class)
+				.forEach(parameter -> validationResult.addError(String.format(
+						"The method %s.%s has a @Url parameter of type %s - only String is supported.",
+						method.getDeclaringClass().getName(), method.getName(), parameter.getType().getName())));
+
+		if (!urlParams.isEmpty() && !RIPConstant.DEFAULT.equals(url)) {
+			validationResult.addError(String.format(
+					"The method %s.%s has both a @Url parameter and a static URL '%s' - remove one or the other.",
+					method.getDeclaringClass().getName(), method.getName(), url));
+		}
 	}
 
 	private static void validateDestination(Method method, ValidationResult validationResult) {
