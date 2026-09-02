@@ -35,6 +35,7 @@ import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
@@ -159,6 +160,7 @@ public class RestClientValidator {
 					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
 					validateMultipart(method, httpMethod, validationResult);
 					validateTimeout(method, validationResult);
+					validateHeaders(method, validationResult);
 					validateDestination(method, validationResult);
 					validateDownloadProgressListener(method, validationResult);
 					validateUploadProgressListener(method, validationResult);
@@ -179,6 +181,27 @@ public class RestClientValidator {
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with @Timeout but readMillis must be -1 (unset) or a non-negative number of milliseconds.",
 					method.getDeclaringClass().getName(), method.getName()));
+		}
+	}
+
+	private static void validateHeaders(Method method, ValidationResult validationResult) {
+		Headers headers = method.getAnnotation(Headers.class);
+		if (headers == null) {
+			return;
+		}
+		for (String entry : headers.value()) {
+			int colon = entry.indexOf(':');
+			if (colon < 0) {
+				validationResult.addError(String.format(
+						"The method %s.%s has a @Headers entry '%s' with no ':' - expected 'Name: Value'.",
+						method.getDeclaringClass().getName(), method.getName(), entry));
+				continue;
+			}
+			if (entry.substring(0, colon).trim().isEmpty()) {
+				validationResult.addError(String.format(
+						"The method %s.%s has a @Headers entry '%s' with an empty header name.",
+						method.getDeclaringClass().getName(), method.getName(), entry));
+			}
 		}
 	}
 

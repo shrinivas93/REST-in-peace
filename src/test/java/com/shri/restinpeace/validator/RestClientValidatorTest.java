@@ -25,6 +25,7 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
@@ -181,6 +182,27 @@ class RestClientValidatorTest {
 	public interface InvalidTimeoutReadMillis {
 		@GET("http://example.com")
 		@Timeout(readMillis = -5)
+		String foo();
+	}
+
+	@RestClient
+	public interface ValidHeaders {
+		@GET("http://example.com")
+		@Headers({ "Cache-Control: no-cache", "X-Api-Version : 2" })
+		String foo();
+	}
+
+	@RestClient
+	public interface HeadersEntryMissingColon {
+		@GET("http://example.com")
+		@Headers({ "Cache-Control no-cache" })
+		String foo();
+	}
+
+	@RestClient
+	public interface HeadersEntryEmptyName {
+		@GET("http://example.com")
+		@Headers({ " : no-cache" })
 		String foo();
 	}
 
@@ -576,6 +598,25 @@ class RestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> RestClientValidator.validate(InvalidTimeoutReadMillis.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("readMillis must be -1"));
+	}
+
+	@Test
+	void validate_validHeaders_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidHeaders.class));
+	}
+
+	@Test
+	void validate_headersEntryMissingColon_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(HeadersEntryMissingColon.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("with no ':'"));
+	}
+
+	@Test
+	void validate_headersEntryEmptyName_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(HeadersEntryEmptyName.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("empty header name"));
 	}
 
 	@Test

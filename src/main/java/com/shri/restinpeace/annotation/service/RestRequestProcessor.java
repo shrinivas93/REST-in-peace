@@ -40,6 +40,7 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
+import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
@@ -61,7 +62,6 @@ import com.shri.restinpeace.multipart.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
-import kong.unirest.Headers;
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
@@ -184,6 +184,7 @@ public class RestRequestProcessor {
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
 		applyTimeout(request, method);
+		applyFixedHeaders(request, method);
 		request = applyParams(request, method, args);
 		request = applyInterceptors(request, context);
 		applyDownloadMonitor(request, resolveDownloadProgressListener(method, args));
@@ -451,7 +452,7 @@ public class RestRequestProcessor {
 		return new RipResponse<>(response.getStatus(), toHeaderMap(response.getHeaders()), decodedBody);
 	}
 
-	private static Map<String, List<String>> toHeaderMap(Headers headers) {
+	private static Map<String, List<String>> toHeaderMap(kong.unirest.Headers headers) {
 		Map<String, List<String>> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 		headers.all().forEach(header -> result.computeIfAbsent(header.getName(), key -> new ArrayList<>())
 				.add(header.getValue()));
@@ -589,6 +590,26 @@ public class RestRequestProcessor {
 		}
 	}
 
+	/**
+	 * Sets every {@code @Headers} entry on the request, before
+	 * {@link #applyParams} runs so a {@code @HeaderParam}/{@code @HeaderMap}
+	 * value for the same header name - applied via {@code headerReplace} -
+	 * overrides it, since the per-call value is more specific than the
+	 * always-on method annotation.
+	 */
+	private void applyFixedHeaders(HttpRequest<?> request, Method method) {
+		Headers headers = method.getAnnotation(Headers.class);
+		if (headers == null) {
+			return;
+		}
+		for (String entry : headers.value()) {
+			int colon = entry.indexOf(':');
+			String name = entry.substring(0, colon).trim();
+			String value = entry.substring(colon + 1).trim();
+			request.header(name, value);
+		}
+	}
+
 	private ObjectMapper getObjectMapper() {
 		try {
 			return unirestInstance != null ? unirestInstance.config().getObjectMapper()
@@ -685,7 +706,7 @@ public class RestRequestProcessor {
 				Object value = resolveValue(argValue, headerParam.required(), headerParam.defaultValue(),
 						headerParam.value());
 				if (value != null) {
-					request.header(headerParam.value(), String.valueOf(value));
+					request.headerReplace(headerParam.value(), String.valueOf(value));
 				}
 			}
 
@@ -796,7 +817,7 @@ public class RestRequestProcessor {
 	private void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
 		headerMap.forEach((name, value) -> {
 			if (value != null) {
-				request.header(String.valueOf(name), String.valueOf(value));
+				request.headerReplace(String.valueOf(name), String.valueOf(value));
 			}
 		});
 	}
