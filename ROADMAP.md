@@ -150,17 +150,20 @@ up.
       text, and a `File` destination is left untouched rather than written
       with error content. `RipResponse<File>` is intentionally not
       supported - use a plain `File` return with `@Destination` instead.
-- [ ] **Path/query values aren't percent-encoded** — `resolvePathParams`
-      does a raw `url.replace("{id}", String.valueOf(value))` with no
-      `URLEncoder`/URI-escaping. A path param containing `/`, `?`, `#`, or a
-      space produces a broken or subtly wrong URL. Retrofit encodes by
-      default with an opt-out; RIP has no encoding at all.
-- [ ] **No multi-value query parameters** — Unirest has
-      `queryString(String, Collection<?>)` to repeat a param
-      (`?tag=a&tag=b`), but `applyParams` always calls the single-value
-      overload since the static type is `Object`, so a `List<String>`
-      argument never dispatches to it. A common REST pattern (repeated
-      filter params) is silently unsupported.
+- [x] **Path values weren't percent-encoded** — `resolvePathParams` now
+      runs each `@PathParam` value through `URLEncoder` (then turns its `+`
+      for space into `%20`, matching Unirest's own path-segment encoding)
+      before substituting it into the URL template, so a `/`, `?`, `#`, or
+      a space in the value lands as literal content of that one path
+      segment instead of producing a broken or subtly wrong URL. Turned out
+      `@QueryParam`/`@QueryMap` values were already safe - Unirest's own
+      `queryString(...)` URL-encodes them - so only path substitution
+      needed the fix.
+- [x] **No multi-value query parameters** — `@QueryParam`/a `@QueryMap`
+      entry now dispatches to Unirest's `queryString(String,
+      Collection<?>)` overload when the value is a `Collection`, repeating
+      the param once per element (`?tag=a&tag=b`) instead of sending one
+      mangled `toString()` value.
 - [ ] **`@Url`: a full dynamic URL as a parameter** — for APIs that hand you
       a `next` link to call verbatim (pagination, HATEOAS). The
       `HTTPRequestParam.URL` enum value already exists, marked "reserved;

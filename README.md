@@ -188,6 +188,11 @@ at validation time.
 String getItem(@PathParam("id") String id);
 ```
 
+The value is percent-encoded before substitution, so a `/`, `?`, `#`, or a
+space in it lands as literal content of that one path segment instead of
+producing a broken or subtly wrong URL (e.g. an unencoded `?` would
+otherwise start a query string partway through the path).
+
 ### `@QueryParam`
 
 Appends a query string parameter. Supports `required` (throws at call time
@@ -198,6 +203,16 @@ argument is `null`):
 @GET("https://api.example.com/items")
 String search(@QueryParam(value = "q", required = true) String query,
                @QueryParam(value = "page", defaultValue = "1") Integer page);
+```
+
+A `Collection` argument repeats the param once per element instead of
+being sent as one mangled value:
+
+```java
+@GET("https://api.example.com/items")
+String search(@QueryParam("tag") List<String> tags);
+
+// search(List.of("a", "b")) sends ?tag=a&tag=b
 ```
 
 ### `@HeaderParam`
@@ -230,7 +245,9 @@ User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHea
 `@QueryMap`/`@HeaderMap` can be combined with fixed `@QueryParam`/`@HeaderParam`
 parameters on the same method — the fixed ones for names you always know,
 the map for everything else. At most one parameter per method may be
-annotated `@QueryMap`, and at most one `@HeaderMap`.
+annotated `@QueryMap`, and at most one `@HeaderMap`. Like `@QueryParam`, a
+`@QueryMap` entry whose value is a `Collection` is repeated once per
+element.
 
 ### `@Body`
 

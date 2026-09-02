@@ -55,6 +55,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `UploadProgressListener` parameter reports `field`/`bytesWritten`/
   `totalBytes` as a `@Multipart` method's `File`/`InputStream` parts are
   written to the request body.
+- A `Collection` argument to `@QueryParam`/a `@QueryMap` entry now repeats
+  the query param once per element (`?tag=a&tag=b`) instead of being sent
+  as one mangled value.
 
 ### Changed
 
@@ -66,6 +69,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The hosted Javadoc site now always reflects the exact commit that was
   released, instead of `master`'s post-release `-SNAPSHOT` version bump.
+- `@PathParam` values are now percent-encoded before being substituted
+  into the URL, instead of spliced in raw - a `/`, `?`, `#`, or a space in
+  the value previously produced a broken or subtly wrong URL (e.g. an
+  unencoded `?` silently starting a query string partway through the
+  path).
 
 ## [1.0.0.4] - 2026-08-30
 

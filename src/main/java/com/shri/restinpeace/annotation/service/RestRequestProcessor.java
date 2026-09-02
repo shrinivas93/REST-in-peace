@@ -5,13 +5,16 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -631,7 +634,7 @@ public class RestRequestProcessor {
 				Object value = resolveValue(argValue, queryParam.required(), queryParam.defaultValue(),
 						queryParam.value());
 				if (value != null) {
-					request.queryString(queryParam.value(), value);
+					applyQueryValue(request, queryParam.value(), value);
 				}
 			}
 
@@ -727,9 +730,25 @@ public class RestRequestProcessor {
 	private void applyQueryMap(HttpRequest<?> request, Map<?, ?> queryMap) {
 		queryMap.forEach((name, value) -> {
 			if (value != null) {
-				request.queryString(String.valueOf(name), value);
+				applyQueryValue(request, String.valueOf(name), value);
 			}
 		});
+	}
+
+	/**
+	 * Adds a query param, repeating it once per element - instead of once
+	 * with a single mangled {@code toString()} value - when {@code value} is
+	 * a {@code Collection} (e.g. a {@code List<String>} of tags producing
+	 * {@code ?tag=a&tag=b}), matching Unirest's own
+	 * {@code queryString(String, Collection)} overload that {@code Object}-typed
+	 * dispatch would otherwise never reach.
+	 */
+	private static void applyQueryValue(HttpRequest<?> request, String name, Object value) {
+		if (value instanceof Collection) {
+			request.queryString(name, (Collection<?>) value);
+		} else {
+			request.queryString(name, value);
+		}
 	}
 
 	private void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
@@ -765,10 +784,27 @@ public class RestRequestProcessor {
 					throw new RestInPeaceException(
 							String.format("Missing value for path param '%s' in method %s.", pathParam.value(), method));
 				}
-				url = url.replace("{" + pathParam.value() + "}", String.valueOf(value));
+				url = url.replace("{" + pathParam.value() + "}", encodePathValue(value));
 			}
 		}
 		return url;
+	}
+
+	/**
+	 * Percent-encodes a path param value for safe substitution into a URL
+	 * path segment - {@code /}, {@code ?}, {@code #}, and a space all
+	 * otherwise produce a broken or subtly wrong URL (silently routing to a
+	 * different path, or introducing an unintended query string). Mirrors
+	 * Unirest's own path-segment encoding ({@code URLEncoder} then turning
+	 * its {@code +} for space into {@code %20}, since form encoding and
+	 * path/query encoding disagree on that one character).
+	 */
+	private static String encodePathValue(Object value) {
+		try {
+			return URLEncoder.encode(String.valueOf(value), "UTF-8").replace("+", "%20");
+		} catch (UnsupportedEncodingException e) {
+			throw new RestInPeaceException("UTF-8 encoding is not supported by this JVM.", e);
+		}
 	}
 
 	private Object resolveValue(Object argValue, boolean required, String defaultValue, String paramName) {
