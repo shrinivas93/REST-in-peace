@@ -12,6 +12,10 @@ on:
   # exempt from that restriction.
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
 
