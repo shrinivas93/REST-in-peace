@@ -38,8 +38,10 @@ methods like any other Java call.
 - `@Retry` re-issues a failed request with configurable backoff, for both
   synchronous and async methods
 - `@Timeout` overrides the connect/read timeout for one method;
-  `RipClientConfig` overrides base URL, timeout, and proxy for one client
-  (e.g. one per deployment environment)
+  `RipClientConfig` overrides base URL, timeout, proxy, and JSON
+  `ObjectMapper` for one client (e.g. one per deployment environment).
+  `RIP.setObjectMapper(...)` sets a custom mapper (Jackson, a configured
+  Gson, ...) for the shared client
 - Global interceptors for cross-cutting concerns (auth headers, logging)
   without touching individual `@RestClient` interfaces
 - Interfaces are validated up front — misconfigured clients fail fast at
@@ -566,7 +568,7 @@ default. A negative value other than `-1` fails validation.
 
 Pass a `RipClientConfig` to `getClient(...)` instead of a plain `String`
 base URL when a client's environment differs in more than just its base
-URL — a connect/read timeout, or a proxy:
+URL — a connect/read timeout, a proxy, or a JSON `ObjectMapper`:
 
 ```java
 UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
@@ -574,26 +576,46 @@ UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
         .connectTimeoutMillis(2_000)
         .readTimeoutMillis(10_000)
         .proxy("proxy.example.com", 8080)   // or proxy(host, port, username, password)
+        .objectMapper(new JacksonObjectMapper(myJacksonMapper))
         .build());
 ```
 
-Every setting is optional and independent. Setting a connect/read timeout
-or a proxy gives that client its own dedicated Unirest client instance
-(its own connection pool) instead of sharing the app-wide static one — a
-config with only `baseUrl` set keeps sharing it, same as
+Every setting is optional and independent. Setting a connect/read timeout,
+a proxy, or an `objectMapper` gives that client its own dedicated Unirest
+client instance (its own connection pool) instead of sharing the app-wide
+static one — a config with only `baseUrl` set keeps sharing it, same as
 `RIP.getClient(Class, String)`. Precedence is the same three-tier shape as
 `@BaseUrl`'s: a method's own setting (`@Timeout`, or an absolute URL) beats
 this config, which beats whatever's left as the shared client's own
 default.
 
-For anything `RipClientConfig` doesn't cover — TLS/mutual-TLS, connection
-pooling, cookies, compression, and everything else `kong.unirest.Config`
-exposes — configure `kong.unirest.Unirest`'s shared client directly (it's
-a hard dependency, always on the classpath) before making any calls, the
-same way you'd set a JSON `ObjectMapper`: RIP's JSON (de)serialization
-delegates entirely to whatever `ObjectMapper` is configured on the
-relevant Unirest client, which defaults to a `Gson`-backed one (bundled
-transitively via Unirest) unless you configure your own.
+### JSON `ObjectMapper`
+
+RIP's JSON (de)serialization for `@Body`/response types delegates entirely
+to whatever `kong.unirest.ObjectMapper` is configured on the relevant
+Unirest client — Gson-backed (`kong.unirest.JsonObjectMapper`) by default,
+bundled transitively via Unirest, no Jackson dependency shipped. Two ways
+to use a different one:
+
+- **Every client sharing the app-wide static Unirest client** (i.e. every
+  client without a `RipClientConfig` that sets its own timeout/proxy/
+  `objectMapper`): `RIP.setObjectMapper(new JacksonObjectMapper(myMapper))`
+  once at startup.
+- **One `RipClientConfig`-configured client** with its own dedicated
+  Unirest instance: `RipClientConfig.builder().objectMapper(...)`, as
+  above — `RIP.setObjectMapper(...)` has no effect on it, since it isn't
+  sharing the static client's config.
+
+If no mapper ends up configured at all (only possible by explicitly
+clearing one with `setObjectMapper(null)`), RIP fails with a
+`RestInPeaceException` naming the problem, rather than a bare Unirest
+exception with no mention of RIP.
+
+For anything else `RipClientConfig` doesn't cover — TLS/mutual-TLS,
+connection pooling, cookies, compression, and everything else
+`kong.unirest.Config` exposes — configure `kong.unirest.Unirest`'s shared
+client directly (it's a hard dependency, always on the classpath) before
+making any calls.
 
 ## Interceptors
 

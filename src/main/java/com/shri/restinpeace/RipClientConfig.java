@@ -1,11 +1,13 @@
 package com.shri.restinpeace;
 
+import kong.unirest.ObjectMapper;
+
 /**
  * Per-client settings for {@link RIP#getClient(Class, RipClientConfig)} -
- * base URL, connect/read timeout, and proxy - for a {@code @RestClient}
- * whose environment differs from every other client's, since
- * {@code kong.unirest.Unirest}'s own global config is shared by every RIP
- * client that doesn't ask for its own. A method's {@link
+ * base URL, connect/read timeout, proxy, and JSON {@code ObjectMapper} - for
+ * a {@code @RestClient} whose environment differs from every other client's,
+ * since {@code kong.unirest.Unirest}'s own global config is shared by every
+ * RIP client that doesn't ask for its own. A method's {@link
  * com.shri.restinpeace.annotation.timeout.Timeout @Timeout} overrides this
  * config's timeout when both are present, the same way an absolute method
  * URL overrides {@link #getBaseUrl()}.
@@ -18,11 +20,11 @@ package com.shri.restinpeace;
  *         .build());
  * </pre>
  *
- * Setting a connect/read timeout or a proxy gives the client its own
- * dedicated {@code kong.unirest.UnirestInstance} (its own connection pool)
- * instead of sharing the app-wide static {@code Unirest} client - a client
- * built with only {@link #getBaseUrl()} set keeps sharing the static client,
- * same as {@link RIP#getClient(Class, String)}.
+ * Setting a connect/read timeout, a proxy, or an {@code objectMapper} gives
+ * the client its own dedicated {@code kong.unirest.UnirestInstance} (its own
+ * connection pool) instead of sharing the app-wide static {@code Unirest}
+ * client - a client built with only {@link #getBaseUrl()} set keeps sharing
+ * the static client, same as {@link RIP#getClient(Class, String)}.
  */
 public final class RipClientConfig {
 
@@ -33,6 +35,7 @@ public final class RipClientConfig {
 	private final int proxyPort;
 	private final String proxyUsername;
 	private final String proxyPassword;
+	private final ObjectMapper objectMapper;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -42,6 +45,7 @@ public final class RipClientConfig {
 		this.proxyPort = builder.proxyPort;
 		this.proxyUsername = builder.proxyUsername;
 		this.proxyPassword = builder.proxyPassword;
+		this.objectMapper = builder.objectMapper;
 	}
 
 	/**
@@ -103,6 +107,16 @@ public final class RipClientConfig {
 		return proxyPassword;
 	}
 
+	/**
+	 * @return the JSON {@code ObjectMapper} for this client, or {@code null}
+	 *         to use the shared client's configured default (Unirest's own
+	 *         Gson-backed {@code JsonObjectMapper}, unless changed via
+	 *         {@link RIP#setObjectMapper(ObjectMapper)})
+	 */
+	public ObjectMapper getObjectMapper() {
+		return objectMapper;
+	}
+
 	/** Builds a {@link RipClientConfig}. */
 	public static final class Builder {
 
@@ -113,6 +127,7 @@ public final class RipClientConfig {
 		private int proxyPort;
 		private String proxyUsername;
 		private String proxyPassword;
+		private ObjectMapper objectMapper;
 
 		private Builder() {
 		}
@@ -174,6 +189,15 @@ public final class RipClientConfig {
 			this.proxyPort = port;
 			this.proxyUsername = username;
 			this.proxyPassword = password;
+			return this;
+		}
+
+		/**
+		 * @param objectMapper the JSON {@code ObjectMapper} for this client
+		 * @return this builder
+		 */
+		public Builder objectMapper(ObjectMapper objectMapper) {
+			this.objectMapper = objectMapper;
 			return this;
 		}
 

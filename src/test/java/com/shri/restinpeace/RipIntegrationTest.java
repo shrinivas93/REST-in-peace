@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,10 @@ import com.shri.restinpeace.multipart.UploadProgressListener;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+
+import kong.unirest.JsonObjectMapper;
+import kong.unirest.ObjectMapper;
+import kong.unirest.Unirest;
 
 class RipIntegrationTest {
 
@@ -348,6 +353,25 @@ class RipIntegrationTest {
 		public String message;
 	}
 
+	private static final class FixedValueObjectMapper implements ObjectMapper {
+		private final Object fixedValue;
+
+		FixedValueObjectMapper(Object fixedValue) {
+			this.fixedValue = fixedValue;
+		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		public <T> T readValue(String value, Class<T> valueType) {
+			return (T) fixedValue;
+		}
+
+		@Override
+		public String writeValue(Object value) {
+			return "{}";
+		}
+	}
+
 	private static final byte[] BINARY_CONTENT = { 0x00, 0x01, 0x02, (byte) 0xFF, (byte) 0xFE, 'h', 'i' };
 
 	private static HttpServer server;
@@ -376,6 +400,11 @@ class RipIntegrationTest {
 		FLAKY_ATTEMPTS.set(0);
 		ALWAYS_FAILING_ATTEMPTS.set(0);
 		RIP.clearInterceptors();
+	}
+
+	@AfterEach
+	void restoreDefaultObjectMapper() {
+		RIP.setObjectMapper(new JsonObjectMapper());
 	}
 
 	private static void handle(HttpExchange exchange) throws IOException {
@@ -1009,6 +1038,40 @@ class RipIntegrationTest {
 				RipClientConfig.builder().proxy("localhost", 1).build());
 
 		assertThrows(RuntimeException.class, () -> api.getSlow(port, "abc"));
+	}
+
+	@Test
+	void get_withRipSetObjectMapper_usesGivenMapperForSharedClient() {
+		Payload fixedPayload = new Payload("custom-mapper", 1);
+		RIP.setObjectMapper(new FixedValueObjectMapper(fixedPayload));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		Payload payload = api.getPayload(port, "abc");
+
+		assertEquals("custom-mapper", payload.name);
+	}
+
+	@Test
+	void getClient_withRipClientConfigObjectMapper_usesGivenMapperForThatClientOnly() {
+		Payload fixedPayload = new Payload("client-mapper", 2);
+		LocalApi customApi = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().objectMapper(new FixedValueObjectMapper(fixedPayload)).build());
+		LocalApi defaultApi = RIP.getClient(LocalApi.class);
+
+		Payload customResult = customApi.getPayload(port, "abc");
+		Payload defaultResult = defaultApi.getPayload(port, "abc");
+
+		assertEquals("client-mapper", customResult.name);
+		assertEquals("Shrinivas", defaultResult.name);
+	}
+
+	@Test
+	void get_withNoObjectMapperConfigured_throwsRestInPeaceExceptionNotUnirestOne() {
+		Unirest.config().setObjectMapper(null);
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class, () -> api.getPayload(port, "abc"));
+		assertTrue(exception.getMessage().contains("No JSON ObjectMapper is configured"));
 	}
 
 	@Test
