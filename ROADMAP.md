@@ -185,9 +185,15 @@ up.
       `kong.unirest.UnirestConfigException`. README documents the default
       (Gson-backed `kong.unirest.JsonObjectMapper`, no Jackson dependency
       shipped) and both ways to override it.
-- [ ] **`@Headers`** — static, method-level fixed headers
+- [x] **`@Headers`** — static, method-level fixed headers
       (`@Headers({"Cache-Control: no-cache"})`), separate from the existing
-      dynamic `@HeaderParam`/`@HeaderMap`.
+      dynamic `@HeaderParam`/`@HeaderMap`. Each entry is split on its first
+      `:` with whitespace trimmed around both sides, so `"Name:Value"`,
+      `"Name : Value"`, and `"Name    :     Value"` are all equivalent; an
+      entry with no `:` or an empty name fails validation.
+      `@HeaderParam`/`@HeaderMap` win over a `@Headers` entry of the same
+      name, applied via Unirest's `headerReplace` since the per-call value
+      is more specific than the always-on method annotation.
 - [ ] **Form-urlencoded bodies** — `@FormUrlEncoded` + `@Field`/`@FieldMap`,
       for OAuth token endpoints and classic HTML forms (currently only
       JSON/raw-string via `@Body` or multipart).

@@ -70,6 +70,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `RipClientConfig.builder().objectMapper(...)` sets one for a single
   `RipClientConfig`-configured client instead, since that client's own
   dedicated Unirest instance isn't reachable via `RIP.setObjectMapper(...)`.
+- `@Headers({"Name: Value", ...})` sets one or more fixed headers on a
+  method, for a header whose value never varies (`Accept`, `Cache-Control`,
+  an API version) - unlike `@HeaderParam`/`@HeaderMap`, no call argument is
+  involved. Each entry is split on its first `:` with whitespace trimmed
+  around both sides. Combines with `@HeaderParam`/`@HeaderMap` on the same
+  method, which win over a `@Headers` entry of the same name.
 
 ### Changed
 
