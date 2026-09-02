@@ -1,5 +1,6 @@
 package com.shri.restinpeace;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -48,6 +49,7 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Multipart;
@@ -58,6 +60,7 @@ import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
+import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.CorrelationIdInterceptor;
@@ -66,6 +69,7 @@ import com.shri.restinpeace.interceptor.LoggingInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -158,6 +162,11 @@ class RipIntegrationTest {
 		String uploadMultipartWithPartMap(@PathParam("port") int port, @PathParam("id") String id,
 				@PartMap Map<String, Object> parts);
 
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithProgress(@PathParam("port") int port, @PathParam("id") String id,
+				@Part("file") File file, UploadProgressListener listener);
+
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMissingRequiredQuery(@PathParam("port") int port, @PathParam("id") String id,
 				@QueryParam(value = "q", required = true) Integer q);
@@ -244,6 +253,33 @@ class RipIntegrationTest {
 		@GET("http://localhost:{port}/slow/{id}")
 		@Timeout(readMillis = 5_000)
 		String getSlowWithLongTimeoutOverride(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		byte[] downloadBytes(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		CompletableFuture<byte[]> downloadBytesAsync(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		RipResponse<byte[]> downloadBytesWithResponse(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		byte[] downloadBytesWithProgress(@PathParam("port") int port, @PathParam("id") String id,
+				DownloadProgressListener listener);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		File downloadToFile(@PathParam("port") int port, @PathParam("id") String id, @Destination File target);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		CompletableFuture<File> downloadToFileAsync(@PathParam("port") int port, @PathParam("id") String id,
+				@Destination File target);
+
+		@GET("http://localhost:{port}/error/{id}")
+		byte[] downloadBytesFromErrorEndpoint(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/error/{id}")
+		File downloadToFileFromErrorEndpoint(@PathParam("port") int port, @PathParam("id") String id,
+				@Destination File target);
 	}
 
 	@RestClient
@@ -303,6 +339,8 @@ class RipIntegrationTest {
 		public String code;
 		public String message;
 	}
+
+	private static final byte[] BINARY_CONTENT = { 0x00, 0x01, 0x02, (byte) 0xFF, (byte) 0xFE, 'h', 'i' };
 
 	private static HttpServer server;
 	private static int port;
@@ -366,6 +404,13 @@ class RipIntegrationTest {
 				Thread.currentThread().interrupt();
 			}
 			byte[] response = "ok".getBytes(StandardCharsets.UTF_8);
+			exchange.sendResponseHeaders(200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/binary/")) {
+			byte[] response = BINARY_CONTENT;
+			exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
 			exchange.sendResponseHeaders(200, response.length);
 			try (OutputStream os = exchange.getResponseBody()) {
 				os.write(response);
@@ -638,6 +683,36 @@ class RipIntegrationTest {
 		assertTrue(request.body.contains("filename=\"renamed.txt\""));
 		assertFalse(request.body.contains(file.getName()));
 		assertTrue(request.body.contains("file contents"));
+	}
+
+	@Test
+	void multipart_withUploadProgressListener_reportsFinalByteCountsForFileField() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+		List<String> reportedFields = new ArrayList<>();
+		List<Long> reportedBytesWritten = new ArrayList<>();
+
+		String result = api.uploadMultipartWithProgress(port, "abc", file, (field, bytesWritten, totalBytes) -> {
+			reportedFields.add(field);
+			reportedBytesWritten.add(bytesWritten);
+		});
+
+		assertEquals("ok", result);
+		assertFalse(reportedFields.isEmpty());
+		assertTrue(reportedFields.stream().allMatch("file"::equals));
+		assertEquals(file.length(), (long) reportedBytesWritten.get(reportedBytesWritten.size() - 1));
+	}
+
+	@Test
+	void multipart_withNullUploadProgressListener_skipsProgressReporting() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+
+		String result = api.uploadMultipartWithProgress(port, "abc", file, null);
+
+		assertEquals("ok", result);
 	}
 
 	@Test
@@ -1329,6 +1404,98 @@ class RipIntegrationTest {
 		LocalApi api = RIP.getClient(LocalApi.class);
 
 		assertThrows(RestInPeaceHttpException.class, () -> api.pingAlwaysFailing(port, "x"));
+	}
+
+	@Test
+	void get_withByteArrayReturnType_returnsExactBytesUncorrupted() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		byte[] result = api.downloadBytes(port, "abc");
+
+		assertArrayEquals(BINARY_CONTENT, result);
+	}
+
+	@Test
+	void getAsync_withByteArrayReturnType_completesWithExactBytes()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		byte[] result = api.downloadBytesAsync(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertArrayEquals(BINARY_CONTENT, result);
+	}
+
+	@Test
+	void get_withRipResponseOfByteArray_exposesStatusHeadersAndExactBytes() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<byte[]> response = api.downloadBytesWithResponse(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertEquals("application/octet-stream", response.getHeader("Content-Type"));
+		assertArrayEquals(BINARY_CONTENT, response.getBody());
+	}
+
+	@Test
+	void get_withByteArrayReturnTypeOnNonSuccessStatus_throwsWithStringRawBody() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.downloadBytesFromErrorEndpoint(port, "x"));
+
+		assertEquals(422, exception.getStatus());
+		assertEquals("{\"code\":\"INVALID\",\"message\":\"nope\"}", exception.getRawBody());
+	}
+
+	@Test
+	void get_withDownloadProgressListener_reportsFinalByteCounts() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		List<Long> reportedBytesWritten = new ArrayList<>();
+		List<Long> reportedTotalBytes = new ArrayList<>();
+
+		byte[] result = api.downloadBytesWithProgress(port, "abc", (bytesWritten, totalBytes) -> {
+			reportedBytesWritten.add(bytesWritten);
+			reportedTotalBytes.add(totalBytes);
+		});
+
+		assertArrayEquals(BINARY_CONTENT, result);
+		assertFalse(reportedBytesWritten.isEmpty());
+		assertEquals(BINARY_CONTENT.length, (long) reportedBytesWritten.get(reportedBytesWritten.size() - 1));
+	}
+
+	@Test
+	void get_withFileReturnTypeAndDestination_writesExactBytesToDestination() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File destination = Files.createTempFile("rip-download", ".bin").toFile();
+
+		File result = api.downloadToFile(port, "abc", destination);
+
+		assertEquals(destination, result);
+		assertArrayEquals(BINARY_CONTENT, Files.readAllBytes(destination.toPath()));
+	}
+
+	@Test
+	void getAsync_withFileReturnTypeAndDestination_writesExactBytesToDestination()
+			throws IOException, InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File destination = Files.createTempFile("rip-download-async", ".bin").toFile();
+
+		File result = api.downloadToFileAsync(port, "abc", destination).get(5, TimeUnit.SECONDS);
+
+		assertEquals(destination, result);
+		assertArrayEquals(BINARY_CONTENT, Files.readAllBytes(destination.toPath()));
+	}
+
+	@Test
+	void get_withFileReturnTypeOnNonSuccessStatus_throwsAndDoesNotWriteDestination() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File destination = Files.createTempFile("rip-download-error", ".bin").toFile();
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.downloadToFileFromErrorEndpoint(port, "x", destination));
+
+		assertEquals(422, exception.getStatus());
+		assertEquals(0L, Files.size(destination.toPath()));
 	}
 
 	@Test

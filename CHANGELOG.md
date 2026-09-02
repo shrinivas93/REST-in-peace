@@ -44,6 +44,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   overload, overrides base URL, connect/read timeout, and proxy for one
   client. `@Timeout` takes priority over `RipClientConfig`'s timeout, which
   takes priority over the shared client's own configured default.
+- `byte[]` return type (or `CompletableFuture<byte[]>`/`RipResponse<byte[]>`)
+  for a binary response, decoded as exact bytes instead of being corrupted
+  by the previous always-`String` decoding.
+- `File` return type with a `@Destination File` parameter streams a binary
+  response straight to disk instead of buffering it into a `byte[]`, for
+  both synchronous and `CompletableFuture<File>` methods.
+- `DownloadProgressListener` parameter reports `bytesWritten`/`totalBytes`
+  as a `byte[]`/`File` method's response streams in.
+- `UploadProgressListener` parameter reports `field`/`bytesWritten`/
+  `totalBytes` as a `@Multipart` method's `File`/`InputStream` parts are
+  written to the request body.
 
 ### Changed
 

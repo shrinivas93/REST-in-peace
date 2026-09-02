@@ -128,6 +128,94 @@ for reference rather than tracked in code. Check items off as they land.
       `HeaderInterceptor`).
 - [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
       `@RestClient` interfaces without hitting real HTTP.
+
+Items below are from a full-codebase gap analysis and feature brainstorm
+(2026-09-01), grouped as found: concrete gaps/bugs in the current code,
+missing table-stakes features other declarative REST clients have, and
+bigger ideas that would make this library stand out rather than just catch
+up.
+
+- [x] **Binary/file downloads** — `byte[]` (or `CompletableFuture<byte[]>`/
+      `RipResponse<byte[]>`) decodes a response as exact bytes instead of
+      corrupting it through the old always-`String` path. `File` with a
+      `@Destination File` parameter streams straight to disk instead of
+      buffering into a `byte[]`, for both sync and `CompletableFuture<File>`
+      methods. A `DownloadProgressListener` parameter (RIP's own type, not
+      Unirest's `ProgressMonitor`) reports `bytesWritten`/`totalBytes` as
+      the response streams in. On the upload side, an
+      `UploadProgressListener` parameter on a `@Multipart` method reports
+      progress per `File`/`InputStream` part (`String`/`byte[]` parts are
+      written in one shot and not reported). A non-2xx response still
+      throws `RestInPeaceHttpException` with the error body decoded as
+      text, and a `File` destination is left untouched rather than written
+      with error content. `RipResponse<File>` is intentionally not
+      supported - use a plain `File` return with `@Destination` instead.
+- [ ] **Path/query values aren't percent-encoded** — `resolvePathParams`
+      does a raw `url.replace("{id}", String.valueOf(value))` with no
+      `URLEncoder`/URI-escaping. A path param containing `/`, `?`, `#`, or a
+      space produces a broken or subtly wrong URL. Retrofit encodes by
+      default with an opt-out; RIP has no encoding at all.
+- [ ] **No multi-value query parameters** — Unirest has
+      `queryString(String, Collection<?>)` to repeat a param
+      (`?tag=a&tag=b`), but `applyParams` always calls the single-value
+      overload since the static type is `Object`, so a `List<String>`
+      argument never dispatches to it. A common REST pattern (repeated
+      filter params) is silently unsupported.
+- [ ] **`@Url`: a full dynamic URL as a parameter** — for APIs that hand you
+      a `next` link to call verbatim (pagination, HATEOAS). The
+      `HTTPRequestParam.URL` enum value already exists, marked "reserved;
+      not currently bound by any annotation" - someone already sketched this
+      and never finished it.
+- [ ] **`ObjectMapper` is a silent dependency** — RIP never validates or
+      documents that JSON (de)serialization rides entirely on whatever
+      `ObjectMapper` is configured on the relevant Unirest client (Gson by
+      default, bundled transitively). Worth a fail-fast validation check
+      and a clearer docs callout.
+- [ ] **`@Headers`** — static, method-level fixed headers
+      (`@Headers({"Cache-Control: no-cache"})`), separate from the existing
+      dynamic `@HeaderParam`/`@HeaderMap`.
+- [ ] **Form-urlencoded bodies** — `@FormUrlEncoded` + `@Field`/`@FieldMap`,
+      for OAuth token endpoints and classic HTML forms (currently only
+      JSON/raw-string via `@Body` or multipart).
+- [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
+      instead of hitting the network every time.
+- [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** — an
+      annotation processor that generates a real class implementing each
+      `@RestClient` interface at build time (like Dagger/MapStruct do)
+      instead of `Proxy.newProxyInstance` + reflection at runtime. Makes the
+      library GraalVM native-image friendly out of the box with zero
+      reflection config, slightly faster startup, and IDE-navigable
+      generated source. The single biggest available differentiator -
+      Retrofit/Feign are both stuck with runtime proxies for legacy reasons;
+      a from-scratch library doesn't have to be.
+- [ ] **A pluggable `CallAdapter`-style return-type system** — return types
+      are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
+      `CompletableFuture`/`RipResponse`). Extracting that into a small
+      adapter interface would let someone add Kotlin `suspend fun` support,
+      RxJava's `Single`/`Observable`, or Reactor's `Mono`/`Flux` as a
+      separate optional module, without RIP itself depending on any of them
+      or bloating the core.
+- [ ] **Idempotency-key support baked into `@Retry`** — generate a stable
+      `Idempotency-Key` header once per logical call and keep it constant
+      across all retry attempts (opt-in, e.g. `@Retry(idempotent = true)`).
+      Solves a real distributed-systems hazard (a POST that succeeded
+      server-side but whose response was lost, then gets blindly retried)
+      that most REST clients don't handle at all.
+- [ ] **Circuit breaker / bulkhead per client** — a natural extension of
+      `RipClientConfig`: stop hammering a downstream that's clearly down,
+      the natural next step after retry and timeout.
+- [ ] **A pre-built `MetricsInterceptor`** — Micrometer-style counters/timers,
+      following the exact pattern `LoggingInterceptor`/`CorrelationIdInterceptor`
+      already established. Cheap to build, immediately useful, zero new
+      dependency if done as a `Consumer`-based sink like `LoggingInterceptor`.
+- [ ] **A pagination helper** — an annotation or small utility that follows a
+      `next`/cursor field automatically and hands back a lazy
+      `Iterator`/`Stream` of pages, using the `@Url` mechanism above under
+      the hood.
+- [ ] **Spring/Micronaut integration module** — auto-register every
+      `@RestClient` interface found on the classpath as a bean, the way
+      OpenFeign integrates with Spring Cloud. This is what actually gets a
+      library adopted broadly rather than used standalone.
 - [ ] **(Low priority) Fix branch protection on `master`** — repo process,
       not a library feature. A ruleset requiring a pull request before
       merging was set up on `master`, but the bypass entry for the release

@@ -23,6 +23,7 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
@@ -32,7 +33,9 @@ import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
+import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 
 class RestClientValidatorTest {
 
@@ -311,6 +314,104 @@ class RestClientValidatorTest {
 		@POST("http://example.com")
 		@Multipart
 		String foo(@PartMap Map<String, Object> first, @PartMap Map<String, Object> second);
+	}
+
+	@RestClient
+	public interface ValidByteArrayDownload {
+		@GET("http://example.com")
+		byte[] foo();
+	}
+
+	@RestClient
+	public interface ValidByteArrayDownloadAsync {
+		@GET("http://example.com")
+		CompletableFuture<byte[]> foo();
+	}
+
+	@RestClient
+	public interface ValidByteArrayDownloadWithRipResponse {
+		@GET("http://example.com")
+		RipResponse<byte[]> foo();
+	}
+
+	@RestClient
+	public interface ValidFileDownload {
+		@GET("http://example.com")
+		File foo(@Destination File target);
+	}
+
+	@RestClient
+	public interface ValidFileDownloadAsync {
+		@GET("http://example.com")
+		CompletableFuture<File> foo(@Destination File target);
+	}
+
+	@RestClient
+	public interface FileReturnWithoutDestination {
+		@GET("http://example.com")
+		File foo();
+	}
+
+	@RestClient
+	public interface DestinationWithoutFileReturn {
+		@GET("http://example.com")
+		String foo(@Destination File target);
+	}
+
+	@RestClient
+	public interface DestinationWrongParamType {
+		@GET("http://example.com")
+		File foo(@Destination String target);
+	}
+
+	@RestClient
+	public interface MultipleDestinations {
+		@GET("http://example.com")
+		File foo(@Destination File first, @Destination File second);
+	}
+
+	@RestClient
+	public interface RipResponseOfFile {
+		@GET("http://example.com")
+		RipResponse<File> foo(@Destination File target);
+	}
+
+	@RestClient
+	public interface ValidDownloadProgressListener {
+		@GET("http://example.com")
+		byte[] foo(DownloadProgressListener listener);
+	}
+
+	@RestClient
+	public interface DownloadProgressListenerOnNonBinaryReturn {
+		@GET("http://example.com")
+		String foo(DownloadProgressListener listener);
+	}
+
+	@RestClient
+	public interface MultipleDownloadProgressListeners {
+		@GET("http://example.com")
+		byte[] foo(DownloadProgressListener first, DownloadProgressListener second);
+	}
+
+	@RestClient
+	public interface ValidUploadProgressListener {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("file") File file, UploadProgressListener listener);
+	}
+
+	@RestClient
+	public interface UploadProgressListenerWithoutMultipart {
+		@POST("http://example.com")
+		String foo(UploadProgressListener listener);
+	}
+
+	@RestClient
+	public interface MultipleUploadProgressListeners {
+		@POST("http://example.com")
+		@Multipart
+		String foo(@Part("file") File file, UploadProgressListener first, UploadProgressListener second);
 	}
 
 	@Test
@@ -595,6 +696,112 @@ class RestClientValidatorTest {
 				() -> RestClientValidator.validate(MultiplePartMaps.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @PartMap"));
+	}
+
+	@Test
+	void validate_validByteArrayDownload_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidByteArrayDownload.class));
+	}
+
+	@Test
+	void validate_validByteArrayDownloadAsync_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidByteArrayDownloadAsync.class));
+	}
+
+	@Test
+	void validate_validByteArrayDownloadWithRipResponse_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidByteArrayDownloadWithRipResponse.class));
+	}
+
+	@Test
+	void validate_validFileDownload_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFileDownload.class));
+	}
+
+	@Test
+	void validate_validFileDownloadAsync_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFileDownloadAsync.class));
+	}
+
+	@Test
+	void validate_fileReturnWithoutDestination_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FileReturnWithoutDestination.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns File but has no @Destination parameter"));
+	}
+
+	@Test
+	void validate_destinationWithoutFileReturn_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(DestinationWithoutFileReturn.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has a @Destination parameter but does not return File"));
+	}
+
+	@Test
+	void validate_destinationWrongParamType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(DestinationWrongParamType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@Destination parameter of type java.lang.String - only File is supported"));
+	}
+
+	@Test
+	void validate_multipleDestinations_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleDestinations.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one parameter annotated with @Destination"));
+	}
+
+	@Test
+	void validate_ripResponseOfFile_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(RipResponseOfFile.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("RipResponse<File>"));
+	}
+
+	@Test
+	void validate_validDownloadProgressListener_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidDownloadProgressListener.class));
+	}
+
+	@Test
+	void validate_downloadProgressListenerOnNonBinaryReturn_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(DownloadProgressListenerOnNonBinaryReturn.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("DownloadProgressListener parameter but does not return byte[] or File"));
+	}
+
+	@Test
+	void validate_multipleDownloadProgressListeners_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleDownloadProgressListeners.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one DownloadProgressListener parameter"));
+	}
+
+	@Test
+	void validate_validUploadProgressListener_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidUploadProgressListener.class));
+	}
+
+	@Test
+	void validate_uploadProgressListenerWithoutMultipart_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(UploadProgressListenerWithoutMultipart.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("UploadProgressListener parameter but is not annotated with @Multipart"));
+	}
+
+	@Test
+	void validate_multipleUploadProgressListeners_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleUploadProgressListeners.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one UploadProgressListener parameter"));
 	}
 
 }

@@ -19,13 +19,17 @@ methods like any other Java call.
 - `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
   known until runtime
 - `@Multipart`/`@Part`/`@PartMap` for `multipart/form-data` uploads (form
-  fields, `File`/`byte[]`/`InputStream` file parts, and a dynamic set of
-  parts not known until runtime)
+  fields, `File`/`byte[]`/`InputStream` file parts, a dynamic set of parts
+  not known until runtime, and an `UploadProgressListener` for progress
+  reporting on a large file part)
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
   return type is deserialized from JSON automatically
+- `byte[]` and `File` (via `@Destination`) return types for binary
+  downloads, with an optional `DownloadProgressListener` for progress
+  reporting
 - `RipResponse<T>` wraps `T` with the response's status code and headers,
   for a method that needs more than just the body
 - A non-2xx response always throws `RestInPeaceHttpException`, with
@@ -307,6 +311,26 @@ parts.put("file", PartValue.of(photoBytes, "photo.jpg"));        // filename "ph
 api.upload(parts);
 ```
 
+Add an `UploadProgressListener` parameter to observe upload progress on a
+large `File`/`InputStream` part - only valid alongside `@Multipart`:
+
+```java
+@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatar(@PathParam("id") String id, @Part("file") File avatar, UploadProgressListener onProgress);
+```
+
+```java
+avatarApi.uploadAvatar("42", avatar, (field, bytesWritten, totalBytes) ->
+        System.out.printf("%s: %d / %d%n", field, bytesWritten, totalBytes));
+```
+
+It's only called for `File`/`InputStream` parts - a `String`/`byte[]` part
+is written in one shot with nothing meaningful to report. `field` is the
+part's name (its `@Part`/`@PartMap` key), needed to tell parts apart since
+calls for different parts interleave rather than running one at a time.
+Pass `null` for a call that doesn't need progress reporting.
+
 ## Return types
 
 A method's declared return type controls what you get back:
@@ -326,6 +350,56 @@ void fireEvent(@Body Event event);               // response body discarded
 discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies. These
 rules apply to a successful (2xx) response — see below for anything else.
+
+### Binary downloads: `byte[]` and `File`
+
+A `String` return type is fine for text, but decoding a binary response
+(an image, a PDF, a zip) as a `String` corrupts it. Declare `byte[]`
+instead to get the exact bytes back:
+
+```java
+@GET("https://api.example.com/reports/{id}/pdf")
+byte[] downloadReport(@PathParam("id") String id);
+```
+
+For a large response, buffering the whole thing into a `byte[]` wastes
+memory. Declare `File` instead, with a `@Destination File` parameter
+saying where to write it - the same `File` instance comes back once the
+download finishes:
+
+```java
+@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id, @Destination File target);
+```
+
+```java
+File pdf = reportApi.downloadReport("42", new File("/tmp/report.pdf"));
+```
+
+Both work with `CompletableFuture<byte[]>`/`CompletableFuture<File>` for
+an async download, and `byte[]` also works wrapped in `RipResponse<byte[]>`
+when you need the status/headers alongside the bytes. A non-2xx response
+still throws `RestInPeaceHttpException` as usual - the error body is
+decoded as text (a JSON or plain-text error payload is far more likely
+than a binary one), and a `File` destination is left untouched rather
+than written with error content.
+
+Add a `DownloadProgressListener` parameter to any of the above to observe
+progress as the response streams in:
+
+```java
+@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id, @Destination File target,
+        DownloadProgressListener onProgress);
+```
+
+```java
+reportApi.downloadReport("42", target, (bytesWritten, totalBytes) ->
+        System.out.printf("%d / %d%n", bytesWritten, totalBytes));
+```
+
+`totalBytes` is `-1` if the server didn't send a `Content-Length`. Pass
+`null` for a call that doesn't need progress reporting.
 
 ### Response headers and status: `RipResponse<T>`
 

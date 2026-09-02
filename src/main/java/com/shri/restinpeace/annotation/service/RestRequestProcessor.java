@@ -3,11 +3,14 @@ package com.shri.restinpeace.annotation.service;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -31,6 +34,7 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Multipart;
@@ -43,11 +47,13 @@ import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
+import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
@@ -172,15 +178,30 @@ public class RestRequestProcessor {
 		applyTimeout(request, method);
 		request = applyParams(request, method, args);
 		request = applyInterceptors(request, context);
+		applyDownloadMonitor(request, resolveDownloadProgressListener(method, args));
 
 		Class<?> returnType = method.getReturnType();
 		if (returnType == CompletableFuture.class) {
-			return processAsync(request, method, context);
+			return processAsync(request, method, args, context);
 		}
 		if (returnType == RipResponse.class) {
 			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
+			if (innerType == byte[].class) {
+				HttpResponse<byte[]> response = executeSyncWithRetry(method, innerType, context, request::asBytes);
+				return wrapResponse(response, decodeOrThrow(response, method, innerType));
+			}
 			HttpResponse<String> response = executeSyncWithRetry(method, innerType, context, request::asString);
 			return wrapResponse(response, decodeOrThrow(response, method, innerType));
+		}
+		if (returnType == byte[].class) {
+			HttpResponse<byte[]> response = executeSyncWithRetry(method, returnType, context, request::asBytes);
+			return decodeOrThrow(response, method, returnType);
+		}
+		if (returnType == File.class) {
+			File destination = resolveDestinationFile(method, args);
+			HttpResponse<byte[]> response = executeSyncWithRetry(method, byte[].class, context, request::asBytes);
+			byte[] bytes = (byte[]) decodeOrThrow(response, method, byte[].class);
+			return writeToFile(destination, bytes);
 		}
 		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context, request::asString);
 		return decodeOrThrow(response, method, returnType);
@@ -195,7 +216,7 @@ public class RestRequestProcessor {
 		return request;
 	}
 
-	private void notifyAfterResponse(RequestContext context, HttpResponse<String> response, Method method,
+	private <B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Method method,
 			Class<?> returnType) {
 		if (INTERCEPTORS.isEmpty()) {
 			return;
@@ -208,14 +229,28 @@ public class RestRequestProcessor {
 		reversed.forEach(interceptor -> interceptor.afterResponse(context, response.getStatus(), body));
 	}
 
-	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, RequestContext context) {
+	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, Object[] args,
+			RequestContext context) {
 		Type futureInnerType = resolveFutureInnerType(method);
 		if (isRipResponseType(futureInnerType)) {
 			Class<?> innerType = resolveWrappedType(futureInnerType, method);
+			if (innerType == byte[].class) {
+				return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
+						.thenApply(response -> wrapResponse(response, decodeOrThrow(response, method, innerType)));
+			}
 			return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
 					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, method, innerType)));
 		}
 		Class<?> innerType = requireClass(futureInnerType, method);
+		if (innerType == byte[].class) {
+			return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
+					.thenApply(response -> decodeOrThrow(response, method, innerType));
+		}
+		if (innerType == File.class) {
+			File destination = resolveDestinationFile(method, args);
+			return executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync)
+					.thenApply(response -> writeToFile(destination, (byte[]) decodeOrThrow(response, method, byte[].class)));
+		}
 		return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
 				.thenApply(response -> decodeOrThrow(response, method, innerType));
 	}
@@ -224,9 +259,9 @@ public class RestRequestProcessor {
 	 * Decodes a settled response, throwing {@link RestInPeaceHttpException}
 	 * for a non-2xx status instead of returning a value.
 	 */
-	private Object decodeOrThrow(HttpResponse<String> response, Method method, Class<?> returnType) {
+	private Object decodeOrThrow(HttpResponse<?> response, Method method, Class<?> returnType) {
 		if (!isSuccessStatus(response.getStatus())) {
-			throw new RestInPeaceHttpException(response.getStatus(), response.getBody(),
+			throw new RestInPeaceHttpException(response.getStatus(), toRawBodyString(response.getBody()),
 					decodeBody(response, method, returnType));
 		}
 		return decodeBody(response, method, returnType);
@@ -239,13 +274,17 @@ public class RestRequestProcessor {
 	 * has none) - without throwing either way, for reporting to
 	 * interceptors mid-retry as well as for the final settled response.
 	 */
-	private Object decodeBody(HttpResponse<String> response, Method method, Class<?> returnType) {
-		String rawBody = response.getBody();
+	private Object decodeBody(HttpResponse<?> response, Method method, Class<?> returnType) {
+		Object rawBody = response.getBody();
 		if (!isSuccessStatus(response.getStatus())) {
+			String rawBodyString = toRawBodyString(rawBody);
 			ErrorType errorType = method.getAnnotation(ErrorType.class);
-			if (errorType != null && rawBody != null && !rawBody.isEmpty()) {
-				return getObjectMapper().readValue(rawBody, errorType.value());
+			if (errorType != null && rawBodyString != null && !rawBodyString.isEmpty()) {
+				return getObjectMapper().readValue(rawBodyString, errorType.value());
 			}
+			return rawBodyString;
+		}
+		if (returnType == byte[].class) {
 			return rawBody;
 		}
 		if (returnType == String.class) {
@@ -254,24 +293,38 @@ public class RestRequestProcessor {
 		if (returnType == void.class || returnType == Void.class) {
 			return null;
 		}
-		return getObjectMapper().readValue(rawBody, returnType);
+		return getObjectMapper().readValue((String) rawBody, returnType);
+	}
+
+	/**
+	 * Renders a decoded body as a {@code String} for error reporting,
+	 * regardless of whether the wire representation was text or bytes - a
+	 * {@code byte[]}/{@code File} method's error body is still very likely
+	 * to be a text payload (a JSON or plain-text error page) even though its
+	 * success body is binary.
+	 */
+	private static String toRawBodyString(Object rawBody) {
+		if (rawBody instanceof byte[]) {
+			return new String((byte[]) rawBody, StandardCharsets.UTF_8);
+		}
+		return (String) rawBody;
 	}
 
 	private static boolean isSuccessStatus(int status) {
 		return status >= 200 && status < 300;
 	}
 
-	private HttpResponse<String> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
-			Supplier<HttpResponse<String>> call) {
+	private <B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
+			Supplier<HttpResponse<B>> call) {
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
-			HttpResponse<String> response = call.get();
+			HttpResponse<B> response = call.get();
 			notifyAfterResponse(context, response, method, returnType);
 			return response;
 		}
 		long delay = retry.delayMillis();
 		for (int attempt = 1;; attempt++) {
-			HttpResponse<String> response = null;
+			HttpResponse<B> response = null;
 			RuntimeException failure = null;
 			try {
 				response = call.get();
@@ -291,8 +344,8 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private CompletableFuture<HttpResponse<String>> executeAsyncWithRetry(Method method, Class<?> returnType,
-			RequestContext context, Supplier<CompletableFuture<HttpResponse<String>>> call) {
+	private <B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
+			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
 			return call.get().thenApply(response -> {
@@ -303,9 +356,9 @@ public class RestRequestProcessor {
 		return attemptAsync(call, method, returnType, context, retry, 1, retry.delayMillis());
 	}
 
-	private CompletableFuture<HttpResponse<String>> attemptAsync(Supplier<CompletableFuture<HttpResponse<String>>> call,
+	private <B> CompletableFuture<HttpResponse<B>> attemptAsync(Supplier<CompletableFuture<HttpResponse<B>>> call,
 			Method method, Class<?> returnType, RequestContext context, Retry retry, int attempt, long delay) {
-		CompletableFuture<HttpResponse<String>> result = new CompletableFuture<>();
+		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
 		call.get().whenComplete((response, failure) -> {
 			if (response != null) {
 				notifyAfterResponse(context, response, method, returnType);
@@ -386,7 +439,7 @@ public class RestRequestProcessor {
 		return (Class<?>) type;
 	}
 
-	private static Object wrapResponse(HttpResponse<String> response, Object decodedBody) {
+	private static Object wrapResponse(HttpResponse<?> response, Object decodedBody) {
 		return new RipResponse<>(response.getStatus(), toHeaderMap(response.getHeaders()), decodedBody);
 	}
 
@@ -504,6 +557,62 @@ public class RestRequestProcessor {
 		return unirestInstance != null ? unirestInstance.config().getObjectMapper() : Unirest.config().getObjectMapper();
 	}
 
+	/**
+	 * Finds the method's {@code @Destination File} parameter's value, for a
+	 * method returning {@code File} (or {@code CompletableFuture<File>}).
+	 * Validated to exist and be of type {@code File} at
+	 * {@link com.shri.restinpeace.RIP#getClient(Class)} time; the {@code null}
+	 * check here is only for a {@code null} argument at call time.
+	 */
+	private File resolveDestinationFile(Method method, Object[] args) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			if (parameters[i].getAnnotation(Destination.class) != null) {
+				Object value = args == null ? null : args[i];
+				if (value == null) {
+					throw new RestInPeaceException(
+							String.format("Missing value for @Destination parameter in method %s.", method));
+				}
+				return (File) value;
+			}
+		}
+		throw new RestInPeaceException(String.format(
+				"The method %s returns File but has no @Destination parameter to write the response to.", method));
+	}
+
+	private DownloadProgressListener resolveDownloadProgressListener(Method method, Object[] args) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			if (parameters[i].getType() == DownloadProgressListener.class) {
+				return args == null ? null : (DownloadProgressListener) args[i];
+			}
+		}
+		return null;
+	}
+
+	private void applyDownloadMonitor(HttpRequest<?> request, DownloadProgressListener listener) {
+		if (listener == null) {
+			return;
+		}
+		request.downloadMonitor((field, fileName, bytesWritten, totalBytes) -> listener
+				.onProgress(bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
+	}
+
+	private void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
+		multipartBody.uploadMonitor((field, fileName, bytesWritten, totalBytes) -> listener.onProgress(field,
+				bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
+	}
+
+	private static File writeToFile(File destination, byte[] bytes) {
+		try {
+			Files.write(destination.toPath(), bytes);
+		} catch (IOException e) {
+			throw new RestInPeaceException(
+					String.format("Failed to write downloaded response to '%s'.", destination.getPath()), e);
+		}
+		return destination;
+	}
+
 	private HttpRequest<?> applyParams(HttpRequest<?> request, Method method, Object[] args) {
 		Parameter[] parameters = method.getParameters();
 
@@ -553,6 +662,10 @@ public class RestRequestProcessor {
 
 			if (parameter.getAnnotation(PartMap.class) != null && argValue != null) {
 				applyPartMap(multipartBody, (Map<?, ?>) argValue);
+			}
+
+			if (parameter.getType() == UploadProgressListener.class && argValue != null) {
+				applyUploadMonitor(multipartBody, (UploadProgressListener) argValue);
 			}
 
 			Body body = parameter.getAnnotation(Body.class);
