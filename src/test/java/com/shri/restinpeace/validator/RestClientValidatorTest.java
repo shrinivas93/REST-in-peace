@@ -31,6 +31,7 @@ import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.download.DownloadProgressListener;
@@ -412,6 +413,30 @@ class RestClientValidatorTest {
 		@POST("http://example.com")
 		@Multipart
 		String foo(@Part("file") File file, UploadProgressListener first, UploadProgressListener second);
+	}
+
+	@RestClient
+	public interface ValidUrlParam {
+		@GET
+		String foo(@Url String url);
+	}
+
+	@RestClient
+	public interface UrlParamWithStaticUrl {
+		@GET("http://example.com")
+		String foo(@Url String url);
+	}
+
+	@RestClient
+	public interface UrlParamWrongType {
+		@GET
+		String foo(@Url int url);
+	}
+
+	@RestClient
+	public interface MultipleUrlParams {
+		@GET
+		String foo(@Url String first, @Url String second);
 	}
 
 	@Test
@@ -802,6 +827,35 @@ class RestClientValidatorTest {
 				() -> RestClientValidator.validate(MultipleUploadProgressListeners.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one UploadProgressListener parameter"));
+	}
+
+	@Test
+	void validate_validUrlParam_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidUrlParam.class));
+	}
+
+	@Test
+	void validate_urlParamWithStaticUrl_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(UrlParamWithStaticUrl.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has both a @Url parameter and a static URL"));
+	}
+
+	@Test
+	void validate_urlParamWrongType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(UrlParamWrongType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@Url parameter of type int - only String is supported"));
+	}
+
+	@Test
+	void validate_multipleUrlParams_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleUrlParams.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one parameter annotated with @Url"));
 	}
 
 }

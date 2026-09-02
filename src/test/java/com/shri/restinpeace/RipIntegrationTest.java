@@ -58,6 +58,7 @@ import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.download.DownloadProgressListener;
@@ -288,6 +289,12 @@ class RipIntegrationTest {
 		@GET("http://localhost:{port}/error/{id}")
 		File downloadToFileFromErrorEndpoint(@PathParam("port") int port, @PathParam("id") String id,
 				@Destination File target);
+
+		@GET
+		String getWithUrlParam(@Url String url);
+
+		@GET
+		String getWithUrlParamAndQueryParam(@Url String url, @QueryParam("q") Integer q);
 	}
 
 	@RestClient
@@ -1419,6 +1426,35 @@ class RipIntegrationTest {
 
 		assertEquals("ok", result);
 		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void get_withUrlParam_callsGivenUrlVerbatimIgnoringBaseUrl() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getWithUrlParam("http://localhost:" + port + "/items/abc");
+
+		assertEquals("ok", result);
+		assertEquals("/items/abc", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void get_withUrlParamAndQueryParam_appendsQueryToGivenUrl() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getWithUrlParamAndQueryParam("http://localhost:" + port + "/items/abc", 7);
+
+		assertEquals("ok", result);
+		assertEquals("/items/abc", LAST_REQUEST.get().path);
+		assertEquals("q=7", LAST_REQUEST.get().query);
+	}
+
+	@Test
+	void get_withNullUrlParam_throwsRestInPeaceException() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class, () -> api.getWithUrlParam(null));
+		assertTrue(exception.getMessage().contains("Missing value for @Url parameter"));
 	}
 
 	@Test
