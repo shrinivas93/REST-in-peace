@@ -7,6 +7,10 @@ on:
         description: 'Version of com.shri:rest-in-peace to test as a real consumer'
         required: true
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   consumer-test:
     runs-on: ubuntu-latest
