@@ -68,6 +68,7 @@ import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
 import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
+import kong.unirest.UnirestConfigException;
 import kong.unirest.UnirestInstance;
 
 /**
@@ -116,15 +117,15 @@ public class RestRequestProcessor {
 	 * Creates a processor from a {@link RipClientConfig}. Requests go through
 	 * a dedicated {@code UnirestInstance} - instead of the shared static
 	 * {@code Unirest} client - whenever {@code config} sets a connect/read
-	 * timeout or a proxy, since those settings live on a client instance,
-	 * not per request.
+	 * timeout, a proxy, or an {@code objectMapper}, since those settings live
+	 * on a client instance, not per request.
 	 *
 	 * @param config the per-client settings
 	 */
 	public RestRequestProcessor(RipClientConfig config) {
 		this.baseUrlOverride = config.getBaseUrl();
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
-				|| config.getProxyHost() != null;
+				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
 	}
 
@@ -143,6 +144,9 @@ public class RestRequestProcessor {
 			} else {
 				instance.config().proxy(config.getProxyHost(), config.getProxyPort());
 			}
+		}
+		if (config.getObjectMapper() != null) {
+			instance.config().setObjectMapper(config.getObjectMapper());
 		}
 		return instance;
 	}
@@ -586,7 +590,16 @@ public class RestRequestProcessor {
 	}
 
 	private ObjectMapper getObjectMapper() {
-		return unirestInstance != null ? unirestInstance.config().getObjectMapper() : Unirest.config().getObjectMapper();
+		try {
+			return unirestInstance != null ? unirestInstance.config().getObjectMapper()
+					: Unirest.config().getObjectMapper();
+		} catch (UnirestConfigException e) {
+			throw new RestInPeaceException(
+					"No JSON ObjectMapper is configured. RIP delegates JSON (de)serialization to the underlying "
+							+ "Unirest client's ObjectMapper - call RIP.setObjectMapper(...) (or "
+							+ "RipClientConfig.builder().objectMapper(...) for a per-client one) before making requests.",
+					e);
+		}
 	}
 
 	/**

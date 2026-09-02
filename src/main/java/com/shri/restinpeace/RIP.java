@@ -13,6 +13,7 @@ import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.proxy.RestClientInvocationHandler;
 import com.shri.restinpeace.validator.RestClientValidator;
 
+import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
 
 /**
@@ -128,6 +129,23 @@ public class RIP {
 		}).build();
 		client.start();
 		Unirest.config().asyncClient(client);
+	}
+
+	/**
+	 * Sets the {@code ObjectMapper} used to (de)serialize JSON request/response
+	 * bodies for every client sharing the app-wide static Unirest client (i.e.
+	 * every client not built with a {@link RipClientConfig} that sets its own
+	 * timeout/proxy/{@code objectMapper}). RIP defaults to Unirest's own
+	 * Gson-backed {@code kong.unirest.JsonObjectMapper} - call this to use
+	 * Jackson or another mapper instead. A {@link RipClientConfig}-configured
+	 * client with its own dedicated Unirest instance needs
+	 * {@link RipClientConfig.Builder#objectMapper(ObjectMapper)} instead; this
+	 * method has no effect on it.
+	 *
+	 * @param objectMapper the mapper to use
+	 */
+	public static void setObjectMapper(ObjectMapper objectMapper) {
+		Unirest.config().setObjectMapper(objectMapper);
 	}
 
 	/**

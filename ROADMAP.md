@@ -173,11 +173,18 @@ up.
       alongside an HTTP method annotation with no static `value()` -
       combining the two fails validation. Finally consumes the
       `HTTPRequestParam.URL` enum value that had sat reserved and unused.
-- [ ] **`ObjectMapper` is a silent dependency** — RIP never validates or
-      documents that JSON (de)serialization rides entirely on whatever
-      `ObjectMapper` is configured on the relevant Unirest client (Gson by
-      default, bundled transitively). Worth a fail-fast validation check
-      and a clearer docs callout.
+- [x] **`ObjectMapper` is a silent dependency** — `RIP.setObjectMapper(...)`
+      sets a custom mapper for every client sharing the app-wide static
+      Unirest client, and `RipClientConfig.builder().objectMapper(...)`
+      sets one for a single `RipClientConfig`-configured client whose own
+      dedicated Unirest instance `RIP.setObjectMapper(...)` can't reach
+      (there was previously no way at all to customize that client's
+      mapper, through RIP or around it). A response that fails to decode
+      because no mapper is configured at all now throws
+      `RestInPeaceException` naming the problem, instead of a bare
+      `kong.unirest.UnirestConfigException`. README documents the default
+      (Gson-backed `kong.unirest.JsonObjectMapper`, no Jackson dependency
+      shipped) and both ways to override it.
 - [ ] **`@Headers`** — static, method-level fixed headers
       (`@Headers({"Cache-Control: no-cache"})`), separate from the existing
       dynamic `@HeaderParam`/`@HeaderMap`.
