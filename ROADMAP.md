@@ -142,11 +142,14 @@ up.
       buffering into a `byte[]`, for both sync and `CompletableFuture<File>`
       methods. A `DownloadProgressListener` parameter (RIP's own type, not
       Unirest's `ProgressMonitor`) reports `bytesWritten`/`totalBytes` as
-      the response streams in. A non-2xx response still throws
-      `RestInPeaceHttpException` with the error body decoded as text, and a
-      `File` destination is left untouched rather than written with error
-      content. `RipResponse<File>` is intentionally not supported - use a
-      plain `File` return with `@Destination` instead.
+      the response streams in. On the upload side, an
+      `UploadProgressListener` parameter on a `@Multipart` method reports
+      progress per `File`/`InputStream` part (`String`/`byte[]` parts are
+      written in one shot and not reported). A non-2xx response still
+      throws `RestInPeaceHttpException` with the error body decoded as
+      text, and a `File` destination is left untouched rather than written
+      with error content. `RipResponse<File>` is intentionally not
+      supported - use a plain `File` return with `@Destination` instead.
 - [ ] **Path/query values aren't percent-encoded** — `resolvePathParams`
       does a raw `url.replace("{id}", String.valueOf(value))` with no
       `URLEncoder`/URI-escaping. A path param containing `/`, `?`, `#`, or a

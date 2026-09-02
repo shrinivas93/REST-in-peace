@@ -53,6 +53,7 @@ import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
@@ -597,6 +598,11 @@ public class RestRequestProcessor {
 				.onProgress(bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
 	}
 
+	private void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
+		multipartBody.uploadMonitor((field, fileName, bytesWritten, totalBytes) -> listener.onProgress(field,
+				bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
+	}
+
 	private static File writeToFile(File destination, byte[] bytes) {
 		try {
 			Files.write(destination.toPath(), bytes);
@@ -656,6 +662,10 @@ public class RestRequestProcessor {
 
 			if (parameter.getAnnotation(PartMap.class) != null && argValue != null) {
 				applyPartMap(multipartBody, (Map<?, ?>) argValue);
+			}
+
+			if (parameter.getType() == UploadProgressListener.class && argValue != null) {
+				applyUploadMonitor(multipartBody, (UploadProgressListener) argValue);
 			}
 
 			Body body = parameter.getAnnotation(Body.class);

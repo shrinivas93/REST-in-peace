@@ -69,6 +69,7 @@ import com.shri.restinpeace.interceptor.LoggingInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -160,6 +161,11 @@ class RipIntegrationTest {
 		@Multipart
 		String uploadMultipartWithPartMap(@PathParam("port") int port, @PathParam("id") String id,
 				@PartMap Map<String, Object> parts);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithProgress(@PathParam("port") int port, @PathParam("id") String id,
+				@Part("file") File file, UploadProgressListener listener);
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMissingRequiredQuery(@PathParam("port") int port, @PathParam("id") String id,
@@ -677,6 +683,36 @@ class RipIntegrationTest {
 		assertTrue(request.body.contains("filename=\"renamed.txt\""));
 		assertFalse(request.body.contains(file.getName()));
 		assertTrue(request.body.contains("file contents"));
+	}
+
+	@Test
+	void multipart_withUploadProgressListener_reportsFinalByteCountsForFileField() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+		List<String> reportedFields = new ArrayList<>();
+		List<Long> reportedBytesWritten = new ArrayList<>();
+
+		String result = api.uploadMultipartWithProgress(port, "abc", file, (field, bytesWritten, totalBytes) -> {
+			reportedFields.add(field);
+			reportedBytesWritten.add(bytesWritten);
+		});
+
+		assertEquals("ok", result);
+		assertFalse(reportedFields.isEmpty());
+		assertTrue(reportedFields.stream().allMatch("file"::equals));
+		assertEquals(file.length(), (long) reportedBytesWritten.get(reportedBytesWritten.size() - 1));
+	}
+
+	@Test
+	void multipart_withNullUploadProgressListener_skipsProgressReporting() throws IOException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File file = Files.createTempFile("rip-upload", ".txt").toFile();
+		Files.write(file.toPath(), "file contents".getBytes(StandardCharsets.UTF_8));
+
+		String result = api.uploadMultipartWithProgress(port, "abc", file, null);
+
+		assertEquals("ok", result);
 	}
 
 	@Test

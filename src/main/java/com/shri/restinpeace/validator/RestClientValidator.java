@@ -46,6 +46,7 @@ import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
+import com.shri.restinpeace.multipart.UploadProgressListener;
 import com.shri.restinpeace.validator.dto.ValidationResult;
 
 /**
@@ -155,6 +156,7 @@ public class RestClientValidator {
 					validateTimeout(method, validationResult);
 					validateDestination(method, validationResult);
 					validateDownloadProgressListener(method, validationResult);
+					validateUploadProgressListener(method, validationResult);
 				});
 	}
 
@@ -367,6 +369,24 @@ public class RestClientValidator {
 		if (!listeners.isEmpty() && !returnsDownloadableBody(method)) {
 			validationResult.addError(String.format(
 					"The method %s.%s has a DownloadProgressListener parameter but does not return byte[] or File.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+	}
+
+	private static void validateUploadProgressListener(Method method, ValidationResult validationResult) {
+		List<Parameter> listeners = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getType() == UploadProgressListener.class)
+				.collect(Collectors.toList());
+
+		if (listeners.size() > 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s has more than one UploadProgressListener parameter.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (!listeners.isEmpty() && method.getAnnotation(Multipart.class) == null) {
+			validationResult.addError(String.format(
+					"The method %s.%s has an UploadProgressListener parameter but is not annotated with @Multipart.",
 					method.getDeclaringClass().getName(), method.getName()));
 		}
 	}
