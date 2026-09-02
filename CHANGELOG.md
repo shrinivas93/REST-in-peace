@@ -58,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A `Collection` argument to `@QueryParam`/a `@QueryMap` entry now repeats
   the query param once per element (`?tag=a&tag=b`) instead of being sent
   as one mangled value.
+- `@Url` binds a full URL as a `String` parameter, bypassing `@BaseUrl`/a
+  runtime base URL/`@PathParam` entirely, for a call whose URL isn't a
+  fixed template - a pagination `next` link, a HATEOAS action link from a
+  previous response. Only valid alongside an HTTP method annotation with
+  no static `value()`; `@QueryParam`/`@HeaderParam`/etc. still work
+  normally, appended to the given URL.
 - `RIP.setObjectMapper(ObjectMapper)` sets the JSON `ObjectMapper` used by
   every client sharing the app-wide static Unirest client (Jackson, a
   configured Gson, ...) instead of Unirest's default Gson-backed one.

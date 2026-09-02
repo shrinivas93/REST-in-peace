@@ -46,6 +46,7 @@ import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -178,7 +179,7 @@ public class RestRequestProcessor {
 	 *         {@code void} methods
 	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
-		String url = resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
+		String url = resolveUrl(method, httpMethod, args);
 		RequestContext context = new RequestContext(httpMethod, url);
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
@@ -456,6 +457,34 @@ public class RestRequestProcessor {
 				.add(header.getValue()));
 		result.replaceAll((name, values) -> Collections.unmodifiableList(values));
 		return Collections.unmodifiableMap(result);
+	}
+
+	/**
+	 * Resolves the method's request URL: a {@code @Url} parameter's runtime
+	 * value verbatim if present, bypassing {@code @BaseUrl}/a runtime base
+	 * URL/{@code @PathParam} entirely since there's no template for them to
+	 * apply to - otherwise the usual template resolution.
+	 */
+	private String resolveUrl(Method method, HTTPMethod httpMethod, Object[] args) {
+		String urlParamValue = resolveUrlParam(method, args);
+		if (urlParamValue != null) {
+			return urlParamValue;
+		}
+		return resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
+	}
+
+	private String resolveUrlParam(Method method, Object[] args) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			if (parameters[i].getAnnotation(Url.class) != null) {
+				Object value = args == null ? null : args[i];
+				if (value == null) {
+					throw new RestInPeaceException(String.format("Missing value for @Url parameter in method %s.", method));
+				}
+				return String.valueOf(value);
+			}
+		}
+		return null;
 	}
 
 	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {

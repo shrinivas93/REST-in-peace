@@ -18,6 +18,9 @@ methods like any other Java call.
 - `@PathParam`, `@QueryParam`, `@HeaderParam`, and `@Body` parameter binding
 - `@QueryMap`/`@HeaderMap` for a dynamic set of query params/headers not
   known until runtime
+- `@Url` binds a full URL as a parameter, bypassing `@BaseUrl`/`@PathParam`
+  entirely, for a pagination `next` link or a HATEOAS action link that isn't
+  a fixed template
 - `@Multipart`/`@Part`/`@PartMap` for `multipart/form-data` uploads (form
   fields, `File`/`byte[]`/`InputStream` file parts, a dynamic set of parts
   not known until runtime, and an `UploadProgressListener` for progress
@@ -194,6 +197,33 @@ The value is percent-encoded before substitution, so a `/`, `?`, `#`, or a
 space in it lands as literal content of that one path segment instead of
 producing a broken or subtly wrong URL (e.g. an unencoded `?` would
 otherwise start a query string partway through the path).
+
+### `@Url`
+
+For a call whose URL isn't a fixed template known in advance - a pagination
+`next` link, a HATEOAS action link embedded in a previous response - use
+`@Url` on a `String` parameter instead of a method URL template:
+
+```java
+@GET
+Page<Item> nextPage(@Url String url);
+```
+
+```java
+Page<Item> page = itemApi.firstPage();
+while (page.next != null) {
+    page = itemApi.nextPage(page.next);
+    process(page.items);
+}
+```
+
+The HTTP method annotation (`@GET` above) is left with no `value()` -
+combining `@Url` with a static URL template fails validation, since there'd
+be two conflicting sources of truth for the URL. `@BaseUrl`, a runtime base
+URL, and `@PathParam` are all bypassed entirely when `@Url` is used - there's
+no template left for them to apply to - but `@QueryParam`/`@HeaderParam`/etc.
+still work normally, appended to the given URL. At most one `@Url` parameter
+is allowed per method, and a `null` argument throws at call time.
 
 ### `@QueryParam`
 
