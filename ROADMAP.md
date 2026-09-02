@@ -135,18 +135,18 @@ missing table-stakes features other declarative REST clients have, and
 bigger ideas that would make this library stand out rather than just catch
 up.
 
-- [ ] **Binary/file downloads are broken** — every response, success or
-      error, sync or async, goes through Unirest's `asString`/`asStringAsync`
-      in `RestRequestProcessor`. There's no `byte[]`/`InputStream`/`File`
-      response type, only request-side upload support (`@Part`). Downloading
-      an image, PDF, or zip today gets forced through String decoding and
-      corrupts binary data. Fix should go further than just adding the
-      types: `@GET(...) File downloadTo(File destination);` streaming
-      straight to disk instead of buffering the whole body, plus an
-      upload/download progress callback (Unirest already exposes a
-      `ProgressMonitor` hook RIP never surfaces). Closes the most obvious
-      hole in the library and is symmetric with the multipart upload work
-      already shipped.
+- [x] **Binary/file downloads** — `byte[]` (or `CompletableFuture<byte[]>`/
+      `RipResponse<byte[]>`) decodes a response as exact bytes instead of
+      corrupting it through the old always-`String` path. `File` with a
+      `@Destination File` parameter streams straight to disk instead of
+      buffering into a `byte[]`, for both sync and `CompletableFuture<File>`
+      methods. A `DownloadProgressListener` parameter (RIP's own type, not
+      Unirest's `ProgressMonitor`) reports `bytesWritten`/`totalBytes` as
+      the response streams in. A non-2xx response still throws
+      `RestInPeaceHttpException` with the error body decoded as text, and a
+      `File` destination is left untouched rather than written with error
+      content. `RipResponse<File>` is intentionally not supported - use a
+      plain `File` return with `@Destination` instead.
 - [ ] **Path/query values aren't percent-encoded** — `resolvePathParams`
       does a raw `url.replace("{id}", String.valueOf(value))` with no
       `URLEncoder`/URI-escaping. A path param containing `/`, `?`, `#`, or a
