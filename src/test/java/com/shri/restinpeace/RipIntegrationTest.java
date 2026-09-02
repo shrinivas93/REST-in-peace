@@ -168,6 +168,14 @@ class RipIntegrationTest {
 				@Part("file") File file, UploadProgressListener listener);
 
 		@GET("http://localhost:{port}/items/{id}")
+		String getWithMultiValueQuery(@PathParam("port") int port, @PathParam("id") String id,
+				@QueryParam("tag") List<String> tags);
+
+		@GET("http://localhost:{port}/items/{id}")
+		String getWithMultiValueQueryMap(@PathParam("port") int port, @PathParam("id") String id,
+				@QueryMap Map<String, Object> filters);
+
+		@GET("http://localhost:{port}/items/{id}")
 		String getWithMissingRequiredQuery(@PathParam("port") int port, @PathParam("id") String id,
 				@QueryParam(value = "q", required = true) Integer q);
 
@@ -457,6 +465,38 @@ class RipIntegrationTest {
 	}
 
 	@Test
+	void get_withPathParamContainingSpace_encodesAndDeliversLiteralSpace() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.get(port, "a b", 7, "custom-value");
+
+		assertEquals("ok", result);
+		assertEquals("/items/a b", LAST_REQUEST.get().path);
+	}
+
+	@Test
+	void get_withPathParamContainingQuestionMark_encodesInsteadOfStartingQueryString() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.get(port, "a?b=c", 7, "custom-value");
+
+		assertEquals("ok", result);
+		CapturedRequest request = LAST_REQUEST.get();
+		assertEquals("/items/a?b=c", request.path);
+		assertEquals("q=7", request.query);
+	}
+
+	@Test
+	void get_withPathParamContainingSlash_encodesAsSingleSegment() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.get(port, "a/b", 7, "custom-value");
+
+		assertEquals("ok", result);
+		assertEquals("/items/a/b", LAST_REQUEST.get().path);
+	}
+
+	@Test
 	void post_withStringBody_sendsBodyRaw() {
 		LocalApi api = RIP.getClient(LocalApi.class);
 
@@ -544,6 +584,28 @@ class RipIntegrationTest {
 
 		Set<String> queryParams = new HashSet<>(Arrays.asList(LAST_REQUEST.get().query.split("&")));
 		assertEquals(new HashSet<>(Arrays.asList("status=active", "sort=name")), queryParams);
+	}
+
+	@Test
+	void queryParam_withListValue_repeatsParamOncePerElement() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getWithMultiValueQuery(port, "abc", Arrays.asList("a", "b", "c"));
+
+		assertEquals("tag=a&tag=b&tag=c", LAST_REQUEST.get().query);
+	}
+
+	@Test
+	void queryMap_withListValue_repeatsThatEntryOncePerElement() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> filters = new LinkedHashMap<>();
+		filters.put("status", "active");
+		filters.put("tag", Arrays.asList("a", "b"));
+
+		api.getWithMultiValueQueryMap(port, "abc", filters);
+
+		Set<String> queryParams = new HashSet<>(Arrays.asList(LAST_REQUEST.get().query.split("&")));
+		assertEquals(new HashSet<>(Arrays.asList("status=active", "tag=a", "tag=b")), queryParams);
 	}
 
 	@Test
