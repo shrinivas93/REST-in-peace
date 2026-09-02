@@ -33,6 +33,7 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
@@ -42,6 +43,7 @@ import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
+import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.validator.dto.ValidationResult;
@@ -151,6 +153,8 @@ public class RestClientValidator {
 					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
 					validateMultipart(method, httpMethod, validationResult);
 					validateTimeout(method, validationResult);
+					validateDestination(method, validationResult);
+					validateDownloadProgressListener(method, validationResult);
 				});
 	}
 
@@ -273,6 +277,97 @@ public class RestClientValidator {
 			validationResult.addError(String.format(
 					"The method %s.%s returns %s<%s>, which is not a supported type parameter.",
 					method.getDeclaringClass().getName(), method.getName(), typeName, innerType));
+			return;
+		}
+		if ("RipResponse".equals(typeName) && innerType == File.class) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns RipResponse<File>, which is not supported - use a plain File return "
+							+ "type with @Destination instead.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+	}
+
+	/**
+	 * Whether the method's return type is {@code File} directly, or
+	 * {@code CompletableFuture<File>} - the two shapes a {@code @Destination}
+	 * parameter is valid on. {@code RipResponse<File>} is rejected by
+	 * {@link #validateParameterizedReturnType} instead of being treated as
+	 * File-returning here.
+	 */
+	private static boolean returnsFile(Method method) {
+		Class<?> returnType = method.getReturnType();
+		if (returnType == File.class) {
+			return true;
+		}
+		if (returnType == CompletableFuture.class && method.getGenericReturnType() instanceof ParameterizedType) {
+			Type innerType = ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0];
+			return innerType == File.class;
+		}
+		return false;
+	}
+
+	/**
+	 * Whether the method's return type is {@code byte[]}, {@code File}, or
+	 * either wrapped in {@code CompletableFuture}/{@code RipResponse} - the
+	 * shapes a {@code DownloadProgressListener} parameter is meaningful on.
+	 */
+	private static boolean returnsDownloadableBody(Method method) {
+		Class<?> returnType = method.getReturnType();
+		if (returnType == byte[].class || returnsFile(method)) {
+			return true;
+		}
+		if ((returnType == CompletableFuture.class || returnType == RipResponse.class)
+				&& method.getGenericReturnType() instanceof ParameterizedType) {
+			Type innerType = ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0];
+			return innerType == byte[].class;
+		}
+		return false;
+	}
+
+	private static void validateDestination(Method method, ValidationResult validationResult) {
+		List<Parameter> destinations = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(Destination.class) != null).collect(Collectors.toList());
+		boolean returnsFile = returnsFile(method);
+
+		if (destinations.size() > 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s has more than one parameter annotated with @Destination.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		destinations.stream().filter(parameter -> parameter.getType() != File.class)
+				.forEach(parameter -> validationResult.addError(String.format(
+						"The method %s.%s has a @Destination parameter of type %s - only File is supported.",
+						method.getDeclaringClass().getName(), method.getName(), parameter.getType().getName())));
+
+		if (!returnsFile && !destinations.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @Destination parameter but does not return File.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (returnsFile && destinations.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns File but has no @Destination parameter to write the response to.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+	}
+
+	private static void validateDownloadProgressListener(Method method, ValidationResult validationResult) {
+		List<Parameter> listeners = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getType() == DownloadProgressListener.class)
+				.collect(Collectors.toList());
+
+		if (listeners.size() > 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s has more than one DownloadProgressListener parameter.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (!listeners.isEmpty() && !returnsDownloadableBody(method)) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a DownloadProgressListener parameter but does not return byte[] or File.",
+					method.getDeclaringClass().getName(), method.getName()));
 		}
 	}
 
