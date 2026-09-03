@@ -35,7 +35,8 @@ mvn install -DskipTests
 
 # Then, from this directory:
 cd samples/compile-time-proxy-consumer
-mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt
+mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
+  -Drest-in-peace.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml)
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 
@@ -45,10 +46,13 @@ A successful run prints each step and ends with:
 VERIFICATION PASSED: compile-time proxy generation works for a real downstream consumer.
 ```
 
-If `mvn compile` fails to resolve `com.shri:rest-in-peace`, check that this
-project's `pom.xml` `<rest-in-peace.version>` matches the `<version>` in the
-repository root's `pom.xml` - they're two independent projects, so nothing
-keeps them in sync automatically.
+`-Drest-in-peace.version=...` overrides this pom.xml's own
+`<rest-in-peace.version>` default with whatever the repository root's
+`pom.xml` `<version>` actually is right now - they're two independent
+projects, so nothing keeps the two in sync automatically, and the root
+version does change over time (each release bumps it). Omitting the flag
+falls back to the hardcoded default, which will fail to resolve once it
+drifts from whatever you just installed.
 
 ## Try it yourself
 

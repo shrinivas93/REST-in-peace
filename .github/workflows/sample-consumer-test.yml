@@ -31,8 +31,19 @@ jobs:
       - name: Install the library locally
         run: mvn -B install -DskipTests --file pom.xml
 
+      # The sample's own pom.xml pins a default rest-in-peace.version for
+      # convenience, but that default drifts the moment this branch's
+      # version differs from whatever was just installed above (e.g. a
+      # release PR merging develop, whose version predates master's
+      # post-release bump, into master) - so always resolve the version
+      # that was actually just installed instead of trusting the default.
+      - name: Determine the installed library version
+        id: rip-version
+        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' pom.xml)" >> "$GITHUB_OUTPUT"
+
       - name: Build and run the sample consumer
         working-directory: samples/compile-time-proxy-consumer
         run: |
-          mvn -B compile dependency:build-classpath -Dmdep.outputFile=cp.txt
+          mvn -B compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
+            -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
           java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
