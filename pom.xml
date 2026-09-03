@@ -42,6 +42,29 @@
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+				<executions>
+					<!-- Annotation processing is disabled for this module's own main-source
+					     compile only: RestClientProcessor is compiled here as ordinary source,
+					     and can't discover itself via SPI within the same javac invocation
+					     that's still compiling it. test-compile (a later, separate invocation)
+					     has this module's already-built main classes - including the
+					     compiled processor - on its classpath, so it runs the processor
+					     normally against test sources (see GeneratedApiTest). A downstream
+					     consumer depending on the published jar hits neither constraint,
+					     since our processor is already-built bytecode on their classpath
+					     from the start of their own, entirely separate build. -->
+					<execution>
+						<id>default-compile</id>
+						<configuration>
+							<proc>none</proc>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>3.5.6</version>
 			</plugin>

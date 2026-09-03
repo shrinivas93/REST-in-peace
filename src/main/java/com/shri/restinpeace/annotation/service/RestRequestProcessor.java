@@ -216,6 +216,79 @@ public class RestRequestProcessor {
 		return decodeOrThrow(response, method, returnType);
 	}
 
+	/**
+	 * Non-reflective entry point used by a compile-time-generated
+	 * {@code @RestClient} implementation (see
+	 * {@code com.shri.restinpeace.processor.RestClientProcessor}) for a
+	 * method whose HTTP verb, URL template, path/query param names, and
+	 * return type are all known at compile time - so building and decoding
+	 * the request never needs to look any of that up via reflection on a
+	 * {@link Method}, unlike {@link #processRestRequest} on the reflective
+	 * proxy path. Still goes through the same query-param, interceptor,
+	 * retry, and error-handling machinery as that path; a method using
+	 * {@code @Retry}, {@code @Timeout}, {@code @Headers}, {@code @ErrorType},
+	 * or any other feature not listed above is never routed here by the
+	 * processor in the first place - see
+	 * {@code docs/design/compile-time-proxy-generation.md}.
+	 *
+	 * @param httpMethod       the method's HTTP verb
+	 * @param urlTemplate      the method's URL template, exactly as written
+	 *                         on its HTTP method annotation
+	 * @param interfaceBaseUrl the interface's {@code @BaseUrl} value, or
+	 *                         {@code null} if it has none - only consulted
+	 *                         when {@code urlTemplate} is relative and this
+	 *                         processor has no runtime base URL override
+	 * @param pathParamNames   the method's {@code @PathParam} placeholder
+	 *                         names, in declaration order
+	 * @param pathParamValues  the corresponding argument values
+	 * @param queryParamNames  the method's {@code @QueryParam} names, in
+	 *                         declaration order
+	 * @param queryParamValues the corresponding argument values
+	 * @param returnType       the method's return type ({@code void.class},
+	 *                         {@code String.class}, or a POJO class)
+	 * @return the decoded response body, or {@code null} for {@code void}
+	 */
+	public Object processGeneratedRequest(HTTPMethod httpMethod, String urlTemplate, String interfaceBaseUrl,
+			String[] pathParamNames, Object[] pathParamValues, String[] queryParamNames, Object[] queryParamValues,
+			Class<?> returnType) {
+		String url = resolveUrlForGenerated(urlTemplate, interfaceBaseUrl, pathParamNames, pathParamValues);
+		RequestContext context = new RequestContext(httpMethod, url);
+		HttpRequest<?> request = createRequest(httpMethod, url);
+		for (int i = 0; i < queryParamNames.length; i++) {
+			if (queryParamValues[i] != null) {
+				applyQueryValue(request, queryParamNames[i], queryParamValues[i]);
+			}
+		}
+		request = applyInterceptors(request, context);
+		HttpResponse<String> response = executeSyncWithRetry(null, returnType, context, request::asString);
+		return decodeOrThrow(response, null, returnType);
+	}
+
+	private String resolveUrlForGenerated(String urlTemplate, String interfaceBaseUrl, String[] pathParamNames,
+			Object[] pathParamValues) {
+		return substitutePathParamsLiteral(applyBaseUrlLiteral(urlTemplate, interfaceBaseUrl), pathParamNames,
+				pathParamValues);
+	}
+
+	private String applyBaseUrlLiteral(String url, String interfaceBaseUrl) {
+		if (isAbsoluteUrl(url)) {
+			return url;
+		}
+		String base = baseUrlOverride != null ? baseUrlOverride : interfaceBaseUrl;
+		return joinBaseUrl(base, url);
+	}
+
+	private String substitutePathParamsLiteral(String urlTemplate, String[] names, Object[] values) {
+		String url = urlTemplate;
+		for (int i = 0; i < names.length; i++) {
+			if (values[i] == null) {
+				throw new RestInPeaceException(String.format("Missing value for path param '%s'.", names[i]));
+			}
+			url = url.replace("{" + names[i] + "}", encodePathValue(values[i]));
+		}
+		return url;
+	}
+
 	private HttpRequest<?> applyInterceptors(HttpRequest<?> request, RequestContext context) {
 		if (INTERCEPTORS.isEmpty()) {
 			return request;
@@ -282,12 +355,15 @@ public class RestRequestProcessor {
 	 * (into the method's {@code @ErrorType}, or left as the raw body if it
 	 * has none) - without throwing either way, for reporting to
 	 * interceptors mid-retry as well as for the final settled response.
+	 * {@code method} is {@code null} for a compile-time-generated call (see
+	 * {@link #processGeneratedRequest}), which never has an {@code @ErrorType}
+	 * to look up.
 	 */
 	private Object decodeBody(HttpResponse<?> response, Method method, Class<?> returnType) {
 		Object rawBody = response.getBody();
 		if (!isSuccessStatus(response.getStatus())) {
 			String rawBodyString = toRawBodyString(rawBody);
-			ErrorType errorType = method.getAnnotation(ErrorType.class);
+			ErrorType errorType = method == null ? null : method.getAnnotation(ErrorType.class);
 			if (errorType != null && rawBodyString != null && !rawBodyString.isEmpty()) {
 				return getObjectMapper().readValue(rawBodyString, errorType.value());
 			}
@@ -325,7 +401,7 @@ public class RestRequestProcessor {
 
 	private <B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call) {
-		Retry retry = method.getAnnotation(Retry.class);
+		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
 		if (retry == null) {
 			HttpResponse<B> response = call.get();
 			notifyAfterResponse(context, response, method, returnType);
@@ -513,12 +589,12 @@ public class RestRequestProcessor {
 		if (isAbsoluteUrl(url)) {
 			return url;
 		}
-		String base;
-		if (baseUrlOverride != null) {
-			base = baseUrlOverride;
-		} else {
-			base = method.getDeclaringClass().getAnnotation(BaseUrl.class).value();
-		}
+		String base = baseUrlOverride != null ? baseUrlOverride
+				: method.getDeclaringClass().getAnnotation(BaseUrl.class).value();
+		return joinBaseUrl(base, url);
+	}
+
+	private static String joinBaseUrl(String base, String url) {
 		if (base.endsWith("/") && url.startsWith("/")) {
 			return base + url.substring(1);
 		}

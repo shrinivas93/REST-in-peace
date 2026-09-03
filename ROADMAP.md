@@ -207,7 +207,26 @@ up.
       reflection config, slightly faster startup, and IDE-navigable
       generated source. The single biggest available differentiator -
       Retrofit/Feign are both stuck with runtime proxies for legacy reasons;
-      a from-scratch library doesn't have to be.
+      a from-scratch library doesn't have to be. Design:
+      `docs/design/compile-time-proxy-generation.md`.
+      - [x] **Step 1 (minimal subset) landed**: `RestClientProcessor`
+            generates `<Interface>_RipImpl` for an interface whose methods
+            are all a single fixed HTTP verb with only
+            `@PathParam`/plain `@QueryParam` params and a
+            `void`/`String`/non-generic-POJO return type -
+            `RIP.getClient(...)` prefers it over the reflective proxy when
+            present. Still goes through the same interceptor/retry/
+            error-handling machinery as the reflective path (new
+            `RestRequestProcessor.processGeneratedRequest(...)` entry
+            point). An interface with any method outside that shape
+            (`@Retry`, `@Timeout`, `@Headers`, `@HeaderParam`/`@HeaderMap`,
+            `@Body`, `@Multipart`, `@Url`, `@ErrorType`, `@QueryMap`, a
+            required/defaulted `@QueryParam`, an async/`RipResponse`/
+            `byte[]`/`File` return type, a nested/private interface, ...)
+            is silently left to the reflective proxy in its entirety.
+            Remaining steps (full feature parity, compile-time validation,
+            a native-image smoke test) are tracked in the design doc's
+            rollout plan, not done yet.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small

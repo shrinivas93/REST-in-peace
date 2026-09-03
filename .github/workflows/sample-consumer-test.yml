@@ -1,0 +1,49 @@
+name: Sample Consumer Test
+
+on:
+  push:
+    branches: [ develop, master ]
+  pull_request:
+    branches: [ develop, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  sample-consumer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up JDK 8
+        uses: actions/setup-java@v6
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          cache: maven
+
+      # samples/compile-time-proxy-consumer is a standalone Maven project,
+      # not a module of this one - it needs the library actually installed
+      # to the runner's local repo to resolve it, mirroring exactly what a
+      # real downstream consumer's own build would see once the library is
+      # published, except from a fresh local install of the current commit
+      # instead of a released version.
+      - name: Install the library locally
+        run: mvn -B install -DskipTests --file pom.xml
+
+      # The sample's own pom.xml pins a default rest-in-peace.version for
+      # convenience, but that default drifts the moment this branch's
+      # version differs from whatever was just installed above (e.g. a
+      # release PR merging develop, whose version predates master's
+      # post-release bump, into master) - so always resolve the version
+      # that was actually just installed instead of trusting the default.
+      - name: Determine the installed library version
+        id: rip-version
+        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' pom.xml)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and run the sample consumer
+        working-directory: samples/compile-time-proxy-consumer
+        run: |
+          mvn -B compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
+            -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
+          java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
