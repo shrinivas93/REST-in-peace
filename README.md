@@ -761,6 +761,15 @@ its own output with the same call.
 mvn clean test
 ```
 
+## Samples
+
+[`samples/compile-time-proxy-consumer`](samples/compile-time-proxy-consumer)
+is a standalone project showing what a real downstream consumer sees from
+the [compile-time proxy generation](docs/design/compile-time-proxy-generation.md)
+feature - add the library as an ordinary dependency, write a plain
+`@RestClient` interface, and get back a real generated implementation with
+zero extra configuration. See its own README for how to build and run it.
+
 ## License
 
 [MIT](LICENSE)

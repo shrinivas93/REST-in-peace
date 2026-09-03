@@ -1,0 +1,38 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+	<modelVersion>4.0.0</modelVersion>
+
+	<!--
+	A standalone Maven project - deliberately NOT a module of the parent
+	rest-in-peace build (this repo is single-module by design) - showing how a
+	real downstream consumer sees compile-time proxy generation
+	(../../docs/design/compile-time-proxy-generation.md): add the library as
+	an ordinary dependency, write a plain @RestClient interface, and get a
+	real generated implementation with zero extra configuration. See this
+	directory's README.md to build and run it.
+	-->
+	<groupId>com.example</groupId>
+	<artifactId>compile-time-proxy-consumer</artifactId>
+	<version>1.0.0</version>
+	<packaging>jar</packaging>
+
+	<properties>
+		<maven.compiler.source>1.8</maven.compiler.source>
+		<maven.compiler.target>1.8</maven.compiler.target>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- Must match rest-in-peace's own pom.xml <version> - see README.md. -->
+		<rest-in-peace.version>1.0.0.1-SNAPSHOT</rest-in-peace.version>
+	</properties>
+
+	<dependencies>
+		<!-- An ordinary dependency - nothing else added, no
+		     annotationProcessorPaths configured - to prove the processor
+		     auto-activates via its bundled SPI file with zero extra
+		     consumer-side configuration. -->
+		<dependency>
+			<groupId>com.shri</groupId>
+			<artifactId>rest-in-peace</artifactId>
+			<version>${rest-in-peace.version}</version>
+		</dependency>
+	</dependencies>
+
+</project>
