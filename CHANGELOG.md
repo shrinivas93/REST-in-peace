@@ -85,6 +85,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   present. An interface with any method outside that shape is left entirely
   to the existing reflective proxy - see
   `docs/design/compile-time-proxy-generation.md`.
+- `samples/compile-time-proxy-consumer`, a standalone project (built and run
+  in CI on every push/PR) showing the feature above from a real downstream
+  consumer's point of view - see its README.
 
 ### Changed
 

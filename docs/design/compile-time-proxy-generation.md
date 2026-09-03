@@ -460,3 +460,10 @@ literal-parameter call from generated code (alongside
   test interfaces the processor correctly skips) stays green and
   unaffected, on both the default and a real JDK 8 toolchain, with a clean
   `javadoc:javadoc`.
+- Also verified against a genuinely separate downstream build, not just
+  this repo's own test-compile: `samples/compile-time-proxy-consumer` is a
+  standalone Maven project (in-tree, `.github/workflows/sample-consumer-test.yml`
+  builds and runs it on every push/PR) with an ordinary dependency on the
+  library and no processor configuration of its own, confirming the SPI
+  auto-activation §9.1 describes actually works end to end for a real
+  consumer, not just within this module's compile/test-compile staging.
