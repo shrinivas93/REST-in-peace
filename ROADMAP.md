@@ -277,6 +277,23 @@ up.
             `@Multipart`. Still unsupported: a `DownloadProgressListener`/
             `@Destination` parameter, and every non-`String`/POJO return
             type. See the design doc's §9.6.
+      - [x] **Step 2, fourth slice: `byte[]`/`File`+`@Destination`+
+            `DownloadProgressListener`/`RipResponse<T>` return types**: the
+            first slice to change what a generated method returns, not
+            just what it accepts - added `finishGeneratedSyncBytes`/
+            `finishGeneratedSyncFile`/`finishGeneratedSyncRipResponse`/
+            `finishGeneratedSyncRipResponseBytes` as sibling terminal
+            calls alongside `finishGeneratedSync`, one per return-type
+            shape, picked at compile time from the interface's declared
+            return type. `MethodModel`'s return type went from a bare
+            string to a `ReturnModel` (kind + literal type name +, for
+            `RipResponse<T>`, `T`'s name) to support this. Extended the
+            §9.6 codegen-safety cross-check rule to return types:
+            `@Destination`/`DownloadProgressListener` now require a
+            `File`-returning method, and exactly one `@Destination`
+            parameter is required whenever the return type is `File`.
+            Only `CompletableFuture<T>` (async) remains unsupported -
+            the last item in §5's table. See the design doc's §9.7.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small

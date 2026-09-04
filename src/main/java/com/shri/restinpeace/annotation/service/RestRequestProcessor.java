@@ -331,6 +331,56 @@ public class RestRequestProcessor {
 		return decodeOrThrow(response, errorType, returnType);
 	}
 
+	/** The generated-code counterpart of {@link #processRestRequest}'s {@code byte[]}-return branch. */
+	public byte[] finishGeneratedSyncBytes(HttpRequest<?> request, RequestContext context, Class<?> errorType,
+			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
+			int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		return (byte[]) decodeOrThrow(response, errorType, byte[].class);
+	}
+
+	/** The generated-code counterpart of {@link #processRestRequest}'s {@code File}-return branch. */
+	public File finishGeneratedSyncFile(HttpRequest<?> request, RequestContext context, File destination,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
+		return writeToFile(destination, bytes);
+	}
+
+	/**
+	 * The generated-code counterpart of {@link #processRestRequest}'s
+	 * {@code RipResponse<T>}-return branch for a {@code String}/POJO
+	 * {@code T} - {@code innerType} is {@code T}. Erased to
+	 * {@code RipResponse<?>}; generated code casts the result to its own
+	 * exact {@code RipResponse<T>} return type.
+	 */
+	public RipResponse<?> finishGeneratedSyncRipResponse(HttpRequest<?> request, RequestContext context,
+			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<String> response = executeSyncWithRetry(errorType, innerType, context, request::asString,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		return (RipResponse<?>) wrapResponse(response, decodeOrThrow(response, errorType, innerType));
+	}
+
+	/** The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedSyncRipResponse}, for a {@code RipResponse<byte[]>} return type. */
+	public RipResponse<byte[]> finishGeneratedSyncRipResponseBytes(HttpRequest<?> request, RequestContext context,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		@SuppressWarnings("unchecked")
+		RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
+				decodeOrThrow(response, errorType, byte[].class));
+		return result;
+	}
+
 	private String applyBaseUrlLiteral(String url, String interfaceBaseUrl) {
 		if (isAbsoluteUrl(url)) {
 			return url;
@@ -856,7 +906,8 @@ public class RestRequestProcessor {
 		return null;
 	}
 
-	private void applyDownloadMonitor(HttpRequest<?> request, DownloadProgressListener listener) {
+	/** Also used directly by compile-time-generated code for a {@code DownloadProgressListener} parameter. */
+	public void applyDownloadMonitor(HttpRequest<?> request, DownloadProgressListener listener) {
 		if (listener == null) {
 			return;
 		}

@@ -1,22 +1,22 @@
 # Design: compile-time proxy generation
 
-Status: **step 1 landed, step 2 in progress** (see §8's rollout plan -
+Status: **step 1 landed, step 2 nearly done** (see §8's rollout plan -
 `RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
-`GeneratedApiTest`). Step 2's first three slices landed: `@Timeout`/`@Retry`
-(§9.4); `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/
-required-or-defaulted `@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5),
-which also replaced the original single `processGeneratedRequest` entry
-point with a sequence-of-calls design (§9.5.1); then `@Multipart`/`@Part`/
-`@PartMap`/`UploadProgressListener` (§9.6). Still unsupported: a
-`DownloadProgressListener`/`@Destination` parameter, and every
-non-`String`/POJO return type (`CompletableFuture`, `RipResponse`,
-`byte[]`, `File`) - a method using any of those still falls the whole
-interface back to the reflective proxy. The compile-testing validation
-suite and the native-image smoke test (steps 3-4) are not started. Roadmap
-item: "Compile-time proxy generation instead of a JDK dynamic proxy" in
-`ROADMAP.md`. The sections below are mostly the original sketch; §9 records
-what actually landed and the real deviations from the sketch, discovered
-only while implementing it.
+`GeneratedApiTest`). Step 2's slices landed: `@Timeout`/`@Retry` (§9.4);
+`@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/required-or-defaulted
+`@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5), which also replaced the
+original single `processGeneratedRequest` entry point with a
+sequence-of-calls design (§9.5.1); `@Multipart`/`@Part`/`@PartMap`/
+`UploadProgressListener` (§9.6); then `byte[]`/`File`+`@Destination`+
+`DownloadProgressListener`/`RipResponse<T>` return types (§9.7). Still
+unsupported: `CompletableFuture<T>` (async) for any return-type shape - a
+method returning one still falls the whole interface back to the
+reflective proxy. That's the only item left in §5's table. The
+compile-testing validation suite and the native-image smoke test (steps
+3-4) are not started. Roadmap item: "Compile-time proxy generation instead
+of a JDK dynamic proxy" in `ROADMAP.md`. The sections below are mostly the
+original sketch; §9 records what actually landed and the real deviations
+from the sketch, discovered only while implementing it.
 
 ## 1. Problem
 
@@ -716,3 +716,70 @@ threads kept the sample's JVM alive indefinitely after printing its
 success message. Fixed by calling `RIP.useDaemonThreadsForAsync()` once at
 the top of the sample's `Main.main`, exactly the scenario that method's own
 documentation describes.
+
+### 9.7 Step 2, fourth slice: `byte[]`/`File`+`@Destination`+`DownloadProgressListener`/`RipResponse<T>` return types
+
+The first slice to change *what a generated method returns*, not just what
+it can accept as input. Every prior slice kept `finishGeneratedSync` as the
+single terminal call, differing only in what gets built up before it; this
+one adds four sibling terminal methods to `RestRequestProcessor` -
+`finishGeneratedSyncBytes`, `finishGeneratedSyncFile`,
+`finishGeneratedSyncRipResponse`, `finishGeneratedSyncRipResponseBytes` -
+mirroring `processRestRequest`'s own return-type branches, each reusing
+the same `executeSyncWithRetry`/`decodeOrThrow`/`wrapResponse` machinery
+the reflective path and every earlier generated-code slice already share.
+`RestClientProcessor` picks the right one per method, decided once at
+compile time from the interface's declared return type - exactly what §5's
+table originally described as the payoff of moving return-type dispatch
+out of the runtime.
+
+#### 9.7.1 `returnTypeNameOf` became `returnModelOf`
+
+Every earlier slice treated a method's return type as a single opaque
+string (`returnTypeName`) - fine when every supported return type decoded
+the same way. Supporting `byte[]`/`File`/`RipResponse<T>` alongside
+`void`/`String`/POJO needs the processor to know *which* of those shapes a
+method has, not just its literal type name, so `MethodModel` now carries a
+`ReturnModel` (a `ReturnKind` - `VOID`/`PLAIN`/`BYTES`/`FILE`/
+`RIP_RESPONSE` - plus the return type's own literal name and, for
+`RIP_RESPONSE`, the wrapped inner type's name) instead of a bare string.
+Detecting `byte[]` needs a new branch entirely - `TypeKind.ARRAY`, which
+every earlier slice's `returnTypeNameOf` unconditionally rejected via its
+"not `TypeKind.DECLARED`" check, since nothing before this slice needed to
+tell an array return type apart from disqualifying it. Detecting
+`RipResponse<T>` needs comparing the return type's *erasure* against
+`com.shri.restinpeace.RipResponse` (via `Types.erasure`, the standard way
+to check "is this raw type X" while ignoring its type arguments) and then
+recursively classifying `T` with the same array/declared/generic checks -
+mirroring the reflective path's own `resolveWrappedType`.
+
+#### 9.7.2 Extending the codegen-safety cross-check rule from §9.6.1 to return types
+
+§9.6.1 generalized "a parameter kind whose generated code depends on
+another feature also being present" into an explicit rule, applied there
+to `@Part`/`@PartMap`/`UploadProgressListener` needing `@Multipart`. This
+slice is the same rule applied to a *return* type instead of a parameter:
+`@Destination`/`DownloadProgressListener` only make sense - and only
+compile as generated code - on a `File`-returning method, since their
+codegen references the destination `File` local `finishGeneratedSyncFile`
+needs. `toSupportedMethodModel` now cross-checks this the same way it
+already does for `@Multipart`: any `DESTINATION`/`DOWNLOAD_PROGRESS`-kind
+parameter on a method whose `ReturnKind` isn't `FILE` disqualifies the
+whole method, and (new, since a `File` return needs to know unambiguously
+which parameter to write into, unlike anything checked before) exactly one
+`@Destination` parameter is required whenever the return kind *is* `FILE`
+- zero or more than one both disqualify, rather than generating source
+that references the wrong local or none at all.
+
+#### 9.7.3 What's now real and testable
+
+`GeneratedApi` gained `getBinary` (`byte[]`), `downloadBinary`
+(`File`+`@Destination`+`DownloadProgressListener`, asserting both the
+written file's bytes and that the progress listener actually fired),
+`getWithResponse` (`RipResponse<String>`), and `getBinaryWithResponse`
+(`RipResponse<byte[]>`) - each verified against a real embedded
+`HttpServer`'s `/binary` endpoint, mirroring `RipIntegrationTest`'s own
+binary-response test pattern. `GeneratedApiWithAsyncReturn` (added in
+§9.6) continues to serve as the "still correctly disqualifies" regression
+coverage, now for the one feature genuinely still missing:
+`CompletableFuture<T>`.
