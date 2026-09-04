@@ -88,6 +88,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `samples/compile-time-proxy-consumer`, a standalone project (built and run
   in CI on every push/PR) showing the feature above from a real downstream
   consumer's point of view - see its README.
+- Compile-time proxy generation now also covers `@Timeout` and `@Retry` -
+  a method combining the step-1 supported shape with either annotation is
+  generated for (honoring it) instead of falling back to the reflective
+  proxy.
 
 ### Changed
 
@@ -97,6 +101,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Compile-time proxy generation: a method combining the supported shape
+  with `@Retry`, `@Timeout`, `@Headers`, or `@ErrorType` was silently
+  included in the generated implementation, which had no code path
+  applying any of the four - dropping that annotation's behavior entirely
+  instead of either honoring it or correctly falling back to the
+  reflective proxy. `@Timeout`/`@Retry` are now genuinely supported (see
+  above); `@Headers`/`@ErrorType` now correctly disqualify a method, same
+  as every other not-yet-supported feature.
 - The hosted Javadoc site now always reflects the exact commit that was
   released, instead of `master`'s post-release `-SNAPSHOT` version bump.
 - `@PathParam` values are now percent-encoded before being substituted
