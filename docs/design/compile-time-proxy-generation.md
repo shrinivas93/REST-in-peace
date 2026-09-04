@@ -1,13 +1,18 @@
 # Design: compile-time proxy generation
 
-Status: **step 1 landed** (see §8's rollout plan - `RestClientProcessor`,
-`RestRequestProcessor.processGeneratedRequest`, `RIP.getClient`'s
-generated-impl-first lookup, and `GeneratedApiTest`). Steps 2-4 (full
-feature parity, the compile-testing validation suite, the native-image
-smoke test) are not started. Roadmap item: "Compile-time proxy generation
-instead of a JDK dynamic proxy" in `ROADMAP.md`. The sections below are
-mostly the original sketch; §9 records what step 1 actually landed as and
-one real deviation from the sketch, discovered only while implementing it.
+Status: **step 1 landed, step 2 in progress** (see §8's rollout plan -
+`RestClientProcessor`, `RestRequestProcessor.processGeneratedRequest`,
+`RIP.getClient`'s generated-impl-first lookup, `GeneratedApiTest`). Step 2's
+first slice - `@Timeout`/`@Retry` - landed too (§9.4). The compile-testing
+validation suite and the native-image smoke test (steps 3-4) are not
+started, and most of §5's table (`@Headers`, `@Body`, `@Multipart`, `@Url`,
+`@ErrorType`, `@QueryMap`, required/defaulted `@QueryParam`, every
+non-`String`/POJO return type) is still unsupported - a method using any of
+those still falls the whole interface back to the reflective proxy. Roadmap
+item: "Compile-time proxy generation instead of a JDK dynamic proxy" in
+`ROADMAP.md`. The sections below are mostly the original sketch; §9 records
+what actually landed and the real deviations from the sketch, discovered
+only while implementing it.
 
 ## 1. Problem
 
@@ -467,3 +472,72 @@ literal-parameter call from generated code (alongside
   library and no processor configuration of its own, confirming the SPI
   auto-activation §9.1 describes actually works end to end for a real
   consumer, not just within this module's compile/test-compile staging.
+
+### 9.4 Step 2, first slice: `@Timeout`/`@Retry` - and a bug this slice closed
+
+Extending the processor to a second feature surfaced a real correctness bug
+in what step 1 shipped as v1.0.0.20: `toSupportedMethodModel` never actually
+checked a method for `@Retry`, `@Timeout`, `@Headers`, or `@ErrorType` -
+despite the class Javadoc and this doc both claiming all four disqualify a
+method. Every *parameter*-level disqualifier (`@HeaderParam`, `@Body`,
+`@Url`, `@QueryMap`, ...) worked correctly, because `toSupportedParamModel`
+rejects any parameter annotation it doesn't recognize - but these four are
+*method*-level annotations, which nothing was inspecting at all. A method
+otherwise within the supported shape but also carrying `@Retry` or
+`@Timeout` would have been silently included in the generated
+implementation, which had no code path applying either annotation -
+producing a generated class that silently dropped the retry/timeout
+behavior instead of either honoring it or falling back to the reflective
+proxy. This never manifested in the shipped test suite because every
+existing `@Retry`/`@Timeout` test interface is a private nested interface
+(correctly skipped for an unrelated reason - §7's nested/private
+restriction), and the only top-level generated-path test interface
+(`GeneratedApi`) didn't combine the supported shape with either annotation.
+
+Fixed as part of landing real `@Timeout`/`@Retry` support, not as a
+separate patch: `toSupportedMethodModel` now explicitly disqualifies a
+method carrying `@Headers` or `@ErrorType` (still unsupported, closing the
+bug for those two the same way), and reads `@Timeout`/`@Retry` into the
+method model instead of ignoring them, when present. `GeneratedApiWithHeaders`
+is new regression coverage: a `GeneratedApi`-shaped method with `@Headers`
+added, asserting no `_RipImpl` is generated for it.
+
+Mechanically, this is exactly what §4.2/§5 sketched - `RestRequestProcessor`
+gained non-reflective, literal-argument counterparts of its existing
+`Method`-based logic rather than any new machinery:
+
+- `applyTimeout(HttpRequest, int connectMillis, int readMillis)` - the
+  `Method`-based overload now just extracts `@Timeout`'s two fields and
+  delegates to this one. `-1` (matching `@Timeout`'s own "unset" default)
+  means "don't touch this timeout", so the processor always passes both
+  literals regardless of whether `@Timeout` is present, and the case where
+  it isn't naturally becomes two no-ops instead of needing a separate
+  "hasTimeout" flag.
+- `executeSyncWithRetry(..., boolean hasRetry, int times, long delayMillis, double backoffMultiplier, int[] retryOnStatus)` -
+  the retry loop itself (attempt counting, `isRetryableStatus`, `nextDelay`
+  backoff) was already independent of reading a live `Retry` annotation
+  instance; only the *values* needed to come from somewhere else. Unlike
+  `@Timeout`, `@Retry` does need an explicit `hasRetry` flag rather than a
+  sentinel value, since every one of its fields (`times`, `delayMillis`,
+  `backoffMultiplier`, `retryOnStatus`) has an ordinary-looking default that
+  doesn't double as "absent" the way `@Timeout`'s `-1` does. `nextDelay`
+  changed from taking a `Retry` to taking a plain `double backoffMultiplier`,
+  which is what it only ever used from the annotation anyway.
+- `processGeneratedRequest`'s signature grew by seven parameters
+  (`connectMillis`, `readMillis`, `hasRetry`, `retryTimes`,
+  `retryDelayMillis`, `retryBackoffMultiplier`, `retryOnStatus`) to carry
+  these through. §5 anticipated this pattern of growth ("a handful of new,
+  non-reflective entry points... called directly without ever constructing
+  a `Method` object") without settling in advance how many parameters one
+  entry point should carry versus splitting into several - this slice's
+  answer was to keep extending the one method, since the two features are
+  always applied together in the same generated call and splitting them
+  into separate calls the generated code would chain wouldn't remove any
+  complexity, just relocate it.
+
+The async retry path (`executeAsyncWithRetry`/`attemptAsync`) was
+deliberately left untouched - `processGeneratedRequest` only ever calls the
+synchronous path, since `CompletableFuture` return types are a separate,
+not-yet-supported entry in §5's table. Only `nextDelay`'s signature change
+touched `attemptAsync`, mechanically (it still reads `retry.backoffMultiplier()`
+from the `Method`-based `Retry` it already has).

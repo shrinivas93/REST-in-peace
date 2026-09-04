@@ -227,6 +227,23 @@ up.
             Remaining steps (full feature parity, compile-time validation,
             a native-image smoke test) are tracked in the design doc's
             rollout plan, not done yet.
+      - [x] **Step 2, first slice: `@Timeout`/`@Retry` support**: the
+            processor now generates for a method carrying either
+            annotation instead of disqualifying it, via new non-reflective,
+            literal-argument entry points on `RestRequestProcessor`
+            (`applyTimeout(request, connectMillis, readMillis)`;
+            `executeSyncWithRetry(..., hasRetry, times, delayMillis,
+            backoffMultiplier, retryOnStatus)`) alongside its existing
+            `Method`-based ones. Also fixed a real bug this surfaced:
+            `@Retry`/`@Timeout`/`@Headers`/`@ErrorType` were never actually
+            checked for by step 1's disqualification logic (only
+            parameter-level features were), so a method combining the
+            supported shape with any of the first two would have silently
+            generated an implementation that dropped the annotation's
+            behavior entirely - `@Headers`/`@ErrorType` are now explicitly
+            disqualifying too, closing the same gap for them (still
+            unsupported, correctly falling back). See the design doc's
+            §9.4.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small
