@@ -7,15 +7,17 @@ import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
 
 /**
- * Otherwise-supported shape, but {@code @Multipart}/{@code @Part} - not yet
- * covered by {@code RestClientProcessor} (a later step 2 slice). Regression
- * coverage that this still correctly falls back to the reflective proxy in
- * its entirety, the same way an unsupported feature always has.
+ * {@code @Multipart}/{@code @Part} - {@code RestClientProcessor} now
+ * genuinely generates for this (step 2), building the multipart body via
+ * {@code RestRequestProcessor.beginGeneratedMultipart}/
+ * {@code applyPartValue}. Originally added as regression coverage proving
+ * this still fell back to the reflective proxy; kept under this name as a
+ * positive test now that {@code @Multipart} is supported.
  */
 @RestClient
 public interface GeneratedApiWithMultipart {
 
-	@POST("http://localhost:{port}/items")
+	@POST("http://localhost:{port}/echo")
 	@Multipart
 	String post(@PathParam("port") int port, @Part("name") String name);
 

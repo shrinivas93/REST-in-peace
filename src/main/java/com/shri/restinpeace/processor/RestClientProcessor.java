@@ -39,6 +39,9 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
+import com.shri.restinpeace.annotation.request.Multipart;
+import com.shri.restinpeace.annotation.request.Part;
+import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
@@ -52,20 +55,20 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * every {@code @RestClient} interface whose methods all fall within the
  * currently-supported shape: a single fixed HTTP verb, {@code @PathParam}/
  * {@code @QueryParam}/{@code @HeaderParam}/{@code @QueryMap}/
- * {@code @HeaderMap}/{@code @Body}/{@code @Url} parameters, optional
- * {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}, and a
- * {@code void}, {@code String}, or non-generic POJO return type.
- * {@code RIP.getClient(...)} prefers this generated class over the
- * reflective {@code java.lang.reflect.Proxy} it falls back to for an
- * interface this processor didn't (fully) generate for - see
+ * {@code @HeaderMap}/{@code @Body}/{@code @Url}/{@code @Part}/
+ * {@code @PartMap}/an {@code UploadProgressListener} parameter, optional
+ * {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}/
+ * {@code @Multipart}, and a {@code void}, {@code String}, or non-generic
+ * POJO return type. {@code RIP.getClient(...)} prefers this generated class
+ * over the reflective {@code java.lang.reflect.Proxy} it falls back to for
+ * an interface this processor didn't (fully) generate for - see
  * {@code docs/design/compile-time-proxy-generation.md} for the full design
  * this is step 2 of.
  *
  * <p>
  * An interface with a nested/private declaration, a default or static
  * method, or any single method using a feature outside the shape above
- * (`@Multipart`/`@Part`/`@PartMap`, a `DownloadProgressListener`/
- * `UploadProgressListener`/`@Destination` parameter, a
+ * (a `DownloadProgressListener`/`@Destination` parameter, a
  * `CompletableFuture`/`RipResponse`/`byte[]`/`File` return type, ...) is
  * silently skipped in its entirety and left to the reflective proxy -
  * generating a partially-correct implementation would be worse than not
@@ -138,6 +141,24 @@ public class RestClientProcessor extends AbstractProcessor {
 			params.add(param);
 		}
 
+		boolean isMultipart = methodElement.getAnnotation(Multipart.class) != null;
+		for (ParamModel param : params) {
+			boolean isMultipartOnlyKind = param.kind == ParamKind.PART || param.kind == ParamKind.PART_MAP
+					|| param.kind == ParamKind.UPLOAD_PROGRESS;
+			if (isMultipartOnlyKind && !isMultipart) {
+				// @Part/@PartMap/an UploadProgressListener parameter with no @Multipart on the
+				// method is itself a validation error the runtime validator catches - but
+				// generated code for it would reference a __ripMultipart local this processor
+				// never declares without @Multipart, which wouldn't just misbehave at runtime
+				// like most other validation errors do, it would fail to *compile*. Never let
+				// that happen - fall back to the reflective proxy instead.
+				return null;
+			}
+			if (isMultipart && param.kind == ParamKind.BODY) {
+				return null; // @Multipart + @Body is itself a validation error; same reasoning as above
+			}
+		}
+
 		TimeoutModel timeoutModel = timeoutModelOf(methodElement);
 		RetryModel retryModel = retryModelOf(methodElement);
 		String[] headerEntries = headerEntriesOf(methodElement);
@@ -145,7 +166,7 @@ public class RestClientProcessor extends AbstractProcessor {
 
 		return new MethodModel(methodElement.getSimpleName().toString(), httpMethodAndUrl.httpMethod,
 				httpMethodAndUrl.urlTemplate, returnTypeName, params, timeoutModel, retryModel, headerEntries,
-				errorTypeClassName);
+				errorTypeClassName, isMultipart);
 	}
 
 	private TimeoutModel timeoutModelOf(ExecutableElement methodElement) {
@@ -237,6 +258,15 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private ParamModel toSupportedParamModel(VariableElement parameter) {
+		String javaParamName = parameter.getSimpleName().toString();
+		String javaTypeName = parameter.asType().toString();
+
+		// UploadProgressListener needs no annotation at all - detected by type alone,
+		// same as the reflective path's own `parameter.getType() == UploadProgressListener.class`.
+		if ("com.shri.restinpeace.multipart.UploadProgressListener".equals(javaTypeName)) {
+			return new ParamModel(ParamKind.UPLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
+		}
+
 		PathParam pathParam = parameter.getAnnotation(PathParam.class);
 		QueryParam queryParam = parameter.getAnnotation(QueryParam.class);
 		HeaderParam headerParam = parameter.getAnnotation(HeaderParam.class);
@@ -244,45 +274,54 @@ public class RestClientProcessor extends AbstractProcessor {
 		HeaderMap headerMap = parameter.getAnnotation(HeaderMap.class);
 		Body body = parameter.getAnnotation(Body.class);
 		Url url = parameter.getAnnotation(Url.class);
+		Part part = parameter.getAnnotation(Part.class);
+		PartMap partMap = parameter.getAnnotation(PartMap.class);
 
-		int annotationCount = countNonNull(pathParam, queryParam, headerParam, queryMap, headerMap, body, url);
+		int annotationCount = countNonNull(pathParam, queryParam, headerParam, queryMap, headerMap, body, url, part,
+				partMap);
 		if (annotationCount != 1) {
 			return null; // no recognized annotation, or more than one - either way unsupported here
 		}
 
-		String javaParamName = parameter.getSimpleName().toString();
-		String javaTypeName = parameter.asType().toString();
-
 		if (pathParam != null) {
-			return new ParamModel(ParamKind.PATH, pathParam.value(), javaParamName, javaTypeName, false, "");
+			return new ParamModel(ParamKind.PATH, pathParam.value(), javaParamName, javaTypeName, false, "", "");
 		}
 		if (queryParam != null) {
 			return new ParamModel(ParamKind.QUERY, queryParam.value(), javaParamName, javaTypeName,
-					queryParam.required(), queryParam.defaultValue());
+					queryParam.required(), queryParam.defaultValue(), "");
 		}
 		if (headerParam != null) {
 			return new ParamModel(ParamKind.HEADER, headerParam.value(), javaParamName, javaTypeName,
-					headerParam.required(), headerParam.defaultValue());
+					headerParam.required(), headerParam.defaultValue(), "");
 		}
 		if (queryMap != null) {
 			return isMapType(parameter.asType())
-					? new ParamModel(ParamKind.QUERY_MAP, "", javaParamName, javaTypeName, false, "")
+					? new ParamModel(ParamKind.QUERY_MAP, "", javaParamName, javaTypeName, false, "", "")
 					: null;
 		}
 		if (headerMap != null) {
 			return isMapType(parameter.asType())
-					? new ParamModel(ParamKind.HEADER_MAP, "", javaParamName, javaTypeName, false, "")
+					? new ParamModel(ParamKind.HEADER_MAP, "", javaParamName, javaTypeName, false, "", "")
 					: null;
 		}
 		if (body != null) {
-			return new ParamModel(ParamKind.BODY, "", javaParamName, javaTypeName, false, "");
+			return new ParamModel(ParamKind.BODY, "", javaParamName, javaTypeName, false, "", "");
+		}
+		if (part != null) {
+			return new ParamModel(ParamKind.PART, part.value(), javaParamName, javaTypeName, part.required(), "",
+					part.fileName());
+		}
+		if (partMap != null) {
+			return isMapType(parameter.asType())
+					? new ParamModel(ParamKind.PART_MAP, "", javaParamName, javaTypeName, false, "", "")
+					: null;
 		}
 		// url != null - the generated method assigns the resolved String straight into a
 		// String url local, so a non-String @Url parameter (itself a validation error the
 		// runtime validator catches) would otherwise produce generated source that fails to
 		// compile - never let that happen.
 		return "java.lang.String".equals(javaTypeName)
-				? new ParamModel(ParamKind.URL, "", javaParamName, javaTypeName, false, "")
+				? new ParamModel(ParamKind.URL, "", javaParamName, javaTypeName, false, "", "")
 				: null;
 	}
 
@@ -388,6 +427,12 @@ public class RestClientProcessor extends AbstractProcessor {
 					.append(stringArrayLiteral(method.headerEntries)).append(");\n");
 		}
 
+		if (method.isMultipart) {
+			out.append(
+					"\t\tkong.unirest.MultipartBody __ripMultipart = this.ripProcessor.beginGeneratedMultipart(__ripRequest);\n");
+			out.append("\t\t__ripRequest = __ripMultipart;\n");
+		}
+
 		for (ParamModel param : method.params) {
 			appendParamApplication(out, param);
 		}
@@ -437,6 +482,25 @@ public class RestClientProcessor extends AbstractProcessor {
 		case BODY:
 			out.append("\t\t__ripRequest = this.ripProcessor.applyGeneratedBodyIfPresent(__ripRequest, ")
 					.append(param.javaParamName).append(");\n");
+			return;
+		case PART:
+			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
+					.append(", ").append(param.required)
+					.append(", com.shri.restinpeace.constant.RIPConstant.DEFAULT, ")
+					.append(stringLiteral(param.name)).append(");\n");
+			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.applyPartValue(__ripMultipart, ")
+					.append(stringLiteral(param.name)).append(", ").append(stringLiteral(param.fileName))
+					.append(", __ripValue); }\n\t\t}\n");
+			return;
+		case PART_MAP:
+			out.append("\t\tif (").append(param.javaParamName)
+					.append(" != null) { this.ripProcessor.applyPartMap(__ripMultipart, ")
+					.append(param.javaParamName).append("); }\n");
+			return;
+		case UPLOAD_PROGRESS:
+			out.append("\t\tif (").append(param.javaParamName)
+					.append(" != null) { this.ripProcessor.applyUploadMonitor(__ripMultipart, ")
+					.append(param.javaParamName).append("); }\n");
 			return;
 		default:
 			throw new IllegalStateException("Unhandled param kind: " + param.kind);
@@ -521,7 +585,7 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private enum ParamKind {
-		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL
+		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL, PART, PART_MAP, UPLOAD_PROGRESS
 	}
 
 	private static final class ParamModel {
@@ -531,15 +595,17 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String javaTypeName;
 		final boolean required;
 		final String defaultValue;
+		final String fileName;
 
 		ParamModel(ParamKind kind, String name, String javaParamName, String javaTypeName, boolean required,
-				String defaultValue) {
+				String defaultValue, String fileName) {
 			this.kind = kind;
 			this.name = name;
 			this.javaParamName = javaParamName;
 			this.javaTypeName = javaTypeName;
 			this.required = required;
 			this.defaultValue = defaultValue;
+			this.fileName = fileName;
 		}
 	}
 
@@ -553,10 +619,11 @@ public class RestClientProcessor extends AbstractProcessor {
 		final RetryModel retry;
 		final String[] headerEntries;
 		final String errorTypeClassName;
+		final boolean isMultipart;
 
 		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, String returnTypeName,
 				List<ParamModel> params, TimeoutModel timeout, RetryModel retry, String[] headerEntries,
-				String errorTypeClassName) {
+				String errorTypeClassName, boolean isMultipart) {
 			this.name = name;
 			this.httpMethod = httpMethod;
 			this.urlTemplate = urlTemplate;
@@ -566,6 +633,7 @@ public class RestClientProcessor extends AbstractProcessor {
 			this.retry = retry;
 			this.headerEntries = headerEntries;
 			this.errorTypeClassName = errorTypeClassName;
+			this.isMultipart = isMultipart;
 		}
 	}
 

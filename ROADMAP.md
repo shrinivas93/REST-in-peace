@@ -261,6 +261,22 @@ up.
             `DownloadProgressListener`/`UploadProgressListener`/
             `@Destination` parameter, and every non-`String`/POJO return
             type. See the design doc's §9.5.
+      - [x] **Step 2, third slice: `@Multipart`/`@Part`/`@PartMap`/
+            `UploadProgressListener` support**: the smallest slice so far,
+            since the reflective path's own part-application methods were
+            already non-reflective - mostly a matter of widening their
+            visibility and adding `beginGeneratedMultipart` as the
+            generated-code counterpart of the reflective path's
+            `multiPartContent()` cast-and-call. Generalized the `@Url`
+            codegen-safety fix from the previous slice into an explicit
+            rule: any parameter/return kind whose generated code depends on
+            another feature also being present must be cross-checked in
+            `toSupportedMethodModel`, disqualifying the whole method if
+            that precondition doesn't hold - applied here for
+            `@Part`/`@PartMap`/`UploadProgressListener` needing
+            `@Multipart`. Still unsupported: a `DownloadProgressListener`/
+            `@Destination` parameter, and every non-`String`/POJO return
+            type. See the design doc's §9.6.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small

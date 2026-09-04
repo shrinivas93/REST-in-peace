@@ -864,9 +864,19 @@ public class RestRequestProcessor {
 				.onProgress(bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
 	}
 
-	private void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
+	/** Also used directly by compile-time-generated code for an {@code UploadProgressListener} parameter. */
+	public void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
 		multipartBody.uploadMonitor((field, fileName, bytesWritten, totalBytes) -> listener.onProgress(field,
 				bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
+	}
+
+	/**
+	 * The generated-code counterpart of the reflective path's own
+	 * {@code ((HttpRequestWithBody) request).multiPartContent()} call for a
+	 * {@code @Multipart} method - see {@link #applyParams}.
+	 */
+	public MultipartBody beginGeneratedMultipart(HttpRequest<?> request) {
+		return ((HttpRequestWithBody) request).multiPartContent();
 	}
 
 	private static File writeToFile(File destination, byte[] bytes) {
@@ -950,7 +960,8 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
+	/** Also used directly by compile-time-generated code for a {@code @PartMap} parameter. */
+	public void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
 		partMap.forEach((name, value) -> {
 			if (value != null) {
 				applyPartValue(multipartBody, String.valueOf(name), "", value);
@@ -958,7 +969,8 @@ public class RestRequestProcessor {
 		});
 	}
 
-	private void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
+	/** Also used directly by compile-time-generated code for a {@code @Part} parameter. */
+	public void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
 		Object effectiveValue = value;
 		String effectiveFileName = fileName;
 		if (value instanceof PartValue) {

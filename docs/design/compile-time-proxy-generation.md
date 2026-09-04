@@ -2,13 +2,13 @@
 
 Status: **step 1 landed, step 2 in progress** (see §8's rollout plan -
 `RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
-`GeneratedApiTest`). Step 2's first two slices landed: `@Timeout`/`@Retry`
-(§9.4), then `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/
-required-or-defaulted `@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5) - the
-latter also replaced the original single `processGeneratedRequest` entry
-point with a sequence-of-calls design (§9.5.1). Still unsupported:
-`@Multipart`/`@Part`/`@PartMap`, a `DownloadProgressListener`/
-`UploadProgressListener`/`@Destination` parameter, and every
+`GeneratedApiTest`). Step 2's first three slices landed: `@Timeout`/`@Retry`
+(§9.4); `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/
+required-or-defaulted `@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5),
+which also replaced the original single `processGeneratedRequest` entry
+point with a sequence-of-calls design (§9.5.1); then `@Multipart`/`@Part`/
+`@PartMap`/`UploadProgressListener` (§9.6). Still unsupported: a
+`DownloadProgressListener`/`@Destination` parameter, and every
 non-`String`/POJO return type (`CompletableFuture`, `RipResponse`,
 `byte[]`, `File`) - a method using any of those still falls the whole
 interface back to the reflective proxy. The compile-testing validation
@@ -638,3 +638,81 @@ test now that `@Headers` is supported, asserting a real `_RipImpl` is
 generated and the header-carrying call succeeds. `GeneratedApiWithMultipart`
 is new regression coverage taking over the "still correctly disqualifies"
 role for a feature this slice didn't cover.
+
+### 9.6 Step 2, third slice: `@Multipart`/`@Part`/`@PartMap`/`UploadProgressListener`
+
+Mechanically the smallest slice so far, since the reflective path's own
+`applyPartValue`/`applyPartMap`/`applyUploadMonitor` were already
+non-reflective (literal `MultipartBody`/name/value arguments, no `Method`
+or `Parameter` involved) - the same pattern §9.5.1 already established for
+`applyQueryValue`/`applyQueryMap`/`applyHeaderMap` applied directly, just
+widening their visibility to `public`. The one genuinely new piece is
+`beginGeneratedMultipart(HttpRequest<?> request)`, the generated-code
+counterpart of the reflective path's own
+`((HttpRequestWithBody) request).multiPartContent()` cast-and-call for a
+`@Multipart` method, emitted once per method right after
+`applyGeneratedHeaders` (mirroring `applyParams`'s own ordering - multipart
+conversion happens before any per-parameter `@Part`/`@PartMap` application)
+and reassigning the generated method's `__ripRequest` local to the
+resulting `MultipartBody`.
+
+`UploadProgressListener` needed a small addition to `toSupportedParamModel`
+itself: unlike every other supported parameter kind, it carries no
+annotation at all - the reflective path detects it by parameter *type*
+(`parameter.getType() == UploadProgressListener.class`), so the processor
+does the same by comparing the parameter's `TypeMirror` string form against
+the class's fully-qualified name, checked before the usual
+exactly-one-annotation dispatch rather than folded into it.
+
+#### 9.6.1 A new codegen-safety class of bug, generalized from the `@Url` one
+
+§9.5.3 fixed one instance of "generated code references a variable this
+processor doesn't always declare" (a `@Url` parameter shadowing the `url`
+local). `@Part`/`@PartMap`/`UploadProgressListener` created a *second*
+instance of the same underlying hazard: all three only make sense on an
+`@Multipart` method, and their generated code references `__ripMultipart` -
+a local only declared when `method.isMultipart` is true. A method
+combining, say, `@Part` with no `@Multipart` (itself a validation error the
+runtime validator already catches) would previously have been silently
+accepted by `toSupportedMethodModel` and generated as source referencing an
+undeclared `__ripMultipart` - not a runtime misbehavior like most other
+validation errors produce when the processor doesn't specially guard
+against them, but a **compile failure of the generated class itself**,
+breaking the entire downstream build.
+
+Recognizing `@Url`-on-non-`String` (§9.5.3) and this as the same class of
+problem - a validation error that would corrupt the *generated source*
+itself, rather than merely misbehaving at runtime for an interface that
+was never going to pass validation anyway - is the more important lesson
+than either individual fix: any future slice adding a parameter/return kind
+whose generated code depends on another feature also being present needs
+the same explicit cross-check in `toSupportedMethodModel`, disqualifying
+the whole method (never partially) if that precondition doesn't hold.
+Fixed here by checking, after building a method's full parameter list,
+that every `PART`/`PART_MAP`/`UPLOAD_PROGRESS`-kind parameter only appears
+when `isMultipart` is true (and, symmetrically, that `@Multipart` never
+coincides with a `BODY`-kind parameter - also a validation error, also
+otherwise harmless at the codegen level since `applyGeneratedBodyIfPresent`
+only fails at *runtime*, but disqualified anyway since the combination can
+never be valid).
+
+#### 9.6.2 What's now real and testable
+
+`GeneratedApiWithMultipart` - originally this slice's own "still correctly
+disqualifies" regression coverage - is repurposed as a *positive* test
+(the same pattern §9.5's `GeneratedApiWithHeaders` followed), asserting a
+real `_RipImpl` is generated and that a `@Part` value actually lands in the
+multipart-encoded request body. `GeneratedApiWithAsyncReturn` takes over
+the "still correctly disqualifies" role using a `CompletableFuture<String>`
+return type - the next slice's feature, and a good one to prove the
+current disqualification logic is set up correctly. The in-repo sample
+consumer's `UnsupportedApi` needed updating *again* for the same reason as
+§9.5 - it had been moved to `@Multipart`/`@Part` last slice, which this
+slice made real - so it now demonstrates the fallback via a
+`CompletableFuture<String>` return type as well, which surfaced a genuine
+bug in the sample itself: nothing had ever exercised its `UnsupportedApi`'s
+now-async fallback call before, and Unirest's async client's non-daemon
+threads kept the sample's JVM alive indefinitely after printing its
+success message. Fixed by calling `RIP.useDaemonThreadsForAsync()` once at
+the top of the sample's `Main.main`, exactly the scenario that method's own
+documentation describes.

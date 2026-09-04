@@ -1,13 +1,13 @@
 package com.example.consumer;
 
+import java.util.concurrent.CompletableFuture;
+
 import com.shri.restinpeace.annotation.marker.RestClient;
-import com.shri.restinpeace.annotation.method.POST;
-import com.shri.restinpeace.annotation.request.Multipart;
-import com.shri.restinpeace.annotation.request.Part;
+import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.request.PathParam;
 
 /**
- * Uses {@code @Multipart}/{@code @Part}, outside the compile-time
+ * Uses a {@code CompletableFuture} return type, outside the compile-time
  * generator's supported shape (see
  * {@code docs/design/compile-time-proxy-generation.md}) - so
  * {@code RIP.getClient(UnsupportedApi.class)} falls back to the same
@@ -15,15 +15,16 @@ import com.shri.restinpeace.annotation.request.PathParam;
  * interface used before this feature existed. No
  * {@code UnsupportedApi_RipImpl} is generated for it at all, and the
  * fallback call still works correctly - see {@link Main}. (Earlier versions
- * of this sample used {@code @HeaderParam} here, but step 2 of the design
- * added support for that - see the design doc's §9.4 onward - so this had
- * to move to a feature still genuinely unsupported.)
+ * of this sample used {@code @HeaderParam}, then {@code @Multipart}/
+ * {@code @Part} here, but step 2 of the design added support for both - see
+ * {@code docs/design/compile-time-proxy-generation.md} §9.4 onward - so this
+ * moved to a feature still genuinely unsupported: return-type expansion is
+ * a later step 2 slice.)
  */
 @RestClient
 public interface UnsupportedApi {
 
-	@POST("http://localhost:{port}/items/{id}")
-	@Multipart
-	String postItem(@PathParam("port") int port, @PathParam("id") String id, @Part("name") String name);
+	@GET("http://localhost:{port}/items/{id}")
+	CompletableFuture<String> getItem(@PathParam("port") int port, @PathParam("id") String id);
 
 }
