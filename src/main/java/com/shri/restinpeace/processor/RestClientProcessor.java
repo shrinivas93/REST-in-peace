@@ -19,6 +19,7 @@ import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.MirroredTypeException;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
@@ -34,36 +35,41 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
-import com.shri.restinpeace.constant.RIPConstant;
 
 /**
  * Generates a compile-time implementation ({@code <Interface>_RipImpl}) of
  * every {@code @RestClient} interface whose methods all fall within the
- * minimal supported shape: a single fixed HTTP verb, only
- * {@link PathParam @PathParam}/{@link QueryParam @QueryParam} parameters,
- * an optional {@link Timeout @Timeout}/{@link Retry @Retry}, and a
+ * currently-supported shape: a single fixed HTTP verb, {@code @PathParam}/
+ * {@code @QueryParam}/{@code @HeaderParam}/{@code @QueryMap}/
+ * {@code @HeaderMap}/{@code @Body}/{@code @Url} parameters, optional
+ * {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}, and a
  * {@code void}, {@code String}, or non-generic POJO return type.
  * {@code RIP.getClient(...)} prefers this generated class over the
  * reflective {@code java.lang.reflect.Proxy} it falls back to for an
  * interface this processor didn't (fully) generate for - see
  * {@code docs/design/compile-time-proxy-generation.md} for the full design
- * this is step 1 of.
+ * this is step 2 of.
  *
  * <p>
  * An interface with a nested/private declaration, a default or static
  * method, or any single method using a feature outside the shape above
- * (`@Headers`, `@HeaderParam`/`@HeaderMap`, `@Body`,
- * `@Multipart`, `@Url`, `@ErrorType`, `@QueryMap`, a required/defaulted
- * `@QueryParam`, a `CompletableFuture`/`RipResponse`/`byte[]`/`File`
- * return type, ...) is silently skipped in its entirety and left to the
- * reflective proxy - generating a partially-correct implementation would
- * be worse than not generating one at all.
+ * (`@Multipart`/`@Part`/`@PartMap`, a `DownloadProgressListener`/
+ * `UploadProgressListener`/`@Destination` parameter, a
+ * `CompletableFuture`/`RipResponse`/`byte[]`/`File` return type, ...) is
+ * silently skipped in its entirety and left to the reflective proxy -
+ * generating a partially-correct implementation would be worse than not
+ * generating one at all.
  */
 @SupportedAnnotationTypes("com.shri.restinpeace.annotation.marker.RestClient")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
@@ -114,9 +120,6 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private MethodModel toSupportedMethodModel(ExecutableElement methodElement) {
-		if (methodElement.getAnnotation(Headers.class) != null || methodElement.getAnnotation(ErrorType.class) != null) {
-			return null; // not supported yet
-		}
 		HttpMethodAndUrl httpMethodAndUrl = httpMethodAndUrlOf(methodElement);
 		if (httpMethodAndUrl == null) {
 			return null;
@@ -137,9 +140,12 @@ public class RestClientProcessor extends AbstractProcessor {
 
 		TimeoutModel timeoutModel = timeoutModelOf(methodElement);
 		RetryModel retryModel = retryModelOf(methodElement);
+		String[] headerEntries = headerEntriesOf(methodElement);
+		String errorTypeClassName = errorTypeClassNameOf(methodElement);
 
 		return new MethodModel(methodElement.getSimpleName().toString(), httpMethodAndUrl.httpMethod,
-				httpMethodAndUrl.urlTemplate, returnTypeName, params, timeoutModel, retryModel);
+				httpMethodAndUrl.urlTemplate, returnTypeName, params, timeoutModel, retryModel, headerEntries,
+				errorTypeClassName);
 	}
 
 	private TimeoutModel timeoutModelOf(ExecutableElement methodElement) {
@@ -157,6 +163,31 @@ public class RestClientProcessor extends AbstractProcessor {
 		}
 		return new RetryModel(true, retry.times(), retry.delayMillis(), retry.backoffMultiplier(),
 				retry.retryOnStatus());
+	}
+
+	private String[] headerEntriesOf(ExecutableElement methodElement) {
+		Headers headers = methodElement.getAnnotation(Headers.class);
+		return headers == null ? new String[0] : headers.value();
+	}
+
+	/**
+	 * {@code @ErrorType}'s {@code value()} is a {@code Class<?>}; calling it
+	 * directly during annotation processing throws {@link MirroredTypeException}
+	 * (the class may not even be compiled yet) - its {@link TypeMirror} is
+	 * how annotation processors are meant to read a {@code Class}-valued
+	 * attribute.
+	 */
+	private String errorTypeClassNameOf(ExecutableElement methodElement) {
+		ErrorType errorType = methodElement.getAnnotation(ErrorType.class);
+		if (errorType == null) {
+			return null;
+		}
+		try {
+			errorType.value();
+			throw new IllegalStateException("Expected MirroredTypeException reading @ErrorType's value().");
+		} catch (MirroredTypeException e) {
+			return e.getTypeMirror().toString();
+		}
 	}
 
 	private HttpMethodAndUrl httpMethodAndUrlOf(ExecutableElement methodElement) {
@@ -208,20 +239,71 @@ public class RestClientProcessor extends AbstractProcessor {
 	private ParamModel toSupportedParamModel(VariableElement parameter) {
 		PathParam pathParam = parameter.getAnnotation(PathParam.class);
 		QueryParam queryParam = parameter.getAnnotation(QueryParam.class);
-		if (pathParam != null && queryParam == null) {
-			return new ParamModel(ParamKind.PATH, pathParam.value(), parameter.getSimpleName().toString(),
-					parameter.asType().toString());
+		HeaderParam headerParam = parameter.getAnnotation(HeaderParam.class);
+		QueryMap queryMap = parameter.getAnnotation(QueryMap.class);
+		HeaderMap headerMap = parameter.getAnnotation(HeaderMap.class);
+		Body body = parameter.getAnnotation(Body.class);
+		Url url = parameter.getAnnotation(Url.class);
+
+		int annotationCount = countNonNull(pathParam, queryParam, headerParam, queryMap, headerMap, body, url);
+		if (annotationCount != 1) {
+			return null; // no recognized annotation, or more than one - either way unsupported here
 		}
-		if (queryParam != null && pathParam == null) {
-			if (queryParam.required() || !RIPConstant.DEFAULT.equals(queryParam.defaultValue())) {
-				// required/defaultValue needs resolveValue()'s logic reproduced faithfully -
-				// out of scope for this minimal shape, so this whole interface falls back.
-				return null;
+
+		String javaParamName = parameter.getSimpleName().toString();
+		String javaTypeName = parameter.asType().toString();
+
+		if (pathParam != null) {
+			return new ParamModel(ParamKind.PATH, pathParam.value(), javaParamName, javaTypeName, false, "");
+		}
+		if (queryParam != null) {
+			return new ParamModel(ParamKind.QUERY, queryParam.value(), javaParamName, javaTypeName,
+					queryParam.required(), queryParam.defaultValue());
+		}
+		if (headerParam != null) {
+			return new ParamModel(ParamKind.HEADER, headerParam.value(), javaParamName, javaTypeName,
+					headerParam.required(), headerParam.defaultValue());
+		}
+		if (queryMap != null) {
+			return isMapType(parameter.asType())
+					? new ParamModel(ParamKind.QUERY_MAP, "", javaParamName, javaTypeName, false, "")
+					: null;
+		}
+		if (headerMap != null) {
+			return isMapType(parameter.asType())
+					? new ParamModel(ParamKind.HEADER_MAP, "", javaParamName, javaTypeName, false, "")
+					: null;
+		}
+		if (body != null) {
+			return new ParamModel(ParamKind.BODY, "", javaParamName, javaTypeName, false, "");
+		}
+		// url != null - the generated method assigns the resolved String straight into a
+		// String url local, so a non-String @Url parameter (itself a validation error the
+		// runtime validator catches) would otherwise produce generated source that fails to
+		// compile - never let that happen.
+		return "java.lang.String".equals(javaTypeName)
+				? new ParamModel(ParamKind.URL, "", javaParamName, javaTypeName, false, "")
+				: null;
+	}
+
+	private static int countNonNull(Object... values) {
+		int count = 0;
+		for (Object value : values) {
+			if (value != null) {
+				count++;
 			}
-			return new ParamModel(ParamKind.QUERY, queryParam.value(), parameter.getSimpleName().toString(),
-					parameter.asType().toString());
 		}
-		return null; // no annotation, both, or some other annotation entirely (e.g. @HeaderParam)
+		return count;
+	}
+
+	private boolean isMapType(TypeMirror type) {
+		if (type.getKind() != TypeKind.DECLARED) {
+			return false;
+		}
+		TypeMirror mapErasure = processingEnv.getTypeUtils()
+				.erasure(processingEnv.getElementUtils().getTypeElement("java.util.Map").asType());
+		TypeMirror paramErasure = processingEnv.getTypeUtils().erasure(type);
+		return processingEnv.getTypeUtils().isSubtype(paramErasure, mapErasure);
 	}
 
 	private void writeImplementation(TypeElement interfaceElement, String interfaceBaseUrl,
@@ -262,14 +344,14 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append("\t}\n\n");
 
 		for (MethodModel method : methods) {
-			appendMethod(out, method, interfaceBaseUrl);
+			appendMethod(out, method, interfaceBaseUrl, interfaceName);
 		}
 
 		out.append("}\n");
 		return out.toString();
 	}
 
-	private void appendMethod(StringBuilder out, MethodModel method, String interfaceBaseUrl) {
+	private void appendMethod(StringBuilder out, MethodModel method, String interfaceBaseUrl, String interfaceName) {
 		out.append("\t@Override\n\tpublic ").append(method.returnTypeName).append(" ").append(method.name)
 				.append("(");
 		for (int i = 0; i < method.params.size(); i++) {
@@ -281,24 +363,93 @@ public class RestClientProcessor extends AbstractProcessor {
 		}
 		out.append(") {\n");
 
-		out.append("\t\tObject result = ripProcessor.processGeneratedRequest(");
-		out.append("com.shri.restinpeace.constant.HTTPMethod.").append(method.httpMethod.name()).append(", ");
-		out.append(stringLiteral(method.urlTemplate)).append(", ");
-		out.append(interfaceBaseUrl == null ? "null" : stringLiteral(interfaceBaseUrl)).append(", ");
-		out.append(namesArrayLiteral(method, ParamKind.PATH)).append(", ");
-		out.append(valuesArrayLiteral(method, ParamKind.PATH)).append(", ");
-		out.append(namesArrayLiteral(method, ParamKind.QUERY)).append(", ");
-		out.append(valuesArrayLiteral(method, ParamKind.QUERY)).append(", ");
-		out.append(method.returnTypeName).append(".class, ");
-		out.append(method.timeout.connectMillis).append(", ").append(method.timeout.readMillis).append(", ");
-		out.append(method.retry.hasRetry).append(", ").append(method.retry.times).append(", ");
-		out.append(method.retry.delayMillis).append("L, ").append(method.retry.backoffMultiplier).append(", ");
-		out.append(intArrayLiteral(method.retry.retryOnStatus)).append(");\n");
+		ParamModel urlParam = urlParamOf(method);
+		if (urlParam != null) {
+			out.append("\t\tString __ripUrl = com.shri.restinpeace.annotation.service.RestRequestProcessor.requireUrlParam(")
+					.append(urlParam.javaParamName).append(", ")
+					.append(stringLiteral(interfaceName + "." + method.name)).append(");\n");
+		} else {
+			out.append("\t\tString __ripUrl = this.ripProcessor.resolveGeneratedUrl(")
+					.append(stringLiteral(method.urlTemplate)).append(", ")
+					.append(interfaceBaseUrl == null ? "null" : stringLiteral(interfaceBaseUrl)).append(", ")
+					.append(namesArrayLiteral(method, ParamKind.PATH)).append(", ")
+					.append(valuesArrayLiteral(method, ParamKind.PATH)).append(");\n");
+		}
+
+		String httpMethodLiteral = "com.shri.restinpeace.constant.HTTPMethod." + method.httpMethod.name();
+		out.append("\t\tcom.shri.restinpeace.interceptor.RequestContext __ripContext = new com.shri.restinpeace.interceptor.RequestContext(")
+				.append(httpMethodLiteral).append(", __ripUrl);\n");
+		out.append("\t\tkong.unirest.HttpRequest<?> __ripRequest = this.ripProcessor.createGeneratedRequest(")
+				.append(httpMethodLiteral).append(", __ripUrl, ").append(method.timeout.connectMillis).append(", ")
+				.append(method.timeout.readMillis).append(");\n");
+
+		if (method.headerEntries.length > 0) {
+			out.append("\t\tthis.ripProcessor.applyGeneratedHeaders(__ripRequest, ")
+					.append(stringArrayLiteral(method.headerEntries)).append(");\n");
+		}
+
+		for (ParamModel param : method.params) {
+			appendParamApplication(out, param);
+		}
+
+		out.append("\t\tObject __ripResult = this.ripProcessor.finishGeneratedSync(__ripRequest, __ripContext, ")
+				.append(method.returnTypeName).append(".class, ")
+				.append(method.errorTypeClassName == null ? "null" : method.errorTypeClassName + ".class")
+				.append(", ").append(method.retry.hasRetry).append(", ").append(method.retry.times).append(", ")
+				.append(method.retry.delayMillis).append("L, ").append(method.retry.backoffMultiplier).append(", ")
+				.append(intArrayLiteral(method.retry.retryOnStatus)).append(");\n");
 
 		if (!"void".equals(method.returnTypeName)) {
-			out.append("\t\treturn (").append(method.returnTypeName).append(") result;\n");
+			out.append("\t\treturn (").append(method.returnTypeName).append(") __ripResult;\n");
 		}
 		out.append("\t}\n\n");
+	}
+
+	private void appendParamApplication(StringBuilder out, ParamModel param) {
+		switch (param.kind) {
+		case PATH:
+		case URL:
+			return; // already consumed while resolving the URL
+		case QUERY:
+			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
+					.append(", ").append(param.required).append(", ").append(stringLiteral(param.defaultValue))
+					.append(", ").append(stringLiteral(param.name)).append(");\n");
+			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.applyQueryValue(__ripRequest, ")
+					.append(stringLiteral(param.name)).append(", __ripValue); }\n\t\t}\n");
+			return;
+		case HEADER:
+			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
+					.append(", ").append(param.required).append(", ").append(stringLiteral(param.defaultValue))
+					.append(", ").append(stringLiteral(param.name)).append(");\n");
+			out.append("\t\t\tif (__ripValue != null) { __ripRequest.headerReplace(")
+					.append(stringLiteral(param.name)).append(", String.valueOf(__ripValue)); }\n\t\t}\n");
+			return;
+		case QUERY_MAP:
+			out.append("\t\tif (").append(param.javaParamName)
+					.append(" != null) { this.ripProcessor.applyQueryMap(__ripRequest, ").append(param.javaParamName)
+					.append("); }\n");
+			return;
+		case HEADER_MAP:
+			out.append("\t\tif (").append(param.javaParamName)
+					.append(" != null) { this.ripProcessor.applyHeaderMap(__ripRequest, ").append(param.javaParamName)
+					.append("); }\n");
+			return;
+		case BODY:
+			out.append("\t\t__ripRequest = this.ripProcessor.applyGeneratedBodyIfPresent(__ripRequest, ")
+					.append(param.javaParamName).append(");\n");
+			return;
+		default:
+			throw new IllegalStateException("Unhandled param kind: " + param.kind);
+		}
+	}
+
+	private static ParamModel urlParamOf(MethodModel method) {
+		for (ParamModel param : method.params) {
+			if (param.kind == ParamKind.URL) {
+				return param;
+			}
+		}
+		return null;
 	}
 
 	private String namesArrayLiteral(MethodModel method, ParamKind kind) {
@@ -337,6 +488,17 @@ public class RestClientProcessor extends AbstractProcessor {
 		return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
 	}
 
+	private static String stringArrayLiteral(String[] values) {
+		StringBuilder out = new StringBuilder("new String[] {");
+		for (int i = 0; i < values.length; i++) {
+			if (i > 0) {
+				out.append(", ");
+			}
+			out.append(stringLiteral(values[i]));
+		}
+		return out.append("}").toString();
+	}
+
 	private static String intArrayLiteral(int[] values) {
 		StringBuilder out = new StringBuilder("new int[] {");
 		for (int i = 0; i < values.length; i++) {
@@ -359,7 +521,7 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private enum ParamKind {
-		PATH, QUERY
+		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL
 	}
 
 	private static final class ParamModel {
@@ -367,12 +529,17 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String name;
 		final String javaParamName;
 		final String javaTypeName;
+		final boolean required;
+		final String defaultValue;
 
-		ParamModel(ParamKind kind, String name, String javaParamName, String javaTypeName) {
+		ParamModel(ParamKind kind, String name, String javaParamName, String javaTypeName, boolean required,
+				String defaultValue) {
 			this.kind = kind;
 			this.name = name;
 			this.javaParamName = javaParamName;
 			this.javaTypeName = javaTypeName;
+			this.required = required;
+			this.defaultValue = defaultValue;
 		}
 	}
 
@@ -384,9 +551,12 @@ public class RestClientProcessor extends AbstractProcessor {
 		final List<ParamModel> params;
 		final TimeoutModel timeout;
 		final RetryModel retry;
+		final String[] headerEntries;
+		final String errorTypeClassName;
 
 		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, String returnTypeName,
-				List<ParamModel> params, TimeoutModel timeout, RetryModel retry) {
+				List<ParamModel> params, TimeoutModel timeout, RetryModel retry, String[] headerEntries,
+				String errorTypeClassName) {
 			this.name = name;
 			this.httpMethod = httpMethod;
 			this.urlTemplate = urlTemplate;
@@ -394,6 +564,8 @@ public class RestClientProcessor extends AbstractProcessor {
 			this.params = params;
 			this.timeout = timeout;
 			this.retry = retry;
+			this.headerEntries = headerEntries;
+			this.errorTypeClassName = errorTypeClassName;
 		}
 	}
 

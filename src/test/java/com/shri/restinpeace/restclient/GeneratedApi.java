@@ -1,9 +1,18 @@
 package com.shri.restinpeace.restclient;
 
+import java.util.Map;
+
+import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
+import com.shri.restinpeace.annotation.method.POST;
+import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 
@@ -28,5 +37,21 @@ public interface GeneratedApi {
 	@GET("http://localhost:{port}/flaky")
 	@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
 	String getFlaky(@PathParam("port") int port);
+
+	@GET("http://localhost:{port}/echo")
+	String echo(@PathParam("port") int port, @HeaderParam("X-Fixed") String headerValue,
+			@HeaderParam(value = "X-Default", defaultValue = "header-default") String headerDefault,
+			@QueryParam(value = "q", required = true) String requiredQuery, @QueryMap Map<String, String> queryMap,
+			@HeaderMap Map<String, String> headerMap);
+
+	@POST("http://localhost:{port}/echo")
+	String echoBody(@PathParam("port") int port, @Body String body);
+
+	@GET
+	String getByUrl(@Url String url);
+
+	@GET("http://localhost:{port}/error")
+	@ErrorType(ApiError.class)
+	String getError(@PathParam("port") int port);
 
 }

@@ -6,14 +6,16 @@ import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.PathParam;
 
 /**
- * Otherwise-{@link GeneratedApi}-shaped, but with a {@code @Headers} method -
- * {@code RestClientProcessor} must still leave this to the reflective proxy
- * in its entirety, the same as {@code @HeaderParam}/{@code @HeaderMap}/etc.
- * already do. Regression coverage for a real bug: before this class existed,
- * a method combining the otherwise-supported shape with {@code @Headers} (or
- * {@code @ErrorType}) was silently included in the generated implementation,
- * which has no code path applying either annotation at all - see
- * {@code docs/design/compile-time-proxy-generation.md} §9.4.
+ * Otherwise-{@link GeneratedApi}-shaped, with a {@code @Headers} method -
+ * {@code RestClientProcessor} now genuinely generates for this (step 2),
+ * applying the fixed header via
+ * {@code RestRequestProcessor.applyGeneratedHeaders}. Originally added as
+ * regression coverage for a real bug in step 1, where a method combining the
+ * otherwise-supported shape with {@code @Headers} (or {@code @ErrorType})
+ * was silently included in the generated implementation despite neither
+ * being applied at all - see
+ * {@code docs/design/compile-time-proxy-generation.md} §9.4. Kept under this
+ * name as a positive test for {@code @Headers} support now that it exists.
  */
 @RestClient
 public interface GeneratedApiWithHeaders {

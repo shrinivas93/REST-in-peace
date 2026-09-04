@@ -1,14 +1,18 @@
 # Design: compile-time proxy generation
 
 Status: **step 1 landed, step 2 in progress** (see §8's rollout plan -
-`RestClientProcessor`, `RestRequestProcessor.processGeneratedRequest`,
-`RIP.getClient`'s generated-impl-first lookup, `GeneratedApiTest`). Step 2's
-first slice - `@Timeout`/`@Retry` - landed too (§9.4). The compile-testing
-validation suite and the native-image smoke test (steps 3-4) are not
-started, and most of §5's table (`@Headers`, `@Body`, `@Multipart`, `@Url`,
-`@ErrorType`, `@QueryMap`, required/defaulted `@QueryParam`, every
-non-`String`/POJO return type) is still unsupported - a method using any of
-those still falls the whole interface back to the reflective proxy. Roadmap
+`RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
+`GeneratedApiTest`). Step 2's first two slices landed: `@Timeout`/`@Retry`
+(§9.4), then `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/
+required-or-defaulted `@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5) - the
+latter also replaced the original single `processGeneratedRequest` entry
+point with a sequence-of-calls design (§9.5.1). Still unsupported:
+`@Multipart`/`@Part`/`@PartMap`, a `DownloadProgressListener`/
+`UploadProgressListener`/`@Destination` parameter, and every
+non-`String`/POJO return type (`CompletableFuture`, `RipResponse`,
+`byte[]`, `File`) - a method using any of those still falls the whole
+interface back to the reflective proxy. The compile-testing validation
+suite and the native-image smoke test (steps 3-4) are not started. Roadmap
 item: "Compile-time proxy generation instead of a JDK dynamic proxy" in
 `ROADMAP.md`. The sections below are mostly the original sketch; §9 records
 what actually landed and the real deviations from the sketch, discovered
@@ -541,3 +545,96 @@ synchronous path, since `CompletableFuture` return types are a separate,
 not-yet-supported entry in §5's table. Only `nextDelay`'s signature change
 touched `attemptAsync`, mechanically (it still reads `retry.backoffMultiplier()`
 from the `Method`-based `Retry` it already has).
+
+### 9.5 Step 2, second slice: full header/query/body/URL/error-type support
+
+This slice covered `@Headers`, `@HeaderParam`, `@HeaderMap`, `@QueryMap`,
+required-or-defaulted `@QueryParam`/`@HeaderParam` (the `resolveValue`
+semantics step 1 explicitly scoped out, per §9.2), `@Body`, `@Url`, and
+`@ErrorType` - everything in §5's table except `@Multipart`/`@Part`/
+`@PartMap` and the return-type expansion.
+
+#### 9.5.1 Replaced the single `processGeneratedRequest` entry point with a sequence of calls
+
+Adding just `@Timeout`/`@Retry` in the first slice already grew
+`processGeneratedRequest` to 15 parameters. Extending the *same* method to
+also cover headers, query/header maps, a body, and a `@Url` override would
+have pushed it well past 25 - unreadable, and error-prone to keep each
+generated call's argument *position* correct against the method's growing
+signature. Instead, `RestRequestProcessor` now exposes a small set of
+non-reflective, `public` primitives - `resolveGeneratedUrl`,
+`requireUrlParam`, `createGeneratedRequest`, `applyGeneratedHeaders`,
+`resolveValue`, `applyQueryValue`, `applyQueryMap`, `applyHeaderMap`,
+`applyGeneratedBodyIfPresent`, and a terminal `finishGeneratedSync` - and
+generated code calls a *sequence* of them, one per feature the method
+actually uses, mirroring §4.2's original sketch ("a handful of new,
+non-reflective entry points... called directly") more closely than step 1's
+single mega-call did. Each of these is `public` only because generated code
+lives in an arbitrary consumer package - not part of RIP's
+application-facing API, documented as such at the top of the new methods'
+section in `RestRequestProcessor`.
+
+A header param value (`@HeaderParam`) doesn't get its own RIP method at
+all - generated code calls `resolveValue` then, if non-`null`, Unirest's own
+public `request.headerReplace(name, String.valueOf(value))` directly, since
+that's all the reflective path itself does past `resolveValue`. Reusing a
+public method on a public third-party type the generated code already holds
+a reference to, instead of wrapping it in another RIP method, was a
+deliberate choice to keep the new public surface as small as it can be.
+
+#### 9.5.2 Decoupling `@ErrorType` from `Method` (and reading a `Class`-valued annotation attribute at compile time)
+
+`decodeBody`/`decodeOrThrow`/`notifyAfterResponse`/`executeSyncWithRetry`/
+`executeAsyncWithRetry`/`attemptAsync` all used to take (or derive from) a
+`Method`, reading `method.getAnnotation(ErrorType.class)` internally to
+decide how to decode an error body. Since generated code has no `Method`,
+every one of these was refactored to take an explicit `Class<?> errorType`
+parameter instead - the reflective path now derives it once
+(`errorTypeOf(method)`) and passes it down like any other literal, and
+generated code passes its `@ErrorType`'s value directly. This is a pure
+simplification for the reflective path too, not just an accommodation for
+the generated one: `Method` was only ever a vehicle for that one annotation
+lookup in these methods.
+
+Reading `@ErrorType`'s `Class<?> value()` during annotation processing
+can't just call `errorType.value()` - the class it names may not even be
+compiled yet, so the JDK deliberately throws `MirroredTypeException` instead
+of trying to load it; catching that and reading `getTypeMirror()` off the
+exception is the standard, if unintuitive, annotation-processor idiom for
+this, used in `errorTypeClassNameOf`.
+
+#### 9.5.3 A same-named parameter shadowing a generated local variable - and the fix
+
+`GeneratedApi.getByUrl(@Url String url)` - an entirely reasonable parameter
+name for a `@Url` parameter to have - broke compilation of its own generated
+class: `RestClientProcessor` always declared a local named `url` to hold the
+resolved URL, and Java doesn't allow redeclaring a variable of the same name
+in the same scope, so `String url = RestRequestProcessor.requireUrlParam(url, ...)`
+failed with "variable url is already defined". The same risk existed for
+every other synthetic local the generator introduces (`request`, `context`,
+`result`, a per-parameter scratch variable for `resolveValue`'s result) and
+even for the generated class's own `ripProcessor` field, if a parameter
+happened to share that name. Fixed by renaming every synthetic identifier to
+a `__rip`-prefixed name (`__ripUrl`, `__ripRequest`, `__ripContext`,
+`__ripResult`, `__ripValue`) that a real Java parameter is never going to
+collide with, and by qualifying every field access as `this.ripProcessor`
+rather than bare `ripProcessor` so a same-named parameter shadowing the
+field can't silently break a call site either. `GeneratedApi.getByUrl` is
+now permanent regression coverage for this - see `GeneratedApiTest`.
+
+#### 9.5.4 What's now real and testable
+
+`GeneratedApi` gained `echo` (fixed `@HeaderParam` + defaulted
+`@HeaderParam` + required `@QueryParam` + `@QueryMap` + `@HeaderMap`),
+`echoBody` (`@Body` on a `@POST`), `getByUrl` (`@Url`), and `getError`
+(`@ErrorType`, asserting the decoded error body's fields after catching
+`RestInPeaceHttpException`) - each verified against a real embedded
+`HttpServer`, mirroring the assertion style `RipIntegrationTest` already
+uses for the same features on the reflective path.
+
+`GeneratedApiWithHeaders` - originally step 1's regression test proving
+`@Headers` correctly disqualified a method - is repurposed as a *positive*
+test now that `@Headers` is supported, asserting a real `_RipImpl` is
+generated and the header-carrying call succeeds. `GeneratedApiWithMultipart`
+is new regression coverage taking over the "still correctly disqualifies"
+role for a feature this slice didn't cover.

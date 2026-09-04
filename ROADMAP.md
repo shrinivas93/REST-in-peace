@@ -244,6 +244,23 @@ up.
             disqualifying too, closing the same gap for them (still
             unsupported, correctly falling back). See the design doc's
             §9.4.
+      - [x] **Step 2, second slice: full header/query/body/URL/error-type
+            support**: `@Headers`, `@HeaderParam`, `@HeaderMap`,
+            `@QueryMap`, required-or-defaulted `@QueryParam`/`@HeaderParam`,
+            `@Body`, `@Url`, and `@ErrorType` are all now generated for.
+            Replaced the single `processGeneratedRequest` entry point with
+            a set of smaller non-reflective primitives on
+            `RestRequestProcessor` that generated code calls in sequence -
+            the growing single-call design from step 1 would have
+            ballooned past 25 parameters. Also decoupled `@ErrorType`
+            handling from `Method` throughout `RestRequestProcessor`
+            (a simplification for the reflective path too), and fixed a
+            real generated-code bug where a `@Url` parameter named `url`
+            collided with the generator's own local variable of the same
+            name. Still unsupported: `@Multipart`/`@Part`/`@PartMap`, a
+            `DownloadProgressListener`/`UploadProgressListener`/
+            `@Destination` parameter, and every non-`String`/POJO return
+            type. See the design doc's §9.5.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small
