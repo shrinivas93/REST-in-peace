@@ -82,6 +82,7 @@ import kong.unirest.UnirestInstance;
 public class RestRequestProcessor {
 
 	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
+	private static final int[] EMPTY_STATUS_CODES = new int[0];
 
 	private static final ScheduledExecutorService RETRY_SCHEDULER = Executors.newSingleThreadScheduledExecutor(runnable -> {
 		Thread thread = new Thread(runnable, "rip-retry-scheduler");
@@ -220,15 +221,15 @@ public class RestRequestProcessor {
 	 * Non-reflective entry point used by a compile-time-generated
 	 * {@code @RestClient} implementation (see
 	 * {@code com.shri.restinpeace.processor.RestClientProcessor}) for a
-	 * method whose HTTP verb, URL template, path/query param names, and
-	 * return type are all known at compile time - so building and decoding
-	 * the request never needs to look any of that up via reflection on a
-	 * {@link Method}, unlike {@link #processRestRequest} on the reflective
-	 * proxy path. Still goes through the same query-param, interceptor,
-	 * retry, and error-handling machinery as that path; a method using
-	 * {@code @Retry}, {@code @Timeout}, {@code @Headers}, {@code @ErrorType},
-	 * or any other feature not listed above is never routed here by the
-	 * processor in the first place - see
+	 * method whose HTTP verb, URL template, path/query param names, return
+	 * type, and (optional) {@code @Timeout}/{@code @Retry} are all known at
+	 * compile time - so building and decoding the request never needs to
+	 * look any of that up via reflection on a {@link Method}, unlike
+	 * {@link #processRestRequest} on the reflective proxy path. Still goes
+	 * through the same query-param, interceptor, timeout, retry, and
+	 * error-handling machinery as that path; a method using
+	 * {@code @Headers}, {@code @ErrorType}, or any other feature not listed
+	 * above is never routed here by the processor in the first place - see
 	 * {@code docs/design/compile-time-proxy-generation.md}.
 	 *
 	 * @param httpMethod       the method's HTTP verb
@@ -241,26 +242,46 @@ public class RestRequestProcessor {
 	 * @param pathParamNames   the method's {@code @PathParam} placeholder
 	 *                         names, in declaration order
 	 * @param pathParamValues  the corresponding argument values
-	 * @param queryParamNames  the method's {@code @QueryParam} names, in
-	 *                         declaration order
-	 * @param queryParamValues the corresponding argument values
-	 * @param returnType       the method's return type ({@code void.class},
-	 *                         {@code String.class}, or a POJO class)
+	 * @param queryParamNames        the method's {@code @QueryParam} names, in
+	 *                               declaration order
+	 * @param queryParamValues       the corresponding argument values
+	 * @param returnType             the method's return type
+	 *                               ({@code void.class}, {@code String.class},
+	 *                               or a POJO class)
+	 * @param connectMillis          the method's {@code @Timeout}
+	 *                               {@code connectMillis}, or {@code -1} (its
+	 *                               own "unset" default) if it has no
+	 *                               {@code @Timeout}
+	 * @param readMillis             the method's {@code @Timeout}
+	 *                               {@code readMillis}, or {@code -1} if it
+	 *                               has no {@code @Timeout}
+	 * @param hasRetry               whether the method has a {@code @Retry}
+	 *                               at all - the five parameters below are
+	 *                               meaningless (and ignored) when this is
+	 *                               {@code false}
+	 * @param retryTimes             the method's {@code @Retry#times()}
+	 * @param retryDelayMillis       the method's {@code @Retry#delayMillis()}
+	 * @param retryBackoffMultiplier the method's
+	 *                               {@code @Retry#backoffMultiplier()}
+	 * @param retryOnStatus          the method's {@code @Retry#retryOnStatus()}
 	 * @return the decoded response body, or {@code null} for {@code void}
 	 */
 	public Object processGeneratedRequest(HTTPMethod httpMethod, String urlTemplate, String interfaceBaseUrl,
 			String[] pathParamNames, Object[] pathParamValues, String[] queryParamNames, Object[] queryParamValues,
-			Class<?> returnType) {
+			Class<?> returnType, int connectMillis, int readMillis, boolean hasRetry, int retryTimes,
+			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
 		String url = resolveUrlForGenerated(urlTemplate, interfaceBaseUrl, pathParamNames, pathParamValues);
 		RequestContext context = new RequestContext(httpMethod, url);
 		HttpRequest<?> request = createRequest(httpMethod, url);
+		applyTimeout(request, connectMillis, readMillis);
 		for (int i = 0; i < queryParamNames.length; i++) {
 			if (queryParamValues[i] != null) {
 				applyQueryValue(request, queryParamNames[i], queryParamValues[i]);
 			}
 		}
 		request = applyInterceptors(request, context);
-		HttpResponse<String> response = executeSyncWithRetry(null, returnType, context, request::asString);
+		HttpResponse<String> response = executeSyncWithRetry(null, returnType, context, request::asString, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
 		return decodeOrThrow(response, null, returnType);
 	}
 
@@ -403,11 +424,31 @@ public class RestRequestProcessor {
 			Supplier<HttpResponse<B>> call) {
 		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
 		if (retry == null) {
+			return executeSyncWithRetry(method, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
+		}
+		return executeSyncWithRetry(method, returnType, context, call, true, retry.times(), retry.delayMillis(),
+				retry.backoffMultiplier(), retry.retryOnStatus());
+	}
+
+	/**
+	 * Non-reflective counterpart taking {@code @Retry}'s values as literal
+	 * arguments instead of an annotation lookup, shared by the reflective
+	 * path above (which still derives {@code method}, for
+	 * {@link #notifyAfterResponse}'s {@code @ErrorType} lookup, even when
+	 * {@code hasRetry} is {@code false}) and
+	 * {@link #processGeneratedRequest}'s compile-time-generated call
+	 * ({@code method} is {@code null} there, so it never has an
+	 * {@code @ErrorType} to look up either).
+	 */
+	private <B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
+			Supplier<HttpResponse<B>> call, boolean hasRetry, int times, long delayMillis, double backoffMultiplier,
+			int[] retryOnStatus) {
+		if (!hasRetry) {
 			HttpResponse<B> response = call.get();
 			notifyAfterResponse(context, response, method, returnType);
 			return response;
 		}
-		long delay = retry.delayMillis();
+		long delay = delayMillis;
 		for (int attempt = 1;; attempt++) {
 			HttpResponse<B> response = null;
 			RuntimeException failure = null;
@@ -417,15 +458,15 @@ public class RestRequestProcessor {
 			} catch (RuntimeException e) {
 				failure = e;
 			}
-			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retry.retryOnStatus());
-			if (!retryable || attempt >= retry.times()) {
+			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
+			if (!retryable || attempt >= times) {
 				if (failure != null) {
 					throw failure;
 				}
 				return response;
 			}
 			sleep(delay);
-			delay = nextDelay(delay, retry);
+			delay = nextDelay(delay, backoffMultiplier);
 		}
 	}
 
@@ -458,7 +499,8 @@ public class RestRequestProcessor {
 				return;
 			}
 			RETRY_SCHEDULER.schedule(
-					() -> attemptAsync(call, method, returnType, context, retry, attempt + 1, nextDelay(delay, retry))
+					() -> attemptAsync(call, method, returnType, context, retry, attempt + 1,
+							nextDelay(delay, retry.backoffMultiplier()))
 							.whenComplete((r, t) -> {
 								if (t != null) {
 									result.completeExceptionally(t);
@@ -475,8 +517,8 @@ public class RestRequestProcessor {
 		return IntStream.of(retryOnStatus).anyMatch(code -> code == status);
 	}
 
-	private static long nextDelay(long delay, Retry retry) {
-		return (long) (delay * retry.backoffMultiplier());
+	private static long nextDelay(long delay, double backoffMultiplier) {
+		return (long) (delay * backoffMultiplier);
 	}
 
 	private static void sleep(long millis) {
@@ -658,11 +700,23 @@ public class RestRequestProcessor {
 		if (timeout == null) {
 			return;
 		}
-		if (timeout.connectMillis() >= 0) {
-			request.connectTimeout(timeout.connectMillis());
+		applyTimeout(request, timeout.connectMillis(), timeout.readMillis());
+	}
+
+	/**
+	 * Non-reflective counterpart of {@link #applyTimeout(HttpRequest, Method)}
+	 * for a compile-time-generated call (see {@link #processGeneratedRequest}) -
+	 * {@code connectMillis}/{@code readMillis} are the generated method's
+	 * {@code @Timeout} values baked in as literals, or {@code -1} (matching
+	 * {@link Timeout}'s own "unset" default) for a method with no
+	 * {@code @Timeout} at all.
+	 */
+	private void applyTimeout(HttpRequest<?> request, int connectMillis, int readMillis) {
+		if (connectMillis >= 0) {
+			request.connectTimeout(connectMillis);
 		}
-		if (timeout.readMillis() >= 0) {
-			request.socketTimeout(timeout.readMillis());
+		if (readMillis >= 0) {
+			request.socketTimeout(readMillis);
 		}
 	}
 

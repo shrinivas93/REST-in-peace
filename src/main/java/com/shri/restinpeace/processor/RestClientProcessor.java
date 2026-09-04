@@ -24,6 +24,7 @@ import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 
+import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
@@ -33,8 +34,11 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 
@@ -43,7 +47,8 @@ import com.shri.restinpeace.constant.RIPConstant;
  * every {@code @RestClient} interface whose methods all fall within the
  * minimal supported shape: a single fixed HTTP verb, only
  * {@link PathParam @PathParam}/{@link QueryParam @QueryParam} parameters,
- * and a {@code void}, {@code String}, or non-generic POJO return type.
+ * an optional {@link Timeout @Timeout}/{@link Retry @Retry}, and a
+ * {@code void}, {@code String}, or non-generic POJO return type.
  * {@code RIP.getClient(...)} prefers this generated class over the
  * reflective {@code java.lang.reflect.Proxy} it falls back to for an
  * interface this processor didn't (fully) generate for - see
@@ -53,7 +58,7 @@ import com.shri.restinpeace.constant.RIPConstant;
  * <p>
  * An interface with a nested/private declaration, a default or static
  * method, or any single method using a feature outside the shape above
- * (`@Retry`, `@Timeout`, `@Headers`, `@HeaderParam`/`@HeaderMap`, `@Body`,
+ * (`@Headers`, `@HeaderParam`/`@HeaderMap`, `@Body`,
  * `@Multipart`, `@Url`, `@ErrorType`, `@QueryMap`, a required/defaulted
  * `@QueryParam`, a `CompletableFuture`/`RipResponse`/`byte[]`/`File`
  * return type, ...) is silently skipped in its entirety and left to the
@@ -109,6 +114,9 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private MethodModel toSupportedMethodModel(ExecutableElement methodElement) {
+		if (methodElement.getAnnotation(Headers.class) != null || methodElement.getAnnotation(ErrorType.class) != null) {
+			return null; // not supported yet
+		}
 		HttpMethodAndUrl httpMethodAndUrl = httpMethodAndUrlOf(methodElement);
 		if (httpMethodAndUrl == null) {
 			return null;
@@ -127,8 +135,28 @@ public class RestClientProcessor extends AbstractProcessor {
 			params.add(param);
 		}
 
+		TimeoutModel timeoutModel = timeoutModelOf(methodElement);
+		RetryModel retryModel = retryModelOf(methodElement);
+
 		return new MethodModel(methodElement.getSimpleName().toString(), httpMethodAndUrl.httpMethod,
-				httpMethodAndUrl.urlTemplate, returnTypeName, params);
+				httpMethodAndUrl.urlTemplate, returnTypeName, params, timeoutModel, retryModel);
+	}
+
+	private TimeoutModel timeoutModelOf(ExecutableElement methodElement) {
+		Timeout timeout = methodElement.getAnnotation(Timeout.class);
+		if (timeout == null) {
+			return new TimeoutModel(-1, -1);
+		}
+		return new TimeoutModel(timeout.connectMillis(), timeout.readMillis());
+	}
+
+	private RetryModel retryModelOf(ExecutableElement methodElement) {
+		Retry retry = methodElement.getAnnotation(Retry.class);
+		if (retry == null) {
+			return new RetryModel(false, 0, 0L, 1.0, new int[0]);
+		}
+		return new RetryModel(true, retry.times(), retry.delayMillis(), retry.backoffMultiplier(),
+				retry.retryOnStatus());
 	}
 
 	private HttpMethodAndUrl httpMethodAndUrlOf(ExecutableElement methodElement) {
@@ -261,7 +289,11 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append(valuesArrayLiteral(method, ParamKind.PATH)).append(", ");
 		out.append(namesArrayLiteral(method, ParamKind.QUERY)).append(", ");
 		out.append(valuesArrayLiteral(method, ParamKind.QUERY)).append(", ");
-		out.append(method.returnTypeName).append(".class);\n");
+		out.append(method.returnTypeName).append(".class, ");
+		out.append(method.timeout.connectMillis).append(", ").append(method.timeout.readMillis).append(", ");
+		out.append(method.retry.hasRetry).append(", ").append(method.retry.times).append(", ");
+		out.append(method.retry.delayMillis).append("L, ").append(method.retry.backoffMultiplier).append(", ");
+		out.append(intArrayLiteral(method.retry.retryOnStatus)).append(");\n");
 
 		if (!"void".equals(method.returnTypeName)) {
 			out.append("\t\treturn (").append(method.returnTypeName).append(") result;\n");
@@ -305,6 +337,17 @@ public class RestClientProcessor extends AbstractProcessor {
 		return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
 	}
 
+	private static String intArrayLiteral(int[] values) {
+		StringBuilder out = new StringBuilder("new int[] {");
+		for (int i = 0; i < values.length; i++) {
+			if (i > 0) {
+				out.append(", ");
+			}
+			out.append(values[i]);
+		}
+		return out.append("}").toString();
+	}
+
 	private static final class HttpMethodAndUrl {
 		final HTTPMethod httpMethod;
 		final String urlTemplate;
@@ -339,14 +382,44 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String urlTemplate;
 		final String returnTypeName;
 		final List<ParamModel> params;
+		final TimeoutModel timeout;
+		final RetryModel retry;
 
 		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, String returnTypeName,
-				List<ParamModel> params) {
+				List<ParamModel> params, TimeoutModel timeout, RetryModel retry) {
 			this.name = name;
 			this.httpMethod = httpMethod;
 			this.urlTemplate = urlTemplate;
 			this.returnTypeName = returnTypeName;
 			this.params = params;
+			this.timeout = timeout;
+			this.retry = retry;
+		}
+	}
+
+	private static final class TimeoutModel {
+		final int connectMillis;
+		final int readMillis;
+
+		TimeoutModel(int connectMillis, int readMillis) {
+			this.connectMillis = connectMillis;
+			this.readMillis = readMillis;
+		}
+	}
+
+	private static final class RetryModel {
+		final boolean hasRetry;
+		final int times;
+		final long delayMillis;
+		final double backoffMultiplier;
+		final int[] retryOnStatus;
+
+		RetryModel(boolean hasRetry, int times, long delayMillis, double backoffMultiplier, int[] retryOnStatus) {
+			this.hasRetry = hasRetry;
+			this.times = times;
+			this.delayMillis = delayMillis;
+			this.backoffMultiplier = backoffMultiplier;
+			this.retryOnStatus = retryOnStatus;
 		}
 	}
 
