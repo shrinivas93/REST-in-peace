@@ -65,7 +65,7 @@ public final class Main {
 			}
 			System.out.println("Call succeeded, response: " + result);
 
-			// 4. Confirm an interface using an unsupported feature (@HeaderParam)
+			// 4. Confirm an interface using an unsupported feature (@Multipart/@Part)
 			// falls back to the reflective proxy instead of a broken partial
 			// generation - no ItemApi_RipImpl-style class should exist for it.
 			try {
@@ -81,7 +81,7 @@ public final class Main {
 								+ unsupportedApi.getClass().getName());
 			}
 			System.out.println("RIP.getClient(UnsupportedApi.class) fell back to: " + unsupportedApi.getClass());
-			String unsupportedResult = unsupportedApi.getItem(port, "abc", "trace-1");
+			String unsupportedResult = unsupportedApi.postItem(port, "abc", "sample-name");
 			System.out.println("Reflective-proxy call still works, response: " + unsupportedResult);
 
 			System.out

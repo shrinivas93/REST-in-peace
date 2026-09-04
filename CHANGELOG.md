@@ -92,6 +92,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a method combining the step-1 supported shape with either annotation is
   generated for (honoring it) instead of falling back to the reflective
   proxy.
+- Compile-time proxy generation now also covers `@Headers`, `@HeaderParam`,
+  `@HeaderMap`, `@QueryMap`, required-or-defaulted `@QueryParam`/
+  `@HeaderParam`, `@Body`, `@Url`, and `@ErrorType`.
 
 ### Changed
 
