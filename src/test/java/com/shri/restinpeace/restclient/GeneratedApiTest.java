@@ -5,11 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.RIP;
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 
 import com.sun.net.httpserver.Headers;
@@ -41,6 +45,7 @@ class GeneratedApiTest {
 	private static int port;
 	private static final AtomicInteger FLAKY_ATTEMPTS = new AtomicInteger();
 	private static final AtomicReference<CapturedRequest> LAST_REQUEST = new AtomicReference<>();
+	private static final byte[] BINARY_CONTENT = { 1, 2, 3, 4, 5, -1, -2, -3 };
 
 	private static final class CapturedRequest {
 		final String method;
@@ -85,6 +90,12 @@ class GeneratedApiTest {
 		server.createContext("/error", exchange -> {
 			exchange.getResponseHeaders().set("Content-Type", "application/json");
 			respond(exchange, 422, "{\"code\":\"INVALID\",\"message\":\"nope\"}");
+		});
+		server.createContext("/binary", exchange -> {
+			exchange.sendResponseHeaders(200, BINARY_CONTENT.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(BINARY_CONTENT);
+			}
 		});
 		server.start();
 		port = server.getAddress().getPort();
@@ -248,6 +259,49 @@ class GeneratedApiTest {
 		ApiError error = (ApiError) exception.getErrorBody();
 		assertEquals("INVALID", error.getCode());
 		assertEquals("nope", error.getMessage());
+	}
+
+	@Test
+	void getBinary_decodesExactBytes() {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		byte[] result = api.getBinary(port);
+
+		assertTrue(Arrays.equals(BINARY_CONTENT, result), "Expected exact binary content, got: " + Arrays.toString(result));
+	}
+
+	@Test
+	void downloadBinary_streamsToDestinationFileAndReportsProgress() throws IOException {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+		File target = File.createTempFile("generated-api-download", ".bin");
+		target.deleteOnExit();
+		AtomicReference<Long> lastBytesWritten = new AtomicReference<>();
+
+		File result = api.downloadBinary(port, target, (bytesWritten, totalBytes) -> lastBytesWritten.set(bytesWritten));
+
+		assertEquals(target, result);
+		assertTrue(Arrays.equals(BINARY_CONTENT, Files.readAllBytes(target.toPath())));
+		assertEquals(Long.valueOf(BINARY_CONTENT.length), lastBytesWritten.get());
+	}
+
+	@Test
+	void getWithResponse_wrapsStatusHeadersAndBody() {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		RipResponse<String> response = api.getWithResponse(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertEquals("path=/items/abc;query=null", response.getBody());
+	}
+
+	@Test
+	void getBinaryWithResponse_wrapsStatusHeadersAndBinaryBody() {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		RipResponse<byte[]> response = api.getBinaryWithResponse(port);
+
+		assertEquals(200, response.getStatus());
+		assertTrue(Arrays.equals(BINARY_CONTENT, response.getBody()));
 	}
 
 	private static String header(CapturedRequest request, String name) {

@@ -97,6 +97,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `@HeaderParam`, `@Body`, `@Url`, and `@ErrorType`.
 - Compile-time proxy generation now also covers `@Multipart`, `@Part`,
   `@PartMap`, and `UploadProgressListener`.
+- Compile-time proxy generation now also covers `byte[]`, `File` (with
+  `@Destination`/`DownloadProgressListener`), and `RipResponse<T>` return
+  types - only `CompletableFuture<T>` (async) remains unsupported.
 
 ### Changed
 

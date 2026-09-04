@@ -36,6 +36,7 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
@@ -56,23 +57,24 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * currently-supported shape: a single fixed HTTP verb, {@code @PathParam}/
  * {@code @QueryParam}/{@code @HeaderParam}/{@code @QueryMap}/
  * {@code @HeaderMap}/{@code @Body}/{@code @Url}/{@code @Part}/
- * {@code @PartMap}/an {@code UploadProgressListener} parameter, optional
- * {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}/
- * {@code @Multipart}, and a {@code void}, {@code String}, or non-generic
- * POJO return type. {@code RIP.getClient(...)} prefers this generated class
- * over the reflective {@code java.lang.reflect.Proxy} it falls back to for
- * an interface this processor didn't (fully) generate for - see
- * {@code docs/design/compile-time-proxy-generation.md} for the full design
- * this is step 2 of.
+ * {@code @PartMap}/{@code @Destination}/an {@code UploadProgressListener}/
+ * {@code DownloadProgressListener} parameter, optional {@code @Timeout}/
+ * {@code @Retry}/{@code @Headers}/{@code @ErrorType}/{@code @Multipart},
+ * and a {@code void}, {@code String}, non-generic POJO, {@code byte[]},
+ * {@code File}, or {@code RipResponse<T>} (for any of the previous
+ * return-type shapes) return type. {@code RIP.getClient(...)} prefers this
+ * generated class over the reflective {@code java.lang.reflect.Proxy} it
+ * falls back to for an interface this processor didn't (fully) generate for
+ * - see {@code docs/design/compile-time-proxy-generation.md} for the full
+ * design this is step 2 of.
  *
  * <p>
  * An interface with a nested/private declaration, a default or static
  * method, or any single method using a feature outside the shape above
- * (a `DownloadProgressListener`/`@Destination` parameter, a
- * `CompletableFuture`/`RipResponse`/`byte[]`/`File` return type, ...) is
- * silently skipped in its entirety and left to the reflective proxy -
- * generating a partially-correct implementation would be worse than not
- * generating one at all.
+ * (a {@code CompletableFuture} return type, ...) is silently skipped in its
+ * entirety and left to the reflective proxy - generating a
+ * partially-correct implementation would be worse than not generating one
+ * at all.
  */
 @SupportedAnnotationTypes("com.shri.restinpeace.annotation.marker.RestClient")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
@@ -127,8 +129,8 @@ public class RestClientProcessor extends AbstractProcessor {
 		if (httpMethodAndUrl == null) {
 			return null;
 		}
-		String returnTypeName = returnTypeNameOf(methodElement);
-		if (returnTypeName == null) {
+		ReturnModel returnModel = returnModelOf(methodElement);
+		if (returnModel == null) {
 			return null;
 		}
 
@@ -142,6 +144,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		}
 
 		boolean isMultipart = methodElement.getAnnotation(Multipart.class) != null;
+		int destinationCount = 0;
 		for (ParamModel param : params) {
 			boolean isMultipartOnlyKind = param.kind == ParamKind.PART || param.kind == ParamKind.PART_MAP
 					|| param.kind == ParamKind.UPLOAD_PROGRESS;
@@ -157,6 +160,22 @@ public class RestClientProcessor extends AbstractProcessor {
 			if (isMultipart && param.kind == ParamKind.BODY) {
 				return null; // @Multipart + @Body is itself a validation error; same reasoning as above
 			}
+			boolean isDownloadOnlyKind = param.kind == ParamKind.DESTINATION || param.kind == ParamKind.DOWNLOAD_PROGRESS;
+			if (isDownloadOnlyKind && returnModel.kind != ReturnKind.FILE) {
+				// @Destination/a DownloadProgressListener parameter only makes sense on a
+				// File-returning method - same reasoning as the @Multipart-only kinds above:
+				// generated code for it would reference the destination file this processor
+				// only ever resolves for a FILE return kind.
+				return null;
+			}
+			if (param.kind == ParamKind.DESTINATION) {
+				destinationCount++;
+			}
+		}
+		if (returnModel.kind == ReturnKind.FILE && destinationCount != 1) {
+			return null; // exactly one @Destination is required for a File return - itself a
+							// validation error otherwise, but generated code needs to know
+							// unambiguously which parameter to write the response into
 		}
 
 		TimeoutModel timeoutModel = timeoutModelOf(methodElement);
@@ -165,7 +184,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		String errorTypeClassName = errorTypeClassNameOf(methodElement);
 
 		return new MethodModel(methodElement.getSimpleName().toString(), httpMethodAndUrl.httpMethod,
-				httpMethodAndUrl.urlTemplate, returnTypeName, params, timeoutModel, retryModel, headerEntries,
+				httpMethodAndUrl.urlTemplate, returnModel, params, timeoutModel, retryModel, headerEntries,
 				errorTypeClassName, isMultipart);
 	}
 
@@ -243,28 +262,68 @@ public class RestClientProcessor extends AbstractProcessor {
 		return null; // none, or (a validation error the runtime validator will catch) more than one
 	}
 
-	private String returnTypeNameOf(ExecutableElement methodElement) {
+	private ReturnModel returnModelOf(ExecutableElement methodElement) {
 		TypeMirror returnType = methodElement.getReturnType();
 		if (returnType.getKind() == TypeKind.VOID) {
-			return "void";
+			return new ReturnModel(ReturnKind.VOID, "void", "");
+		}
+		if (returnType.getKind() == TypeKind.ARRAY) {
+			// byte[] is the only supported array return type; anything else (int[], ...)
+			// isn't decodable and was never supported by the reflective path either.
+			return "byte[]".equals(returnType.toString()) ? new ReturnModel(ReturnKind.BYTES, "byte[]", "") : null;
 		}
 		if (returnType.getKind() != TypeKind.DECLARED) {
-			return null; // a primitive (other than void) or array (e.g. byte[]) isn't supported yet
+			return null; // some other primitive - not supported
 		}
-		if (!((DeclaredType) returnType).getTypeArguments().isEmpty()) {
-			return null; // a generic return type (e.g. List<User>) isn't decodable by Class<?> alone
+		DeclaredType declaredReturnType = (DeclaredType) returnType;
+		String rawTypeName = processingEnv.getTypeUtils().erasure(declaredReturnType).toString();
+		if ("com.shri.restinpeace.RipResponse".equals(rawTypeName)) {
+			if (declaredReturnType.getTypeArguments().size() != 1) {
+				return null; // a raw RipResponse with no type parameter isn't decodable
+			}
+			String innerTypeName = returnTypeArgumentNameOf(declaredReturnType.getTypeArguments().get(0));
+			return innerTypeName == null ? null : new ReturnModel(ReturnKind.RIP_RESPONSE, returnType.toString(), innerTypeName);
 		}
-		return returnType.toString();
+		if (!declaredReturnType.getTypeArguments().isEmpty()) {
+			return null; // some other generic return type (e.g. List<User>, CompletableFuture<T>) isn't supported yet
+		}
+		if ("java.io.File".equals(rawTypeName)) {
+			return new ReturnModel(ReturnKind.FILE, "java.io.File", "");
+		}
+		return new ReturnModel(ReturnKind.PLAIN, returnType.toString(), "");
+	}
+
+	/**
+	 * Names {@code T} in a {@code RipResponse<T>} return type - {@code "byte[]"}
+	 * for {@code RipResponse<byte[]>}, or a plain (non-generic) class name for
+	 * a {@code String}/POJO {@code T}, mirroring the reflective path's own
+	 * {@code resolveWrappedType}'s restrictions.
+	 */
+	private String returnTypeArgumentNameOf(TypeMirror typeArgument) {
+		if (typeArgument.getKind() == TypeKind.ARRAY) {
+			return "byte[]".equals(typeArgument.toString()) ? "byte[]" : null;
+		}
+		if (typeArgument.getKind() != TypeKind.DECLARED) {
+			return null;
+		}
+		if (!((DeclaredType) typeArgument).getTypeArguments().isEmpty()) {
+			return null; // e.g. RipResponse<List<User>> isn't decodable by Class<?> alone
+		}
+		return typeArgument.toString();
 	}
 
 	private ParamModel toSupportedParamModel(VariableElement parameter) {
 		String javaParamName = parameter.getSimpleName().toString();
 		String javaTypeName = parameter.asType().toString();
 
-		// UploadProgressListener needs no annotation at all - detected by type alone,
-		// same as the reflective path's own `parameter.getType() == UploadProgressListener.class`.
+		// UploadProgressListener/DownloadProgressListener need no annotation at all -
+		// detected by type alone, same as the reflective path's own
+		// `parameter.getType() == UploadProgressListener.class`/`== DownloadProgressListener.class`.
 		if ("com.shri.restinpeace.multipart.UploadProgressListener".equals(javaTypeName)) {
 			return new ParamModel(ParamKind.UPLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
+		}
+		if ("com.shri.restinpeace.download.DownloadProgressListener".equals(javaTypeName)) {
+			return new ParamModel(ParamKind.DOWNLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
 		}
 
 		PathParam pathParam = parameter.getAnnotation(PathParam.class);
@@ -276,11 +335,21 @@ public class RestClientProcessor extends AbstractProcessor {
 		Url url = parameter.getAnnotation(Url.class);
 		Part part = parameter.getAnnotation(Part.class);
 		PartMap partMap = parameter.getAnnotation(PartMap.class);
+		Destination destination = parameter.getAnnotation(Destination.class);
 
 		int annotationCount = countNonNull(pathParam, queryParam, headerParam, queryMap, headerMap, body, url, part,
-				partMap);
+				partMap, destination);
 		if (annotationCount != 1) {
 			return null; // no recognized annotation, or more than one - either way unsupported here
+		}
+		if (destination != null) {
+			// the generated method assigns this parameter straight into a File local it
+			// writes the response into, so a non-File @Destination parameter (itself a
+			// validation error the runtime validator catches) would otherwise produce
+			// generated source that fails to compile - never let that happen.
+			return "java.io.File".equals(javaTypeName)
+					? new ParamModel(ParamKind.DESTINATION, "", javaParamName, javaTypeName, false, "", "")
+					: null;
 		}
 
 		if (pathParam != null) {
@@ -391,7 +460,7 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private void appendMethod(StringBuilder out, MethodModel method, String interfaceBaseUrl, String interfaceName) {
-		out.append("\t@Override\n\tpublic ").append(method.returnTypeName).append(" ").append(method.name)
+		out.append("\t@Override\n\tpublic ").append(method.returnModel.javaTypeName).append(" ").append(method.name)
 				.append("(");
 		for (int i = 0; i < method.params.size(); i++) {
 			if (i > 0) {
@@ -437,17 +506,54 @@ public class RestClientProcessor extends AbstractProcessor {
 			appendParamApplication(out, param);
 		}
 
-		out.append("\t\tObject __ripResult = this.ripProcessor.finishGeneratedSync(__ripRequest, __ripContext, ")
-				.append(method.returnTypeName).append(".class, ")
-				.append(method.errorTypeClassName == null ? "null" : method.errorTypeClassName + ".class")
-				.append(", ").append(method.retry.hasRetry).append(", ").append(method.retry.times).append(", ")
-				.append(method.retry.delayMillis).append("L, ").append(method.retry.backoffMultiplier).append(", ")
-				.append(intArrayLiteral(method.retry.retryOnStatus)).append(");\n");
+		String errorTypeLiteral = method.errorTypeClassName == null ? "null" : method.errorTypeClassName + ".class";
+		String retryArgsLiteral = method.retry.hasRetry + ", " + method.retry.times + ", " + method.retry.delayMillis
+				+ "L, " + method.retry.backoffMultiplier + ", " + intArrayLiteral(method.retry.retryOnStatus);
 
-		if (!"void".equals(method.returnTypeName)) {
-			out.append("\t\treturn (").append(method.returnTypeName).append(") __ripResult;\n");
+		switch (method.returnModel.kind) {
+		case VOID:
+		case PLAIN:
+			out.append("\t\tObject __ripResult = this.ripProcessor.finishGeneratedSync(__ripRequest, __ripContext, ")
+					.append(method.returnModel.javaTypeName).append(".class, ").append(errorTypeLiteral)
+					.append(", ").append(retryArgsLiteral).append(");\n");
+			if (method.returnModel.kind != ReturnKind.VOID) {
+				out.append("\t\treturn (").append(method.returnModel.javaTypeName).append(") __ripResult;\n");
+			}
+			break;
+		case BYTES:
+			out.append("\t\treturn this.ripProcessor.finishGeneratedSyncBytes(__ripRequest, __ripContext, ")
+					.append(errorTypeLiteral).append(", ").append(retryArgsLiteral).append(");\n");
+			break;
+		case FILE:
+			out.append("\t\treturn this.ripProcessor.finishGeneratedSyncFile(__ripRequest, __ripContext, ")
+					.append(destinationParamOf(method).javaParamName).append(", ").append(errorTypeLiteral)
+					.append(", ").append(retryArgsLiteral).append(");\n");
+			break;
+		case RIP_RESPONSE:
+			if ("byte[]".equals(method.returnModel.innerTypeName)) {
+				out.append(
+						"\t\treturn this.ripProcessor.finishGeneratedSyncRipResponseBytes(__ripRequest, __ripContext, ")
+						.append(errorTypeLiteral).append(", ").append(retryArgsLiteral).append(");\n");
+			} else {
+				out.append("\t\tcom.shri.restinpeace.RipResponse<?> __ripResult = this.ripProcessor.finishGeneratedSyncRipResponse(__ripRequest, __ripContext, ")
+						.append(method.returnModel.innerTypeName).append(".class, ").append(errorTypeLiteral)
+						.append(", ").append(retryArgsLiteral).append(");\n");
+				out.append("\t\treturn (").append(method.returnModel.javaTypeName).append(") __ripResult;\n");
+			}
+			break;
+		default:
+			throw new IllegalStateException("Unhandled return kind: " + method.returnModel.kind);
 		}
 		out.append("\t}\n\n");
+	}
+
+	private static ParamModel destinationParamOf(MethodModel method) {
+		for (ParamModel param : method.params) {
+			if (param.kind == ParamKind.DESTINATION) {
+				return param;
+			}
+		}
+		throw new IllegalStateException("Expected a @Destination parameter for a File return type.");
 	}
 
 	private void appendParamApplication(StringBuilder out, ParamModel param) {
@@ -500,6 +606,13 @@ public class RestClientProcessor extends AbstractProcessor {
 		case UPLOAD_PROGRESS:
 			out.append("\t\tif (").append(param.javaParamName)
 					.append(" != null) { this.ripProcessor.applyUploadMonitor(__ripMultipart, ")
+					.append(param.javaParamName).append("); }\n");
+			return;
+		case DESTINATION:
+			return; // consumed directly when calling finishGeneratedSyncFile
+		case DOWNLOAD_PROGRESS:
+			out.append("\t\tif (").append(param.javaParamName)
+					.append(" != null) { this.ripProcessor.applyDownloadMonitor(__ripRequest, ")
 					.append(param.javaParamName).append("); }\n");
 			return;
 		default:
@@ -585,7 +698,24 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private enum ParamKind {
-		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL, PART, PART_MAP, UPLOAD_PROGRESS
+		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL, PART, PART_MAP, UPLOAD_PROGRESS, DESTINATION,
+		DOWNLOAD_PROGRESS
+	}
+
+	private enum ReturnKind {
+		VOID, PLAIN, BYTES, FILE, RIP_RESPONSE
+	}
+
+	private static final class ReturnModel {
+		final ReturnKind kind;
+		final String javaTypeName;
+		final String innerTypeName;
+
+		ReturnModel(ReturnKind kind, String javaTypeName, String innerTypeName) {
+			this.kind = kind;
+			this.javaTypeName = javaTypeName;
+			this.innerTypeName = innerTypeName;
+		}
 	}
 
 	private static final class ParamModel {
@@ -613,7 +743,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String name;
 		final HTTPMethod httpMethod;
 		final String urlTemplate;
-		final String returnTypeName;
+		final ReturnModel returnModel;
 		final List<ParamModel> params;
 		final TimeoutModel timeout;
 		final RetryModel retry;
@@ -621,13 +751,13 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String errorTypeClassName;
 		final boolean isMultipart;
 
-		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, String returnTypeName,
+		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, ReturnModel returnModel,
 				List<ParamModel> params, TimeoutModel timeout, RetryModel retry, String[] headerEntries,
 				String errorTypeClassName, boolean isMultipart) {
 			this.name = name;
 			this.httpMethod = httpMethod;
 			this.urlTemplate = urlTemplate;
-			this.returnTypeName = returnTypeName;
+			this.returnModel = returnModel;
 			this.params = params;
 			this.timeout = timeout;
 			this.retry = retry;
