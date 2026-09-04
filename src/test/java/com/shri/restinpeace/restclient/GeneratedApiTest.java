@@ -170,11 +170,25 @@ class GeneratedApiTest {
 	}
 
 	@Test
-	void getClient_withMultipartMethod_fallsBackToReflectiveProxy() {
-		assertThrows(ClassNotFoundException.class,
-				() -> Class.forName("com.shri.restinpeace.restclient.GeneratedApiWithMultipart_RipImpl"));
-
+	void getClient_withMultipartMethod_generatesAndSendsPartValue() {
 		GeneratedApiWithMultipart api = RIP.getClient(GeneratedApiWithMultipart.class);
+
+		assertTrue(api.getClass().getName().endsWith("_RipImpl"),
+				"Expected the compile-time-generated implementation, got " + api.getClass().getName());
+
+		api.post(port, "shrinivas");
+
+		String body = LAST_REQUEST.get().body;
+		assertTrue(body.contains("name=\"name\""), "Expected the part name in the multipart body, got: " + body);
+		assertTrue(body.contains("shrinivas"), "Expected the part value in the multipart body, got: " + body);
+	}
+
+	@Test
+	void getClient_withAsyncReturnMethod_fallsBackToReflectiveProxy() {
+		assertThrows(ClassNotFoundException.class,
+				() -> Class.forName("com.shri.restinpeace.restclient.GeneratedApiWithAsyncReturn_RipImpl"));
+
+		GeneratedApiWithAsyncReturn api = RIP.getClient(GeneratedApiWithAsyncReturn.class);
 
 		assertTrue(api.getClass().getName().contains("Proxy"),
 				"Expected the reflective proxy fallback, got " + api.getClass().getName());

@@ -95,6 +95,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Compile-time proxy generation now also covers `@Headers`, `@HeaderParam`,
   `@HeaderMap`, `@QueryMap`, required-or-defaulted `@QueryParam`/
   `@HeaderParam`, `@Body`, `@Url`, and `@ErrorType`.
+- Compile-time proxy generation now also covers `@Multipart`, `@Part`,
+  `@PartMap`, and `UploadProgressListener`.
 
 ### Changed
 

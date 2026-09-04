@@ -14,15 +14,16 @@ zero extra configuration.
   return type). Building this project generates a real
   `ItemApi_RipImpl.java` under `target/generated-sources/annotations/` -
   open it after building to see exactly what gets produced.
-- **`UnsupportedApi`** uses `@Multipart`/`@Part`, outside that shape, to show
-  the fallback: no generated class exists for it at all, and
-  `RIP.getClient(UnsupportedApi.class)` returns the same reflective
-  `java.lang.reflect.Proxy` every `@RestClient` interface used before this
-  feature existed - a call through it still works correctly. (Earlier this
-  used `@HeaderParam`, but step 2 of the design added support for headers,
-  query/header maps, `@Body`, `@Url`, and `@ErrorType` - see
+- **`UnsupportedApi`** uses a `CompletableFuture<String>` return type,
+  outside that shape, to show the fallback: no generated class exists for
+  it at all, and `RIP.getClient(UnsupportedApi.class)` returns the same
+  reflective `java.lang.reflect.Proxy` every `@RestClient` interface used
+  before this feature existed - a call through it still works correctly.
+  (Earlier this used `@HeaderParam`, then `@Multipart`/`@Part`, but step 2
+  of the design added support for both - see
   `docs/design/compile-time-proxy-generation.md` - so this moved to a
-  feature still genuinely unsupported.)
+  feature still genuinely unsupported: return-type expansion is a later
+  step 2 slice.)
 - **`Main`** starts a throwaway local HTTP server, calls both interfaces,
   and asserts (by throwing if anything's wrong) that both paths behave as
   described above.
@@ -61,9 +62,9 @@ drifts from whatever you just installed.
 ## Try it yourself
 
 Add a method to `ItemApi` using a feature outside the supported shape (e.g.
-`@Multipart`/`@Part`, like `UnsupportedApi`, or a `CompletableFuture<String>`
-return type) and rebuild - watch `ItemApi_RipImpl.java` disappear from
-`target/generated-sources/` as the *whole interface* falls back to the
-reflective proxy, per the "generating a partially-correct implementation
-would be worse than not generating one at all" rule described in the design
-doc.
+a `CompletableFuture<String>` return type, like `UnsupportedApi`, or a
+`byte[]`/`File` return type) and rebuild - watch `ItemApi_RipImpl.java`
+disappear from `target/generated-sources/` as the *whole interface* falls
+back to the reflective proxy, per the "generating a partially-correct
+implementation would be worse than not generating one at all" rule
+described in the design doc.
