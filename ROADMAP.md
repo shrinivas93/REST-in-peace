@@ -199,7 +199,8 @@ up.
       JSON/raw-string via `@Body` or multipart).
 - [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
       instead of hitting the network every time.
-- [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** — an
+- [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** (steps
+      1-2 done, steps 3-4 remain) — an
       annotation processor that generates a real class implementing each
       `@RestClient` interface at build time (like Dagger/MapStruct do)
       instead of `Proxy.newProxyInstance` + reflection at runtime. Makes the
@@ -294,6 +295,34 @@ up.
             parameter is required whenever the return type is `File`.
             Only `CompletableFuture<T>` (async) remains unsupported -
             the last item in §5's table. See the design doc's §9.7.
+      - [x] **Step 2, fifth and final slice: `CompletableFuture<T>` (async),
+            for every return-type shape** — the last item in §5's table,
+            completing step 2's full feature parity. Unlike every earlier
+            slice, this doesn't add a new `ReturnKind` case - a
+            `CompletableFuture<T>` can wrap any of the existing
+            `PLAIN`/`BYTES`/`FILE`/`RIP_RESPONSE` kinds, so
+            `RestRequestProcessor` gained one async sibling per existing
+            sync terminal method (`finishGeneratedAsync`,
+            `finishGeneratedAsyncBytes`, `finishGeneratedAsyncFile`,
+            `finishGeneratedAsyncRipResponse`,
+            `finishGeneratedAsyncRipResponseBytes`), each reusing the same
+            `executeAsyncWithRetry`/`decodeOrThrow` machinery the
+            reflective path's own async support already shares.
+            `ReturnModel` gained an `isAsync` flag (detected via the same
+            type-erasure comparison `RipResponse<T>` detection uses) and
+            its `innerTypeName` field was renamed to `decodeTypeName` -
+            the class to decode the response body into, which now
+            genuinely differs from the method's own return type once
+            `CompletableFuture` is involved. `ReturnKind.VOID` was folded
+            into `PLAIN` (distinguished by `decodeTypeName` being
+            `"void"`) since it needed no separate dispatch case anymore.
+            With every item in §5's table now supported, a new
+            permanently-unsupported regression interface,
+            `GeneratedApiWithListReturn` (a generic `List<String>` return
+            type - never decodable via a single `Class<?>` literal), and
+            sample-project example replaced the now-obsolete
+            `CompletableFuture`-based ones. **Step 2 (full feature parity)
+            is now complete.** See the design doc's §9.8.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small

@@ -26,12 +26,6 @@ import com.sun.net.httpserver.HttpServer;
 public final class Main {
 
 	public static void main(String[] args) throws Exception {
-		// UnsupportedApi's fallback call below returns a CompletableFuture, which
-		// exercises Unirest's async client - opting into daemon threads for it so
-		// this short-lived program can exit on its own afterward, instead of
-		// hanging on Unirest's own non-daemon async I/O threads.
-		RIP.useDaemonThreadsForAsync();
-
 		HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
 		server.createContext("/", exchange -> {
 			String response = "path=" + exchange.getRequestURI().getPath() + ";query="
@@ -71,9 +65,12 @@ public final class Main {
 			}
 			System.out.println("Call succeeded, response: " + result);
 
-			// 4. Confirm an interface using an unsupported feature (a CompletableFuture
+			// 4. Confirm an interface using an unsupported feature (a generic List
 			// return type) falls back to the reflective proxy instead of a broken
 			// partial generation - no UnsupportedApi_RipImpl-style class should exist.
+			// (Unlike ItemApi's call above, this one isn't invoked here: the local
+			// server returns plain text, not JSON, and decoding that into a List is
+			// not the point of this demo - only the fallback itself is.)
 			try {
 				Class.forName("com.example.consumer.UnsupportedApi_RipImpl");
 				throw new IllegalStateException("Expected no generated class for UnsupportedApi, but one exists.");
@@ -87,8 +84,6 @@ public final class Main {
 								+ unsupportedApi.getClass().getName());
 			}
 			System.out.println("RIP.getClient(UnsupportedApi.class) fell back to: " + unsupportedApi.getClass());
-			String unsupportedResult = unsupportedApi.getItem(port, "abc").get();
-			System.out.println("Reflective-proxy call still works, response: " + unsupportedResult);
 
 			System.out
 					.println("VERIFICATION PASSED: compile-time proxy generation works for a real downstream consumer.");

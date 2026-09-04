@@ -100,6 +100,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Compile-time proxy generation now also covers `byte[]`, `File` (with
   `@Destination`/`DownloadProgressListener`), and `RipResponse<T>` return
   types - only `CompletableFuture<T>` (async) remains unsupported.
+- Compile-time proxy generation now also covers `CompletableFuture<T>`
+  (async), for every supported return-type shape - `String`/POJO,
+  `byte[]`, `File`, and `RipResponse<T>` alike. This was the last item on
+  the design doc's feature-parity table: compile-time proxy generation now
+  has full feature parity with the reflective proxy.
 
 ### Changed
 

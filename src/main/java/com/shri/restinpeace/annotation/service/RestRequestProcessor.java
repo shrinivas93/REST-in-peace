@@ -381,6 +381,67 @@ public class RestRequestProcessor {
 		return result;
 	}
 
+	/** The generated-code counterpart of {@link #processAsync}'s plain (non-{@code byte[]}/{@code File}/{@code RipResponse}) branch. */
+	public CompletableFuture<?> finishGeneratedAsync(HttpRequest<?> request, RequestContext context,
+			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, returnType, context, interceptedRequest::asStringAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> decodeOrThrow(response, errorType, returnType));
+	}
+
+	/** The generated-code counterpart of {@link #processAsync}'s {@code byte[]}-inner-type branch. */
+	public CompletableFuture<byte[]> finishGeneratedAsyncBytes(HttpRequest<?> request, RequestContext context,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> (byte[]) decodeOrThrow(response, errorType, byte[].class));
+	}
+
+	/** The generated-code counterpart of {@link #processAsync}'s {@code File}-inner-type branch. */
+	public CompletableFuture<File> finishGeneratedAsyncFile(HttpRequest<?> request, RequestContext context,
+			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
+	}
+
+	/**
+	 * The generated-code counterpart of {@link #processAsync}'s
+	 * {@code RipResponse<T>}-inner-type branch for a {@code String}/POJO
+	 * {@code T}. Erased to {@code CompletableFuture<RipResponse<?>>};
+	 * generated code casts the result to its own exact
+	 * {@code CompletableFuture<RipResponse<T>>} return type.
+	 */
+	public CompletableFuture<RipResponse<?>> finishGeneratedAsyncRipResponse(HttpRequest<?> request,
+			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
+			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, innerType, context, interceptedRequest::asStringAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> (RipResponse<?>) wrapResponse(response,
+						decodeOrThrow(response, errorType, innerType)));
+	}
+
+	/** The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedAsyncRipResponse}, for a {@code CompletableFuture<RipResponse<byte[]>>} return type. */
+	public CompletableFuture<RipResponse<byte[]>> finishGeneratedAsyncRipResponseBytes(HttpRequest<?> request,
+			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus).thenApply(response -> {
+					@SuppressWarnings("unchecked")
+					RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
+							decodeOrThrow(response, errorType, byte[].class));
+					return result;
+				});
+	}
+
 	private String applyBaseUrlLiteral(String url, String interfaceBaseUrl) {
 		if (isAbsoluteUrl(url)) {
 			return url;

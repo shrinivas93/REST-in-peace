@@ -1,22 +1,25 @@
 # Design: compile-time proxy generation
 
-Status: **step 1 landed, step 2 nearly done** (see §8's rollout plan -
+Status: **step 1 and step 2 both fully landed** (see §8's rollout plan -
 `RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
 `GeneratedApiTest`). Step 2's slices landed: `@Timeout`/`@Retry` (§9.4);
 `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/required-or-defaulted
 `@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5), which also replaced the
 original single `processGeneratedRequest` entry point with a
 sequence-of-calls design (§9.5.1); `@Multipart`/`@Part`/`@PartMap`/
-`UploadProgressListener` (§9.6); then `byte[]`/`File`+`@Destination`+
-`DownloadProgressListener`/`RipResponse<T>` return types (§9.7). Still
-unsupported: `CompletableFuture<T>` (async) for any return-type shape - a
-method returning one still falls the whole interface back to the
-reflective proxy. That's the only item left in §5's table. The
-compile-testing validation suite and the native-image smoke test (steps
-3-4) are not started. Roadmap item: "Compile-time proxy generation instead
-of a JDK dynamic proxy" in `ROADMAP.md`. The sections below are mostly the
-original sketch; §9 records what actually landed and the real deviations
-from the sketch, discovered only while implementing it.
+`UploadProgressListener` (§9.6); `byte[]`/`File`+`@Destination`+
+`DownloadProgressListener`/`RipResponse<T>` return types (§9.7); then
+`CompletableFuture<T>` (async), for every one of those return-type shapes
+(§9.8) - the last item in §5's table. What remains permanently
+unsupported - not a future slice, but excluded from §5's table from the
+start - is a generic collection return type (e.g. `List<String>`), since
+it isn't decodable via a single `Class<?>` literal the way every supported
+return type is. The compile-testing validation suite and the native-image
+smoke test (steps 3-4) are not started. Roadmap item: "Compile-time proxy
+generation instead of a JDK dynamic proxy" in `ROADMAP.md`. The sections
+below are mostly the original sketch; §9 records what actually landed and
+the real deviations from the sketch, discovered only while implementing
+it.
 
 ## 1. Problem
 
@@ -783,3 +786,108 @@ binary-response test pattern. `GeneratedApiWithAsyncReturn` (added in
 §9.6) continues to serve as the "still correctly disqualifies" regression
 coverage, now for the one feature genuinely still missing:
 `CompletableFuture<T>`.
+
+### 9.8 Step 2, fifth and final slice: `CompletableFuture<T>` (async), for every return-type shape
+
+The last item in §5's table, and the only slice to widen the *set of
+return-type shapes* to a genuinely orthogonal dimension rather than adding
+a new one to the list: `CompletableFuture<T>` isn't a sibling of
+`PLAIN`/`BYTES`/`FILE`/`RIP_RESPONSE`, it's each of them wrapped - a
+method can return a plain `String` synchronously or asynchronously, and
+the same is true of `byte[]`, `File`, and `RipResponse<T>`. That meant
+doubling `RestRequestProcessor`'s terminal-call surface (one async sibling
+per existing sync terminal method) rather than adding a fifth `ReturnKind`
+case to `RestClientProcessor`'s dispatch switch.
+
+#### 9.8.1 Five new async terminal methods, mirroring the five sync ones
+
+`RestRequestProcessor` gained `finishGeneratedAsync`,
+`finishGeneratedAsyncBytes`, `finishGeneratedAsyncFile`,
+`finishGeneratedAsyncRipResponse`, and
+`finishGeneratedAsyncRipResponseBytes` - each the direct async counterpart
+of an existing `finishGeneratedSync*` method, built the same way the
+reflective path's own `processAsync` already works: apply interceptors,
+call `executeAsyncWithRetry` (which already existed, used by the
+reflective path, and needed no changes) with the request's
+`::asStringAsync`/`::asBytesAsync` method reference instead of a
+synchronous call, then `.thenApply(response -> decodeOrThrow(...))` to
+chain the same decoding logic every sync path already shares, onto the
+returned `CompletableFuture` instead of running it inline. No new decoding
+or retry logic was needed anywhere - the entire slice is "run the existing
+machinery on a future instead of a value."
+
+#### 9.8.2 `ReturnModel` gained `isAsync`; `decodeTypeName` replaces `innerTypeName`; `VOID` folded into `PLAIN`
+
+Detecting `CompletableFuture<T>` needs the same "compare the type's
+erasure against a known raw type" idiom §9.7.1 introduced for
+`RipResponse<T>` - here against `java.util.concurrent.CompletableFuture` -
+but unlike `RipResponse<T>`, a `CompletableFuture<T>`'s `T` isn't itself a
+new terminal shape; it's any of the *existing* four kinds, classified the
+same way whether or not it's wrapped. `returnModelOf` was split into an
+outer method that checks for the `CompletableFuture` wrapper first
+(recording `isAsync = true` and recursing into a new
+`nonAsyncReturnModelOf(TypeMirror)` helper for the wrapped type argument)
+and falls through to the same helper directly, unwrapped, when there's no
+`CompletableFuture` - so a method's `ReturnKind` is always classified by
+the same code regardless of async-ness.
+
+This also exposed that `ReturnModel`'s `innerTypeName` field, added in
+§9.7.1 specifically for `RipResponse<T>`'s wrapped inner type, was really
+serving double duty: it was also being used, for every other kind, as
+"the type to decode the response body into" - which is `javaTypeName`
+itself for `PLAIN`/`BYTES`/`FILE`, but diverges from it once a
+`CompletableFuture` is involved (a method returning
+`CompletableFuture<String>` has `javaTypeName =
+"java.util.concurrent.CompletableFuture<java.lang.String>"` but must still
+decode into plain `String.class`). Renamed to `decodeTypeName` to name
+what it actually is - "the literal `Class<?>` to decode the response body
+into" - independent of `isAsync`, since wrapping a return type in a
+`CompletableFuture` never changes what class the body decodes into, only
+what the generated method's own signature returns and which
+`finishGenerated*` method it calls. `ReturnKind.VOID` was folded into
+`PLAIN` at the same time (distinguished, now that a dedicated dispatch
+case is no longer worth keeping for it, purely by `decodeTypeName` being
+the literal string `"void"`), since async and sync `void`-returning
+methods otherwise needed no different handling from `String`/POJO ones
+beyond that string check already present in `finishGeneratedSync`/
+`finishGeneratedAsync`.
+
+#### 9.8.3 What's now real and testable, and what's permanently not
+
+`GeneratedApiWithAsyncReturn` - the "still correctly disqualifies"
+regression interface since §9.6 - is repurposed as a *positive* test
+(the same pattern every terminal "still unsupported" interface in this
+package has followed as its feature graduated: `GeneratedApiWithHeaders`
+in §9.5, `GeneratedApiWithMultipart` in §9.6), asserting a real
+`_RipImpl` is generated for a `CompletableFuture<String>`-returning
+method and that calling it and blocking on `.get(5, TimeUnit.SECONDS)`
+produces the correct decoded result.
+
+Since every item in §5's table is now supported, a new regression
+interface was needed for a feature that is not merely "not yet
+implemented" but genuinely can never be: `GeneratedApiWithListReturn`,
+using a `List<String>` return type. `nonAsyncReturnModelOf` returns `null`
+for it (it's a `TypeKind.DECLARED` type with a non-empty type-argument
+list that matches none of the recognized raw types), so no
+`_RipImpl` is generated and `RIP.getClient(...)` falls back to the
+reflective proxy - the reflective path can still handle it, since
+`method.getReturnType()` erases to plain `List` and Jackson can
+deserialize a JSON array into a raw `List`, but the compile-time
+generator has no way to hand `decodeBody` anything more specific than a
+`Class<?>` literal, and `List.class` alone would lose the element type
+entirely for any consumer that cares.
+
+The in-repo sample consumer's `UnsupportedApi` needed updating for the
+third time, for the same reason as §9.5 and §9.6 - it had been moved to
+`CompletableFuture<String>` in §9.6, which this slice made real - so it
+now demonstrates the fallback via the same `List<String>` return type as
+`GeneratedApiWithListReturn`. This also let the sample drop the
+`RIP.useDaemonThreadsForAsync()` workaround §9.6 added: with nothing left
+in the sample exercising Unirest's async client, the non-daemon-thread
+hang that workaround existed for no longer applies. The sample's fallback
+demonstration for `UnsupportedApi` now stops at confirming no generated
+class exists and that `RIP.getClient(...)` returns the reflective proxy -
+it doesn't call through it, since the sample's plain-text local server
+response isn't valid JSON and decoding it into a `List` would fail,
+which was never the point of that demonstration (only the fallback
+itself is).
