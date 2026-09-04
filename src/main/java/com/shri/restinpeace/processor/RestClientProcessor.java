@@ -50,17 +50,16 @@ import com.shri.restinpeace.constant.HTTPMethod;
 /**
  * Generates a compile-time implementation ({@code <Interface>_RipImpl}) of
  * every {@code @RestClient} interface whose methods all fall within the
- * currently-supported shape: a single fixed HTTP verb, {@link PathParam
- * @PathParam}/{@link QueryParam @QueryParam}/{@link HeaderParam
- * @HeaderParam}/{@link QueryMap @QueryMap}/{@link HeaderMap @HeaderMap}/
- * {@link Body @Body}/{@link Url @Url} parameters, optional
- * {@link Timeout @Timeout}/{@link Retry @Retry}/{@link Headers @Headers}/
- * {@link ErrorType @ErrorType}, and a {@code void}, {@code String}, or
- * non-generic POJO return type. {@code RIP.getClient(...)} prefers this
- * generated class over the reflective {@code java.lang.reflect.Proxy} it
- * falls back to for an interface this processor didn't (fully) generate for
- * - see {@code docs/design/compile-time-proxy-generation.md} for the full
- * design this is step 2 of.
+ * currently-supported shape: a single fixed HTTP verb, {@code @PathParam}/
+ * {@code @QueryParam}/{@code @HeaderParam}/{@code @QueryMap}/
+ * {@code @HeaderMap}/{@code @Body}/{@code @Url} parameters, optional
+ * {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}, and a
+ * {@code void}, {@code String}, or non-generic POJO return type.
+ * {@code RIP.getClient(...)} prefers this generated class over the
+ * reflective {@code java.lang.reflect.Proxy} it falls back to for an
+ * interface this processor didn't (fully) generate for - see
+ * {@code docs/design/compile-time-proxy-generation.md} for the full design
+ * this is step 2 of.
  *
  * <p>
  * An interface with a nested/private declaration, a default or static
