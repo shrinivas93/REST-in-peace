@@ -264,33 +264,63 @@ public class RestClientProcessor extends AbstractProcessor {
 
 	private ReturnModel returnModelOf(ExecutableElement methodElement) {
 		TypeMirror returnType = methodElement.getReturnType();
-		if (returnType.getKind() == TypeKind.VOID) {
-			return new ReturnModel(ReturnKind.VOID, "void", "");
+		if (returnType.getKind() == TypeKind.DECLARED) {
+			DeclaredType declaredReturnType = (DeclaredType) returnType;
+			String rawTypeName = processingEnv.getTypeUtils().erasure(declaredReturnType).toString();
+			if ("java.util.concurrent.CompletableFuture".equals(rawTypeName)) {
+				if (declaredReturnType.getTypeArguments().size() != 1) {
+					return null; // a raw CompletableFuture with no type parameter isn't decodable
+				}
+				ReturnModel innerModel = nonAsyncReturnModelOf(declaredReturnType.getTypeArguments().get(0));
+				return innerModel == null ? null
+						: new ReturnModel(innerModel.kind, true, returnType.toString(), innerModel.decodeTypeName);
+			}
 		}
-		if (returnType.getKind() == TypeKind.ARRAY) {
+		ReturnModel model = nonAsyncReturnModelOf(returnType);
+		return model == null ? null : new ReturnModel(model.kind, false, returnType.toString(), model.decodeTypeName);
+	}
+
+	/**
+	 * Classifies a return type - or a {@code CompletableFuture<T>}'s
+	 * {@code T} - as {@code BYTES}/{@code FILE}/{@code RIP_RESPONSE}/
+	 * {@code PLAIN}, and names the {@code Class<?>} to decode the response
+	 * body into ({@code decodeTypeName} - the wrapped {@code T} for
+	 * {@code RIP_RESPONSE}, meaningless for {@code BYTES}/{@code FILE}
+	 * since those always decode as {@code byte[]}). {@code void}/
+	 * {@code Void} is {@code PLAIN} - {@code decodeBody} already treats
+	 * both as "no body to decode" - since a generic type argument can only
+	 * ever be {@code Void}, never the primitive {@code void} a plain
+	 * (non-{@code CompletableFuture}) method can return.
+	 */
+	private ReturnModel nonAsyncReturnModelOf(TypeMirror type) {
+		if (type.getKind() == TypeKind.VOID) {
+			return new ReturnModel(ReturnKind.PLAIN, false, "void", "void");
+		}
+		if (type.getKind() == TypeKind.ARRAY) {
 			// byte[] is the only supported array return type; anything else (int[], ...)
 			// isn't decodable and was never supported by the reflective path either.
-			return "byte[]".equals(returnType.toString()) ? new ReturnModel(ReturnKind.BYTES, "byte[]", "") : null;
+			return "byte[]".equals(type.toString()) ? new ReturnModel(ReturnKind.BYTES, false, "byte[]", "") : null;
 		}
-		if (returnType.getKind() != TypeKind.DECLARED) {
+		if (type.getKind() != TypeKind.DECLARED) {
 			return null; // some other primitive - not supported
 		}
-		DeclaredType declaredReturnType = (DeclaredType) returnType;
-		String rawTypeName = processingEnv.getTypeUtils().erasure(declaredReturnType).toString();
+		DeclaredType declaredType = (DeclaredType) type;
+		String rawTypeName = processingEnv.getTypeUtils().erasure(declaredType).toString();
 		if ("com.shri.restinpeace.RipResponse".equals(rawTypeName)) {
-			if (declaredReturnType.getTypeArguments().size() != 1) {
+			if (declaredType.getTypeArguments().size() != 1) {
 				return null; // a raw RipResponse with no type parameter isn't decodable
 			}
-			String innerTypeName = returnTypeArgumentNameOf(declaredReturnType.getTypeArguments().get(0));
-			return innerTypeName == null ? null : new ReturnModel(ReturnKind.RIP_RESPONSE, returnType.toString(), innerTypeName);
+			String innerTypeName = returnTypeArgumentNameOf(declaredType.getTypeArguments().get(0));
+			return innerTypeName == null ? null
+					: new ReturnModel(ReturnKind.RIP_RESPONSE, false, type.toString(), innerTypeName);
 		}
-		if (!declaredReturnType.getTypeArguments().isEmpty()) {
-			return null; // some other generic return type (e.g. List<User>, CompletableFuture<T>) isn't supported yet
+		if (!declaredType.getTypeArguments().isEmpty()) {
+			return null; // some other generic type (e.g. List<User>, a nested CompletableFuture) isn't supported
 		}
 		if ("java.io.File".equals(rawTypeName)) {
-			return new ReturnModel(ReturnKind.FILE, "java.io.File", "");
+			return new ReturnModel(ReturnKind.FILE, false, "java.io.File", "");
 		}
-		return new ReturnModel(ReturnKind.PLAIN, returnType.toString(), "");
+		return new ReturnModel(ReturnKind.PLAIN, false, type.toString(), type.toString());
 	}
 
 	/**
@@ -509,34 +539,45 @@ public class RestClientProcessor extends AbstractProcessor {
 		String errorTypeLiteral = method.errorTypeClassName == null ? "null" : method.errorTypeClassName + ".class";
 		String retryArgsLiteral = method.retry.hasRetry + ", " + method.retry.times + ", " + method.retry.delayMillis
 				+ "L, " + method.retry.backoffMultiplier + ", " + intArrayLiteral(method.retry.retryOnStatus);
+		boolean async = method.returnModel.isAsync;
 
 		switch (method.returnModel.kind) {
-		case VOID:
 		case PLAIN:
-			out.append("\t\tObject __ripResult = this.ripProcessor.finishGeneratedSync(__ripRequest, __ripContext, ")
-					.append(method.returnModel.javaTypeName).append(".class, ").append(errorTypeLiteral)
-					.append(", ").append(retryArgsLiteral).append(");\n");
-			if (method.returnModel.kind != ReturnKind.VOID) {
+			String finishPlain = async ? "finishGeneratedAsync" : "finishGeneratedSync";
+			String resultType = async ? "java.util.concurrent.CompletableFuture<?>" : "Object";
+			out.append("\t\t").append(resultType).append(" __ripResult = this.ripProcessor.").append(finishPlain)
+					.append("(__ripRequest, __ripContext, ").append(method.returnModel.decodeTypeName)
+					.append(".class, ").append(errorTypeLiteral).append(", ").append(retryArgsLiteral)
+					.append(");\n");
+			if (!"void".equals(method.returnModel.decodeTypeName) || async) {
 				out.append("\t\treturn (").append(method.returnModel.javaTypeName).append(") __ripResult;\n");
 			}
 			break;
 		case BYTES:
-			out.append("\t\treturn this.ripProcessor.finishGeneratedSyncBytes(__ripRequest, __ripContext, ")
-					.append(errorTypeLiteral).append(", ").append(retryArgsLiteral).append(");\n");
+			out.append("\t\treturn this.ripProcessor.")
+					.append(async ? "finishGeneratedAsyncBytes" : "finishGeneratedSyncBytes")
+					.append("(__ripRequest, __ripContext, ").append(errorTypeLiteral).append(", ")
+					.append(retryArgsLiteral).append(");\n");
 			break;
 		case FILE:
-			out.append("\t\treturn this.ripProcessor.finishGeneratedSyncFile(__ripRequest, __ripContext, ")
-					.append(destinationParamOf(method).javaParamName).append(", ").append(errorTypeLiteral)
-					.append(", ").append(retryArgsLiteral).append(");\n");
+			out.append("\t\treturn this.ripProcessor.")
+					.append(async ? "finishGeneratedAsyncFile" : "finishGeneratedSyncFile")
+					.append("(__ripRequest, __ripContext, ").append(destinationParamOf(method).javaParamName)
+					.append(", ").append(errorTypeLiteral).append(", ").append(retryArgsLiteral).append(");\n");
 			break;
 		case RIP_RESPONSE:
-			if ("byte[]".equals(method.returnModel.innerTypeName)) {
-				out.append(
-						"\t\treturn this.ripProcessor.finishGeneratedSyncRipResponseBytes(__ripRequest, __ripContext, ")
-						.append(errorTypeLiteral).append(", ").append(retryArgsLiteral).append(");\n");
+			if ("byte[]".equals(method.returnModel.decodeTypeName)) {
+				out.append("\t\treturn this.ripProcessor.")
+						.append(async ? "finishGeneratedAsyncRipResponseBytes" : "finishGeneratedSyncRipResponseBytes")
+						.append("(__ripRequest, __ripContext, ").append(errorTypeLiteral).append(", ")
+						.append(retryArgsLiteral).append(");\n");
 			} else {
-				out.append("\t\tcom.shri.restinpeace.RipResponse<?> __ripResult = this.ripProcessor.finishGeneratedSyncRipResponse(__ripRequest, __ripContext, ")
-						.append(method.returnModel.innerTypeName).append(".class, ").append(errorTypeLiteral)
+				String finishRipResponse = async ? "finishGeneratedAsyncRipResponse" : "finishGeneratedSyncRipResponse";
+				String ripResultType = async ? "java.util.concurrent.CompletableFuture<com.shri.restinpeace.RipResponse<?>>"
+						: "com.shri.restinpeace.RipResponse<?>";
+				out.append("\t\t").append(ripResultType).append(" __ripResult = this.ripProcessor.")
+						.append(finishRipResponse).append("(__ripRequest, __ripContext, ")
+						.append(method.returnModel.decodeTypeName).append(".class, ").append(errorTypeLiteral)
 						.append(", ").append(retryArgsLiteral).append(");\n");
 				out.append("\t\treturn (").append(method.returnModel.javaTypeName).append(") __ripResult;\n");
 			}
@@ -703,18 +744,20 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private enum ReturnKind {
-		VOID, PLAIN, BYTES, FILE, RIP_RESPONSE
+		PLAIN, BYTES, FILE, RIP_RESPONSE
 	}
 
 	private static final class ReturnModel {
 		final ReturnKind kind;
+		final boolean isAsync;
 		final String javaTypeName;
-		final String innerTypeName;
+		final String decodeTypeName;
 
-		ReturnModel(ReturnKind kind, String javaTypeName, String innerTypeName) {
+		ReturnModel(ReturnKind kind, boolean isAsync, String javaTypeName, String decodeTypeName) {
 			this.kind = kind;
+			this.isAsync = isAsync;
 			this.javaTypeName = javaTypeName;
-			this.innerTypeName = innerTypeName;
+			this.decodeTypeName = decodeTypeName;
 		}
 	}
 

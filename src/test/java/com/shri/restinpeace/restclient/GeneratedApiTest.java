@@ -16,6 +16,9 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -195,11 +198,24 @@ class GeneratedApiTest {
 	}
 
 	@Test
-	void getClient_withAsyncReturnMethod_fallsBackToReflectiveProxy() {
-		assertThrows(ClassNotFoundException.class,
-				() -> Class.forName("com.shri.restinpeace.restclient.GeneratedApiWithAsyncReturn_RipImpl"));
-
+	void getClient_withAsyncReturnMethod_generatesAndCompletesFuture()
+			throws InterruptedException, ExecutionException, TimeoutException {
 		GeneratedApiWithAsyncReturn api = RIP.getClient(GeneratedApiWithAsyncReturn.class);
+
+		assertTrue(api.getClass().getName().endsWith("_RipImpl"),
+				"Expected the compile-time-generated implementation, got " + api.getClass().getName());
+
+		String result = api.get(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertEquals("path=/items/abc;query=null", result);
+	}
+
+	@Test
+	void getClient_withListReturnMethod_fallsBackToReflectiveProxy() {
+		assertThrows(ClassNotFoundException.class,
+				() -> Class.forName("com.shri.restinpeace.restclient.GeneratedApiWithListReturn_RipImpl"));
+
+		GeneratedApiWithListReturn api = RIP.getClient(GeneratedApiWithListReturn.class);
 
 		assertTrue(api.getClass().getName().contains("Proxy"),
 				"Expected the reflective proxy fallback, got " + api.getClass().getName());
