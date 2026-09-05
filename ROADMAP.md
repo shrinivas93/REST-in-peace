@@ -310,11 +310,22 @@ for reference rather than tracked in code. Check items off as they land.
             `Content-Disposition`/`Content-Type` sub-headers - verified
             directly against Unirest's own real wire format (not assumed),
             passing on the first attempt.
+      - [x] **Follow-up: verification sugar - `countOf(httpMethod,
+            pathTemplate)`.** Answers "was this endpoint called, and how
+            many times" without manually filtering
+            `getRecordedRequests()` or looping over `takeRequest()`.
+            Deliberately a plain `int`-returning primitive a test wraps in
+            its own `assertEquals(...)`, rather than a `server.verify(...)`
+            assertion DSL - this library hasn't added a custom assertion
+            framework anywhere else, and the roadmap's own original
+            phrasing for this item was just a sketch, not a committed
+            API shape. Reuses `Route`'s private path-template-to-`Pattern`
+            compilation (accessible from the enclosing `MockRestServer`
+            class, since a nested class's private members are visible to
+            its enclosing class in Java) rather than duplicating that
+            logic.
             - **Good to have** - real value, but each has a workaround
               today, so none is blocking:
-              - Fluent verification sugar (`server.verify(GET,
-                "/orders/{id}")`) instead of manual `takeRequest()` plus
-                field-by-field asserts.
               - A route-coverage assertion (did every registered route
                 get hit).
             - **Not needed now** - niche or speculative; no known use
