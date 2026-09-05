@@ -118,6 +118,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compile-time counterpart of that validator. This was the exit criterion
   for the "compile-time proxy generation" roadmap item - full feature
   parity plus this validation suite - which is now complete.
+- `com.shri.restinpeace.mock.MockRestServer` - a real, local HTTP server for
+  unit-testing code that calls a `@RestClient` interface without a real
+  network dependency. `MockRestServer.on(...)` registers a sticky response
+  for a method+path (with `{name}` placeholder matching); `.enqueue(...)`
+  scripts a one-time sequence of responses (e.g. a `503` then a `200`, to
+  prove `@Retry` recovers); `RecordedRequest` exposes the path, query
+  params, headers, and body actually received. Since it's a real embedded
+  server rather than a fake transport, `@Retry`, `@Timeout`, and every
+  registered `RequestInterceptor` run completely unmodified, against both
+  the reflective and compile-time-generated dispatch paths.
 
 ### Changed
 
