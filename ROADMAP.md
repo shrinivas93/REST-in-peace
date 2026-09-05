@@ -169,10 +169,16 @@ for reference rather than tracked in code. Check items off as they land.
             response)` adds an optional exact-match query-param constraint
             to route matching, for an endpoint that behaves differently by
             query param (e.g. `?status=active` vs. `?status=archived`);
-            and `MockRestServerExtension` (a JUnit 5
-            `BeforeEachCallback`/`AfterEachCallback`) removes the
+            and `MockRestServerExtension`, a JUnit 5 extension registered
+            with `@ExtendWith`, starts one server per test class,
+            `reset()`s it before each test, and resolves it as a test (or
+            `@BeforeEach`) method parameter - removing the
             `@BeforeEach`/`@AfterEach` `MockRestServer.start()`/`.close()`
-            boilerplate every test class otherwise needs. The extension
+            boilerplate, and, because the server's base URL is now stable
+            for the whole class, the need to rebuild a `@RestClient` proxy
+            per test too. Sharing one server across a class's tests isn't
+            safe under parallel test execution within that class - not a
+            concern for the common case, but worth knowing. The extension
             required promoting `junit-jupiter` from `test` to `provided`
             scope in `pom.xml`, since a main-source class now implements
             JUnit 5 extension interfaces - verified non-transitive (a
