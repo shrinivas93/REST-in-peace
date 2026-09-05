@@ -353,10 +353,24 @@ for reference rather than tracked in code. Check items off as they land.
               - HTTPS/TLS support (loopback plain-HTTP only today -
                 relevant only if a client under test hardcodes a TLS
                 assumption).
-              - Record/replay against real traffic captured once.
             Same reasoning as the transport-swap option and the first
             follow-up round above applies here too - these are documented
             for when real usage shows a need, not built speculatively.
+      - [ ] **Parked: record/replay against real traffic captured once**
+            (pulled out of the "not needed now" list above - explicit
+            interest, revisit this before the rest of that tier). A
+            "record mode" that proxies real requests through to a real
+            base URL, capturing method/path/query/headers/body/response
+            into a persisted format (a VCR/WireMock-style "cassette"),
+            and a "replay mode" that reads that format back and
+            auto-registers matching routes - so a complex third-party
+            API's actual responses can be captured once and replayed
+            offline/deterministically forever after, instead of
+            hand-writing every `MockResponse`. Substantially bigger than
+            every other `MockRestServer` follow-up so far - closer to a
+            second, small feature (a minimal WireMock) than an
+            incremental addition to the existing `on`/`enqueue` model.
+            Not designed yet.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,
