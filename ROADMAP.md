@@ -391,7 +391,39 @@ for reference rather than tracked in code. Check items off as they land.
             every other `MockRestServer` follow-up so far - closer to a
             second, small feature (a minimal WireMock) than an
             incremental addition to the existing `on`/`enqueue` model.
-            Not designed yet.
+            For testing *your* client code against a third-party API you
+            don't control - a different use case from the rest of
+            `MockRestServer`, which exists to test RIP's own `@Retry`/
+            `@Timeout`/interceptor behavior. Not designed yet; a few
+            things worth keeping from an expansion pass:
+            - **Record mode can likely reuse existing plumbing almost for
+              free**, rather than needing a separate proxy class:
+              `handle(...)`'s current fallback for an unmatched request
+              (the "no response was queued or registered" `500`) is
+              exactly the hook point - replace it with "forward to a
+              configured upstream base URL and capture the real
+              request/response" instead of failing loudly.
+            - **Replay of the same request recorded more than once**
+              (e.g. a real `503` followed by a real retry's `200`) maps
+              directly onto `enqueueFor(...)` (already built) - script
+              the exact recorded sequence instead of one fixed response,
+              no new mechanism needed.
+            - **Replay of the same path distinguished by query params**
+              (e.g. pagination) maps directly onto the existing
+              `requiredQueryParams` overload of `on(...)` - also no new
+              matching logic needed.
+            - **A real, non-optional risk**: a cassette can capture
+              sensitive headers (`Authorization`, API keys) or response
+              fields, and cassette files are the kind of thing that end
+              up committed to source control. A redaction/filter hook
+              before anything is persisted isn't a nice-to-have, it's a
+              precondition for this being safe to ship.
+            - A **replay-only first slice** (cassette produced some other
+              way, no recording/forwarding mode yet) would prove the
+              concept - given the two synergies above, most of what
+              replay needs may already exist - before taking on the
+              real-network-forwarding and redaction complexity that
+              record mode requires.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,
