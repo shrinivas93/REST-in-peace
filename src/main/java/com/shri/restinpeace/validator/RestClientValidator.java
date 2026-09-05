@@ -34,6 +34,9 @@ import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
+import com.shri.restinpeace.annotation.request.Field;
+import com.shri.restinpeace.annotation.request.FieldMap;
+import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
@@ -159,6 +162,7 @@ public class RestClientValidator {
 					validateMapParam(method, QueryMap.class, "@QueryMap", validationResult);
 					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
 					validateMultipart(method, httpMethod, validationResult);
+					validateFormUrlEncoded(method, httpMethod, validationResult);
 					validateTimeout(method, validationResult);
 					validateHeaders(method, validationResult);
 					validateDestination(method, validationResult);
@@ -230,6 +234,12 @@ public class RestClientValidator {
 					method.getDeclaringClass().getName(), method.getName()));
 		}
 
+		if (multipart && method.getAnnotation(FormUrlEncoded.class) != null) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with both @Multipart and @FormUrlEncoded - use one or the other.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
 		if (!multipart && !parts.isEmpty()) {
 			validationResult.addError(String.format(
 					"The method %s.%s has a @Part parameter but is not annotated with @Multipart.",
@@ -252,6 +262,47 @@ public class RestClientValidator {
 
 	private static boolean isSupportedPartType(Class<?> type) {
 		return type == String.class || type == File.class || type == byte[].class || type == InputStream.class;
+	}
+
+	private static void validateFormUrlEncoded(Method method, HTTPMethod httpMethod,
+			ValidationResult validationResult) {
+		boolean formUrlEncoded = method.getAnnotation(FormUrlEncoded.class) != null;
+		List<Parameter> fields = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(Field.class) != null).collect(Collectors.toList());
+		List<Parameter> fieldMaps = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(FieldMap.class) != null).collect(Collectors.toList());
+
+		if (formUrlEncoded && !BODY_SUPPORTED_METHODS.contains(httpMethod)) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @FormUrlEncoded but HTTP method %s does not support a request body.",
+					method.getDeclaringClass().getName(), method.getName(), httpMethod));
+		}
+
+		if (formUrlEncoded && fields.isEmpty() && fieldMaps.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @FormUrlEncoded but has no @Field or @FieldMap parameters.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (formUrlEncoded && Stream.of(method.getParameters()).anyMatch(parameter -> parameter.getAnnotation(Body.class) != null)) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @FormUrlEncoded and also has a @Body parameter - use one or the other.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (!formUrlEncoded && !fields.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @Field parameter but is not annotated with @FormUrlEncoded.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (!formUrlEncoded && !fieldMaps.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @FieldMap parameter but is not annotated with @FormUrlEncoded.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		validateMapParam(method, FieldMap.class, "@FieldMap", validationResult);
 	}
 
 	private static void validateMapParam(Method method, Class<? extends Annotation> annotationType,

@@ -207,6 +207,61 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void validFormUrlEncoded_compilesCleanAndGeneratesImpl() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ValidFormUrlEncoded", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Field;\n" //
+				+ "import com.shri.restinpeace.annotation.request.FormUrlEncoded;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ValidFormUrlEncoded {\n" //
+				+ "  @POST(\"http://localhost/oauth/token\")\n" //
+				+ "  @FormUrlEncoded\n" //
+				+ "  String getToken(@Field(\"grant_type\") String grantType, @Field(\"client_id\") String clientId);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertTrue(Files.exists(outputDir.resolve("ValidFormUrlEncoded_RipImpl.class")),
+				"Expected ValidFormUrlEncoded_RipImpl.class to be generated, found: " + list(outputDir));
+	}
+
+	@Test
+	void formUrlEncodedWithNoFields_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("FormUrlEncodedNoFields", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.request.FormUrlEncoded;\n" //
+				+ "@RestClient\n" //
+				+ "public interface FormUrlEncodedNoFields {\n" //
+				+ "  @POST(\"http://localhost/items\")\n" //
+				+ "  @FormUrlEncoded\n" //
+				+ "  String createItem();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with @FormUrlEncoded but has no @Field or @FieldMap parameters");
+	}
+
+	@Test
+	void formUrlEncodedAndMultipart_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("FormUrlEncodedAndMultipart", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Field;\n" //
+				+ "import com.shri.restinpeace.annotation.request.FormUrlEncoded;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Multipart;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Part;\n" //
+				+ "@RestClient\n" //
+				+ "public interface FormUrlEncodedAndMultipart {\n" //
+				+ "  @POST(\"http://localhost/items\")\n" //
+				+ "  @FormUrlEncoded\n" //
+				+ "  @Multipart\n" //
+				+ "  String createItem(@Field(\"a\") String a, @Part(\"b\") String b);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with both @Multipart and @FormUrlEncoded");
+	}
+
+	@Test
 	void invalidTimeoutConnectMillis_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("InvalidTimeoutConnectMillis", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //

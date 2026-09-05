@@ -1,10 +1,16 @@
 package com.shri.restinpeace.mock;
 
+import java.util.List;
+import java.util.Map;
+
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.Field;
+import com.shri.restinpeace.annotation.request.FieldMap;
+import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
@@ -47,5 +53,17 @@ public interface MockServerTestApi {
 	@POST("/orders")
 	@Retry(times = 3, delayMillis = 100, backoffMultiplier = 3.0, retryOnStatus = { 503 })
 	String createOrderWithBackoff(@Body String payload);
+
+	@POST("/oauth/token")
+	@FormUrlEncoded
+	String getToken(@Field("grant_type") String grantType, @Field("client_id") String clientId);
+
+	@POST("/search")
+	@FormUrlEncoded
+	String searchForm(@FieldMap Map<String, Object> filters);
+
+	@POST("/tags")
+	@FormUrlEncoded
+	String submitTags(@Field("tag") List<String> tags);
 
 }

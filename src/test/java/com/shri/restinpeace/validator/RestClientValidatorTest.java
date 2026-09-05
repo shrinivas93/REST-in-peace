@@ -24,6 +24,9 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
+import com.shri.restinpeace.annotation.request.Field;
+import com.shri.restinpeace.annotation.request.FieldMap;
+import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
@@ -337,6 +340,75 @@ class RestClientValidatorTest {
 		@POST("http://example.com")
 		@Multipart
 		String foo(@PartMap Map<String, Object> first, @PartMap Map<String, Object> second);
+	}
+
+	@RestClient
+	public interface ValidFormUrlEncoded {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		String foo(@Field("grant_type") String grantType, @Field("client_id") String clientId);
+	}
+
+	@RestClient
+	public interface FormUrlEncodedOnGet {
+		@GET("http://example.com")
+		@FormUrlEncoded
+		String foo(@Field("q") String query);
+	}
+
+	@RestClient
+	public interface FormUrlEncodedWithoutFields {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		String foo();
+	}
+
+	@RestClient
+	public interface FormUrlEncodedAndBody {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		String foo(@Field("grant_type") String grantType, @Body String body);
+	}
+
+	@RestClient
+	public interface FormUrlEncodedAndMultipart {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		@Multipart
+		String foo(@Field("grant_type") String grantType, @Part("file") File file);
+	}
+
+	@RestClient
+	public interface FieldWithoutFormUrlEncoded {
+		@POST("http://example.com")
+		String foo(@Field("grant_type") String grantType);
+	}
+
+	@RestClient
+	public interface ValidFieldMapOnly {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		String foo(@FieldMap Map<String, Object> fields);
+	}
+
+	@RestClient
+	public interface FieldMapWithoutFormUrlEncoded {
+		@POST("http://example.com")
+		String foo(@FieldMap Map<String, Object> fields);
+	}
+
+	@RestClient
+	public interface FieldMapNotAMap {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		String foo(@FieldMap String notAMap);
+	}
+
+	@RestClient
+	public interface MultipleFieldMaps {
+		@POST("http://example.com")
+		@FormUrlEncoded
+		String foo(@FieldMap Map<String, Object> first, @FieldMap Map<String, Object> second);
 	}
 
 	@RestClient
@@ -762,6 +834,80 @@ class RestClientValidatorTest {
 				() -> RestClientValidator.validate(MultiplePartMaps.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @PartMap"));
+	}
+
+	@Test
+	void validate_validFormUrlEncoded_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFormUrlEncoded.class));
+	}
+
+	@Test
+	void validate_formUrlEncodedOnGet_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FormUrlEncodedOnGet.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@FormUrlEncoded but HTTP method GET does not support a request body"));
+	}
+
+	@Test
+	void validate_formUrlEncodedWithoutFields_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FormUrlEncodedWithoutFields.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@FormUrlEncoded but has no @Field or @FieldMap parameters"));
+	}
+
+	@Test
+	void validate_formUrlEncodedAndBody_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FormUrlEncodedAndBody.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("@FormUrlEncoded and also has a @Body parameter"));
+	}
+
+	@Test
+	void validate_formUrlEncodedAndMultipart_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FormUrlEncodedAndMultipart.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("annotated with both @Multipart and @FormUrlEncoded"));
+	}
+
+	@Test
+	void validate_fieldWithoutFormUrlEncoded_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FieldWithoutFormUrlEncoded.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has a @Field parameter but is not annotated with @FormUrlEncoded"));
+	}
+
+	@Test
+	void validate_fieldMapOnly_passes() {
+		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFieldMapOnly.class));
+	}
+
+	@Test
+	void validate_fieldMapWithoutFormUrlEncoded_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FieldMapWithoutFormUrlEncoded.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has a @FieldMap parameter but is not annotated with @FormUrlEncoded"));
+	}
+
+	@Test
+	void validate_fieldMapNotAMap_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(FieldMapNotAMap.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("parameter annotated with @FieldMap that is not a Map"));
+	}
+
+	@Test
+	void validate_multipleFieldMaps_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> RestClientValidator.validate(MultipleFieldMaps.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("more than one parameter annotated with @FieldMap"));
 	}
 
 	@Test

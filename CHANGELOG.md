@@ -187,6 +187,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   can verify `@Retry`'s `backoffMultiplier` actually grows the delay
   between attempts, instead of only counting how many attempts were
   made.
+- `@FormUrlEncoded`/`@Field`/`@FieldMap` send an
+  `application/x-www-form-urlencoded` body - the `@Field` counterpart to
+  `@Multipart`/`@Part`, for OAuth token endpoints and classic HTML-form
+  APIs. `@FieldMap` adds one form field per entry of an annotated
+  `Map<String, ?>` parameter, combining with fixed `@Field`s on the same
+  method; a `Collection`-valued `@Field`/`@FieldMap` entry repeats the key
+  once per element (`tag=a&tag=b`), the same convention `@QueryParam`
+  uses. Can't combine `@FormUrlEncoded` with a `@Body` parameter or
+  `@Multipart` on the same method.
+- `RecordedRequest.getFormFields()` decodes an
+  `application/x-www-form-urlencoded` body into its field name/value
+  pairs, the `@FormUrlEncoded` counterpart to `getParts()`.
 
 ### Changed
 
