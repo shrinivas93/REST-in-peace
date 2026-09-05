@@ -6,6 +6,8 @@ import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.HeaderParam;
+import com.shri.restinpeace.annotation.request.Multipart;
+import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
@@ -37,5 +39,9 @@ public interface MockServerTestApi {
 	@GET("/orders/{id}")
 	@Timeout(readMillis = 100)
 	String getOrderWithShortTimeout(@PathParam("id") String id);
+
+	@POST("/upload")
+	@Multipart
+	String upload(@Part("caption") String caption, @Part(value = "file", fileName = "data.bin") byte[] file);
 
 }
