@@ -258,6 +258,52 @@ public final class MockRestServer implements AutoCloseable {
 		return this;
 	}
 
+	/**
+	 * Removes a route registered via
+	 * {@link #on(HTTPMethod, String, MockResponse)}, so a later request to
+	 * that path falls through to any other registered route, the
+	 * {@link #enqueue} queue, or the default "no response was queued or
+	 * registered" failure - without a full {@link #reset()}, which would
+	 * also wipe every other route, the queue, and recorded-request history.
+	 * A no-op (returning {@code false}) if no such route is registered.
+	 *
+	 * @param httpMethod   the HTTP method of the route to remove
+	 * @param pathTemplate the path template of the route, exactly as passed
+	 *                     to {@link #on(HTTPMethod, String, MockResponse)}
+	 * @return {@code true} if a route was removed, {@code false} if none
+	 *         matched
+	 */
+	public boolean remove(HTTPMethod httpMethod, String pathTemplate) {
+		return remove(httpMethod, pathTemplate, Collections.emptyMap());
+	}
+
+	/**
+	 * Same as {@link #remove(HTTPMethod, String)}, for a route registered
+	 * via {@link #on(HTTPMethod, String, Map, MockResponse)} with the same
+	 * {@code requiredQueryParams}.
+	 *
+	 * @param httpMethod          the HTTP method of the route to remove
+	 * @param pathTemplate        the path template of the route, exactly as
+	 *                            passed to {@link #on(HTTPMethod, String,
+	 *                            Map, MockResponse)}
+	 * @param requiredQueryParams the required query params of the route,
+	 *                            exactly as passed to
+	 *                            {@link #on(HTTPMethod, String, Map,
+	 *                            MockResponse)}
+	 * @return {@code true} if a route was removed, {@code false} if none
+	 *         matched
+	 */
+	public boolean remove(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams) {
+		synchronized (routes) {
+			int index = indexOfRoute(httpMethod, pathTemplate, requiredQueryParams);
+			if (index < 0) {
+				return false;
+			}
+			routes.remove(index);
+			return true;
+		}
+	}
+
 	private int indexOfRoute(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams) {
 		for (int i = 0; i < routes.size(); i++) {
 			if (routes.get(i).hasKey(httpMethod, pathTemplate, requiredQueryParams)) {

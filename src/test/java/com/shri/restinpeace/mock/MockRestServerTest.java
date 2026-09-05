@@ -2,6 +2,7 @@ package com.shri.restinpeace.mock;
 
 import static java.util.Collections.singletonMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -239,6 +240,35 @@ class MockRestServerTest {
 		String result = api.getOrder("abc123", "false");
 
 		assertEquals("{\"status\":\"CONFIRMED\"}", result);
+	}
+
+	@Test
+	void remove_removesARegisteredRouteWithoutAffectingOthers() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+		server.on(HTTPMethod.GET, "/secure", MockResponse.ok("ok"));
+
+		boolean removed = server.remove(HTTPMethod.GET, "/orders/{id}");
+
+		assertTrue(removed);
+		assertThrows(RestInPeaceHttpException.class, () -> api.getOrder("abc123", "false"));
+		assertEquals("ok", api.getSecure("Bearer test-token"));
+	}
+
+	@Test
+	void remove_ofAnUnregisteredRoute_returnsFalse() {
+		boolean removed = server.remove(HTTPMethod.GET, "/orders/{id}");
+
+		assertFalse(removed);
+	}
+
+	@Test
+	void remove_doesNotWipeRecordedRequestHistory() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+		api.getOrder("abc123", "false");
+
+		server.remove(HTTPMethod.GET, "/orders/{id}");
+
+		assertEquals(1, server.requestCount());
 	}
 
 	private static final class OrderStatus {
