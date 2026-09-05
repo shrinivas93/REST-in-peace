@@ -237,20 +237,46 @@ for reference rather than tracked in code. Check items off as they land.
               to test `@Timeout` - this formalizes it as a first-class
               `MockRestServer` capability instead of requiring every
               consumer to duplicate that setup themselves.
+      - [x] **Follow-up: fixed the `on`/`enqueue` interaction bug, then
+            per-route enqueue and flaky mode.** `enqueue(...)`'s own
+            javadoc claimed it was "the way to script a sequence of
+            responses to the same endpoint," but that was only true for a
+            path with no route registered via `on(...)` at all - route
+            matching happens unconditionally before the queue is ever
+            consulted, so a route always shadowed it completely for that
+            path. Fixed by giving each route its own one-time-response
+            queue: `MockRestServer.enqueueFor(httpMethod, pathTemplate,
+            response)` scripts a response for a route already registered
+            via `on(...)`, consumed before that route's sticky response -
+            so "fail twice then succeed forever" can now be expressed for
+            a route that also has a sticky final answer, which was
+            previously impossible to combine. `onFlaky(httpMethod,
+            pathTemplate, failuresBeforeSuccess, failureResponse,
+            successResponse)` is sugar on top of the same mechanism
+            (register the sticky success, then call `enqueueFor` with the
+            failure that many times) - the actual "flaky mode" ask.
+            `enqueue(...)`'s javadoc now correctly documents the
+            limitation instead of overpromising.
+      - [x] **Follow-up: `on(...)` upsert instead of append, closing a
+            related dead-code footgun.** Registering the same
+            `(httpMethod, pathTemplate, requiredQueryParams)` route twice
+            used to append a second, permanently-shadowed `Route` (the
+            first registration always wins, since routes match in
+            registration order) - silently dead code, and no way to
+            change a route's behavior mid-test without a full `reset()`,
+            which also wipes queued responses and recorded-request
+            history. `on(...)` now replaces the existing route in place
+            (same list position, so precedence relative to other routes
+            is unaffected) when called again with the same key.
       - [ ] **Follow-up: further hardening and feature ideas**, from a
             fresh re-read of the implementation (not yet built), triaged
             by necessity rather than just theme:
             - **Good to have** - real value, but each has a workaround
               today, so none is blocking:
-              - "Flaky mode" (fail the first N requests to a route, then
-                succeed, without hand-scripting each one via `enqueue`).
-              - Per-route `enqueue(...)` - today's `enqueue` is one global
-                FIFO shared by every unmatched request, so "route A fails
-                twice then succeeds" while route B behaves normally
-                throughout can't be scripted.
-              - `MockRestServer.remove(...)`/in-place route replacement,
-                so one route's behavior can change mid-test without a
-                full `reset()`.
+              - `MockRestServer.remove(httpMethod, pathTemplate)` to
+                remove a registered route outright (as opposed to
+                replacing it, which `on(...)` now does) without a full
+                `reset()`.
               - Matching on request headers or body content, not just
                 method+path+query.
               - Decoded multipart-part access on `RecordedRequest` -
