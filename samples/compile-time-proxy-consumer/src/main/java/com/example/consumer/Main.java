@@ -65,9 +65,12 @@ public final class Main {
 			}
 			System.out.println("Call succeeded, response: " + result);
 
-			// 4. Confirm an interface using an unsupported feature (@HeaderParam)
-			// falls back to the reflective proxy instead of a broken partial
-			// generation - no ItemApi_RipImpl-style class should exist for it.
+			// 4. Confirm an interface using an unsupported feature (a generic List
+			// return type) falls back to the reflective proxy instead of a broken
+			// partial generation - no UnsupportedApi_RipImpl-style class should exist.
+			// (Unlike ItemApi's call above, this one isn't invoked here: the local
+			// server returns plain text, not JSON, and decoding that into a List is
+			// not the point of this demo - only the fallback itself is.)
 			try {
 				Class.forName("com.example.consumer.UnsupportedApi_RipImpl");
 				throw new IllegalStateException("Expected no generated class for UnsupportedApi, but one exists.");
@@ -81,8 +84,6 @@ public final class Main {
 								+ unsupportedApi.getClass().getName());
 			}
 			System.out.println("RIP.getClient(UnsupportedApi.class) fell back to: " + unsupportedApi.getClass());
-			String unsupportedResult = unsupportedApi.getItem(port, "abc", "trace-1");
-			System.out.println("Reflective-proxy call still works, response: " + unsupportedResult);
 
 			System.out
 					.println("VERIFICATION PASSED: compile-time proxy generation works for a real downstream consumer.");

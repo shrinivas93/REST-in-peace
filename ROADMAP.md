@@ -199,7 +199,8 @@ up.
       JSON/raw-string via `@Body` or multipart).
 - [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
       instead of hitting the network every time.
-- [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** — an
+- [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** (steps
+      1-2 done, steps 3-4 remain) — an
       annotation processor that generates a real class implementing each
       `@RestClient` interface at build time (like Dagger/MapStruct do)
       instead of `Proxy.newProxyInstance` + reflection at runtime. Makes the
@@ -244,6 +245,84 @@ up.
             disqualifying too, closing the same gap for them (still
             unsupported, correctly falling back). See the design doc's
             §9.4.
+      - [x] **Step 2, second slice: full header/query/body/URL/error-type
+            support**: `@Headers`, `@HeaderParam`, `@HeaderMap`,
+            `@QueryMap`, required-or-defaulted `@QueryParam`/`@HeaderParam`,
+            `@Body`, `@Url`, and `@ErrorType` are all now generated for.
+            Replaced the single `processGeneratedRequest` entry point with
+            a set of smaller non-reflective primitives on
+            `RestRequestProcessor` that generated code calls in sequence -
+            the growing single-call design from step 1 would have
+            ballooned past 25 parameters. Also decoupled `@ErrorType`
+            handling from `Method` throughout `RestRequestProcessor`
+            (a simplification for the reflective path too), and fixed a
+            real generated-code bug where a `@Url` parameter named `url`
+            collided with the generator's own local variable of the same
+            name. Still unsupported: `@Multipart`/`@Part`/`@PartMap`, a
+            `DownloadProgressListener`/`UploadProgressListener`/
+            `@Destination` parameter, and every non-`String`/POJO return
+            type. See the design doc's §9.5.
+      - [x] **Step 2, third slice: `@Multipart`/`@Part`/`@PartMap`/
+            `UploadProgressListener` support**: the smallest slice so far,
+            since the reflective path's own part-application methods were
+            already non-reflective - mostly a matter of widening their
+            visibility and adding `beginGeneratedMultipart` as the
+            generated-code counterpart of the reflective path's
+            `multiPartContent()` cast-and-call. Generalized the `@Url`
+            codegen-safety fix from the previous slice into an explicit
+            rule: any parameter/return kind whose generated code depends on
+            another feature also being present must be cross-checked in
+            `toSupportedMethodModel`, disqualifying the whole method if
+            that precondition doesn't hold - applied here for
+            `@Part`/`@PartMap`/`UploadProgressListener` needing
+            `@Multipart`. Still unsupported: a `DownloadProgressListener`/
+            `@Destination` parameter, and every non-`String`/POJO return
+            type. See the design doc's §9.6.
+      - [x] **Step 2, fourth slice: `byte[]`/`File`+`@Destination`+
+            `DownloadProgressListener`/`RipResponse<T>` return types**: the
+            first slice to change what a generated method returns, not
+            just what it accepts - added `finishGeneratedSyncBytes`/
+            `finishGeneratedSyncFile`/`finishGeneratedSyncRipResponse`/
+            `finishGeneratedSyncRipResponseBytes` as sibling terminal
+            calls alongside `finishGeneratedSync`, one per return-type
+            shape, picked at compile time from the interface's declared
+            return type. `MethodModel`'s return type went from a bare
+            string to a `ReturnModel` (kind + literal type name +, for
+            `RipResponse<T>`, `T`'s name) to support this. Extended the
+            §9.6 codegen-safety cross-check rule to return types:
+            `@Destination`/`DownloadProgressListener` now require a
+            `File`-returning method, and exactly one `@Destination`
+            parameter is required whenever the return type is `File`.
+            Only `CompletableFuture<T>` (async) remains unsupported -
+            the last item in §5's table. See the design doc's §9.7.
+      - [x] **Step 2, fifth and final slice: `CompletableFuture<T>` (async),
+            for every return-type shape** — the last item in §5's table,
+            completing step 2's full feature parity. Unlike every earlier
+            slice, this doesn't add a new `ReturnKind` case - a
+            `CompletableFuture<T>` can wrap any of the existing
+            `PLAIN`/`BYTES`/`FILE`/`RIP_RESPONSE` kinds, so
+            `RestRequestProcessor` gained one async sibling per existing
+            sync terminal method (`finishGeneratedAsync`,
+            `finishGeneratedAsyncBytes`, `finishGeneratedAsyncFile`,
+            `finishGeneratedAsyncRipResponse`,
+            `finishGeneratedAsyncRipResponseBytes`), each reusing the same
+            `executeAsyncWithRetry`/`decodeOrThrow` machinery the
+            reflective path's own async support already shares.
+            `ReturnModel` gained an `isAsync` flag (detected via the same
+            type-erasure comparison `RipResponse<T>` detection uses) and
+            its `innerTypeName` field was renamed to `decodeTypeName` -
+            the class to decode the response body into, which now
+            genuinely differs from the method's own return type once
+            `CompletableFuture` is involved. `ReturnKind.VOID` was folded
+            into `PLAIN` (distinguished by `decodeTypeName` being
+            `"void"`) since it needed no separate dispatch case anymore.
+            With every item in §5's table now supported, a new
+            permanently-unsupported regression interface,
+            `GeneratedApiWithListReturn` (a generic `List<String>` return
+            type - never decodable via a single `Class<?>` literal), and
+            sample-project example replaced the now-obsolete
+            `CompletableFuture`-based ones. **Step 2 (full feature parity)
+            is now complete.** See the design doc's §9.8.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small

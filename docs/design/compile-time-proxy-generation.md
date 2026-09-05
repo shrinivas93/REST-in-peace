@@ -1,18 +1,25 @@
 # Design: compile-time proxy generation
 
-Status: **step 1 landed, step 2 in progress** (see §8's rollout plan -
-`RestClientProcessor`, `RestRequestProcessor.processGeneratedRequest`,
-`RIP.getClient`'s generated-impl-first lookup, `GeneratedApiTest`). Step 2's
-first slice - `@Timeout`/`@Retry` - landed too (§9.4). The compile-testing
-validation suite and the native-image smoke test (steps 3-4) are not
-started, and most of §5's table (`@Headers`, `@Body`, `@Multipart`, `@Url`,
-`@ErrorType`, `@QueryMap`, required/defaulted `@QueryParam`, every
-non-`String`/POJO return type) is still unsupported - a method using any of
-those still falls the whole interface back to the reflective proxy. Roadmap
-item: "Compile-time proxy generation instead of a JDK dynamic proxy" in
-`ROADMAP.md`. The sections below are mostly the original sketch; §9 records
-what actually landed and the real deviations from the sketch, discovered
-only while implementing it.
+Status: **step 1 and step 2 both fully landed** (see §8's rollout plan -
+`RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
+`GeneratedApiTest`). Step 2's slices landed: `@Timeout`/`@Retry` (§9.4);
+`@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/required-or-defaulted
+`@QueryParam`/`@Body`/`@Url`/`@ErrorType` (§9.5), which also replaced the
+original single `processGeneratedRequest` entry point with a
+sequence-of-calls design (§9.5.1); `@Multipart`/`@Part`/`@PartMap`/
+`UploadProgressListener` (§9.6); `byte[]`/`File`+`@Destination`+
+`DownloadProgressListener`/`RipResponse<T>` return types (§9.7); then
+`CompletableFuture<T>` (async), for every one of those return-type shapes
+(§9.8) - the last item in §5's table. What remains permanently
+unsupported - not a future slice, but excluded from §5's table from the
+start - is a generic collection return type (e.g. `List<String>`), since
+it isn't decodable via a single `Class<?>` literal the way every supported
+return type is. The compile-testing validation suite and the native-image
+smoke test (steps 3-4) are not started. Roadmap item: "Compile-time proxy
+generation instead of a JDK dynamic proxy" in `ROADMAP.md`. The sections
+below are mostly the original sketch; §9 records what actually landed and
+the real deviations from the sketch, discovered only while implementing
+it.
 
 ## 1. Problem
 
@@ -541,3 +548,346 @@ synchronous path, since `CompletableFuture` return types are a separate,
 not-yet-supported entry in §5's table. Only `nextDelay`'s signature change
 touched `attemptAsync`, mechanically (it still reads `retry.backoffMultiplier()`
 from the `Method`-based `Retry` it already has).
+
+### 9.5 Step 2, second slice: full header/query/body/URL/error-type support
+
+This slice covered `@Headers`, `@HeaderParam`, `@HeaderMap`, `@QueryMap`,
+required-or-defaulted `@QueryParam`/`@HeaderParam` (the `resolveValue`
+semantics step 1 explicitly scoped out, per §9.2), `@Body`, `@Url`, and
+`@ErrorType` - everything in §5's table except `@Multipart`/`@Part`/
+`@PartMap` and the return-type expansion.
+
+#### 9.5.1 Replaced the single `processGeneratedRequest` entry point with a sequence of calls
+
+Adding just `@Timeout`/`@Retry` in the first slice already grew
+`processGeneratedRequest` to 15 parameters. Extending the *same* method to
+also cover headers, query/header maps, a body, and a `@Url` override would
+have pushed it well past 25 - unreadable, and error-prone to keep each
+generated call's argument *position* correct against the method's growing
+signature. Instead, `RestRequestProcessor` now exposes a small set of
+non-reflective, `public` primitives - `resolveGeneratedUrl`,
+`requireUrlParam`, `createGeneratedRequest`, `applyGeneratedHeaders`,
+`resolveValue`, `applyQueryValue`, `applyQueryMap`, `applyHeaderMap`,
+`applyGeneratedBodyIfPresent`, and a terminal `finishGeneratedSync` - and
+generated code calls a *sequence* of them, one per feature the method
+actually uses, mirroring §4.2's original sketch ("a handful of new,
+non-reflective entry points... called directly") more closely than step 1's
+single mega-call did. Each of these is `public` only because generated code
+lives in an arbitrary consumer package - not part of RIP's
+application-facing API, documented as such at the top of the new methods'
+section in `RestRequestProcessor`.
+
+A header param value (`@HeaderParam`) doesn't get its own RIP method at
+all - generated code calls `resolveValue` then, if non-`null`, Unirest's own
+public `request.headerReplace(name, String.valueOf(value))` directly, since
+that's all the reflective path itself does past `resolveValue`. Reusing a
+public method on a public third-party type the generated code already holds
+a reference to, instead of wrapping it in another RIP method, was a
+deliberate choice to keep the new public surface as small as it can be.
+
+#### 9.5.2 Decoupling `@ErrorType` from `Method` (and reading a `Class`-valued annotation attribute at compile time)
+
+`decodeBody`/`decodeOrThrow`/`notifyAfterResponse`/`executeSyncWithRetry`/
+`executeAsyncWithRetry`/`attemptAsync` all used to take (or derive from) a
+`Method`, reading `method.getAnnotation(ErrorType.class)` internally to
+decide how to decode an error body. Since generated code has no `Method`,
+every one of these was refactored to take an explicit `Class<?> errorType`
+parameter instead - the reflective path now derives it once
+(`errorTypeOf(method)`) and passes it down like any other literal, and
+generated code passes its `@ErrorType`'s value directly. This is a pure
+simplification for the reflective path too, not just an accommodation for
+the generated one: `Method` was only ever a vehicle for that one annotation
+lookup in these methods.
+
+Reading `@ErrorType`'s `Class<?> value()` during annotation processing
+can't just call `errorType.value()` - the class it names may not even be
+compiled yet, so the JDK deliberately throws `MirroredTypeException` instead
+of trying to load it; catching that and reading `getTypeMirror()` off the
+exception is the standard, if unintuitive, annotation-processor idiom for
+this, used in `errorTypeClassNameOf`.
+
+#### 9.5.3 A same-named parameter shadowing a generated local variable - and the fix
+
+`GeneratedApi.getByUrl(@Url String url)` - an entirely reasonable parameter
+name for a `@Url` parameter to have - broke compilation of its own generated
+class: `RestClientProcessor` always declared a local named `url` to hold the
+resolved URL, and Java doesn't allow redeclaring a variable of the same name
+in the same scope, so `String url = RestRequestProcessor.requireUrlParam(url, ...)`
+failed with "variable url is already defined". The same risk existed for
+every other synthetic local the generator introduces (`request`, `context`,
+`result`, a per-parameter scratch variable for `resolveValue`'s result) and
+even for the generated class's own `ripProcessor` field, if a parameter
+happened to share that name. Fixed by renaming every synthetic identifier to
+a `__rip`-prefixed name (`__ripUrl`, `__ripRequest`, `__ripContext`,
+`__ripResult`, `__ripValue`) that a real Java parameter is never going to
+collide with, and by qualifying every field access as `this.ripProcessor`
+rather than bare `ripProcessor` so a same-named parameter shadowing the
+field can't silently break a call site either. `GeneratedApi.getByUrl` is
+now permanent regression coverage for this - see `GeneratedApiTest`.
+
+#### 9.5.4 What's now real and testable
+
+`GeneratedApi` gained `echo` (fixed `@HeaderParam` + defaulted
+`@HeaderParam` + required `@QueryParam` + `@QueryMap` + `@HeaderMap`),
+`echoBody` (`@Body` on a `@POST`), `getByUrl` (`@Url`), and `getError`
+(`@ErrorType`, asserting the decoded error body's fields after catching
+`RestInPeaceHttpException`) - each verified against a real embedded
+`HttpServer`, mirroring the assertion style `RipIntegrationTest` already
+uses for the same features on the reflective path.
+
+`GeneratedApiWithHeaders` - originally step 1's regression test proving
+`@Headers` correctly disqualified a method - is repurposed as a *positive*
+test now that `@Headers` is supported, asserting a real `_RipImpl` is
+generated and the header-carrying call succeeds. `GeneratedApiWithMultipart`
+is new regression coverage taking over the "still correctly disqualifies"
+role for a feature this slice didn't cover.
+
+### 9.6 Step 2, third slice: `@Multipart`/`@Part`/`@PartMap`/`UploadProgressListener`
+
+Mechanically the smallest slice so far, since the reflective path's own
+`applyPartValue`/`applyPartMap`/`applyUploadMonitor` were already
+non-reflective (literal `MultipartBody`/name/value arguments, no `Method`
+or `Parameter` involved) - the same pattern §9.5.1 already established for
+`applyQueryValue`/`applyQueryMap`/`applyHeaderMap` applied directly, just
+widening their visibility to `public`. The one genuinely new piece is
+`beginGeneratedMultipart(HttpRequest<?> request)`, the generated-code
+counterpart of the reflective path's own
+`((HttpRequestWithBody) request).multiPartContent()` cast-and-call for a
+`@Multipart` method, emitted once per method right after
+`applyGeneratedHeaders` (mirroring `applyParams`'s own ordering - multipart
+conversion happens before any per-parameter `@Part`/`@PartMap` application)
+and reassigning the generated method's `__ripRequest` local to the
+resulting `MultipartBody`.
+
+`UploadProgressListener` needed a small addition to `toSupportedParamModel`
+itself: unlike every other supported parameter kind, it carries no
+annotation at all - the reflective path detects it by parameter *type*
+(`parameter.getType() == UploadProgressListener.class`), so the processor
+does the same by comparing the parameter's `TypeMirror` string form against
+the class's fully-qualified name, checked before the usual
+exactly-one-annotation dispatch rather than folded into it.
+
+#### 9.6.1 A new codegen-safety class of bug, generalized from the `@Url` one
+
+§9.5.3 fixed one instance of "generated code references a variable this
+processor doesn't always declare" (a `@Url` parameter shadowing the `url`
+local). `@Part`/`@PartMap`/`UploadProgressListener` created a *second*
+instance of the same underlying hazard: all three only make sense on an
+`@Multipart` method, and their generated code references `__ripMultipart` -
+a local only declared when `method.isMultipart` is true. A method
+combining, say, `@Part` with no `@Multipart` (itself a validation error the
+runtime validator already catches) would previously have been silently
+accepted by `toSupportedMethodModel` and generated as source referencing an
+undeclared `__ripMultipart` - not a runtime misbehavior like most other
+validation errors produce when the processor doesn't specially guard
+against them, but a **compile failure of the generated class itself**,
+breaking the entire downstream build.
+
+Recognizing `@Url`-on-non-`String` (§9.5.3) and this as the same class of
+problem - a validation error that would corrupt the *generated source*
+itself, rather than merely misbehaving at runtime for an interface that
+was never going to pass validation anyway - is the more important lesson
+than either individual fix: any future slice adding a parameter/return kind
+whose generated code depends on another feature also being present needs
+the same explicit cross-check in `toSupportedMethodModel`, disqualifying
+the whole method (never partially) if that precondition doesn't hold.
+Fixed here by checking, after building a method's full parameter list,
+that every `PART`/`PART_MAP`/`UPLOAD_PROGRESS`-kind parameter only appears
+when `isMultipart` is true (and, symmetrically, that `@Multipart` never
+coincides with a `BODY`-kind parameter - also a validation error, also
+otherwise harmless at the codegen level since `applyGeneratedBodyIfPresent`
+only fails at *runtime*, but disqualified anyway since the combination can
+never be valid).
+
+#### 9.6.2 What's now real and testable
+
+`GeneratedApiWithMultipart` - originally this slice's own "still correctly
+disqualifies" regression coverage - is repurposed as a *positive* test
+(the same pattern §9.5's `GeneratedApiWithHeaders` followed), asserting a
+real `_RipImpl` is generated and that a `@Part` value actually lands in the
+multipart-encoded request body. `GeneratedApiWithAsyncReturn` takes over
+the "still correctly disqualifies" role using a `CompletableFuture<String>`
+return type - the next slice's feature, and a good one to prove the
+current disqualification logic is set up correctly. The in-repo sample
+consumer's `UnsupportedApi` needed updating *again* for the same reason as
+§9.5 - it had been moved to `@Multipart`/`@Part` last slice, which this
+slice made real - so it now demonstrates the fallback via a
+`CompletableFuture<String>` return type as well, which surfaced a genuine
+bug in the sample itself: nothing had ever exercised its `UnsupportedApi`'s
+now-async fallback call before, and Unirest's async client's non-daemon
+threads kept the sample's JVM alive indefinitely after printing its
+success message. Fixed by calling `RIP.useDaemonThreadsForAsync()` once at
+the top of the sample's `Main.main`, exactly the scenario that method's own
+documentation describes.
+
+### 9.7 Step 2, fourth slice: `byte[]`/`File`+`@Destination`+`DownloadProgressListener`/`RipResponse<T>` return types
+
+The first slice to change *what a generated method returns*, not just what
+it can accept as input. Every prior slice kept `finishGeneratedSync` as the
+single terminal call, differing only in what gets built up before it; this
+one adds four sibling terminal methods to `RestRequestProcessor` -
+`finishGeneratedSyncBytes`, `finishGeneratedSyncFile`,
+`finishGeneratedSyncRipResponse`, `finishGeneratedSyncRipResponseBytes` -
+mirroring `processRestRequest`'s own return-type branches, each reusing
+the same `executeSyncWithRetry`/`decodeOrThrow`/`wrapResponse` machinery
+the reflective path and every earlier generated-code slice already share.
+`RestClientProcessor` picks the right one per method, decided once at
+compile time from the interface's declared return type - exactly what §5's
+table originally described as the payoff of moving return-type dispatch
+out of the runtime.
+
+#### 9.7.1 `returnTypeNameOf` became `returnModelOf`
+
+Every earlier slice treated a method's return type as a single opaque
+string (`returnTypeName`) - fine when every supported return type decoded
+the same way. Supporting `byte[]`/`File`/`RipResponse<T>` alongside
+`void`/`String`/POJO needs the processor to know *which* of those shapes a
+method has, not just its literal type name, so `MethodModel` now carries a
+`ReturnModel` (a `ReturnKind` - `VOID`/`PLAIN`/`BYTES`/`FILE`/
+`RIP_RESPONSE` - plus the return type's own literal name and, for
+`RIP_RESPONSE`, the wrapped inner type's name) instead of a bare string.
+Detecting `byte[]` needs a new branch entirely - `TypeKind.ARRAY`, which
+every earlier slice's `returnTypeNameOf` unconditionally rejected via its
+"not `TypeKind.DECLARED`" check, since nothing before this slice needed to
+tell an array return type apart from disqualifying it. Detecting
+`RipResponse<T>` needs comparing the return type's *erasure* against
+`com.shri.restinpeace.RipResponse` (via `Types.erasure`, the standard way
+to check "is this raw type X" while ignoring its type arguments) and then
+recursively classifying `T` with the same array/declared/generic checks -
+mirroring the reflective path's own `resolveWrappedType`.
+
+#### 9.7.2 Extending the codegen-safety cross-check rule from §9.6.1 to return types
+
+§9.6.1 generalized "a parameter kind whose generated code depends on
+another feature also being present" into an explicit rule, applied there
+to `@Part`/`@PartMap`/`UploadProgressListener` needing `@Multipart`. This
+slice is the same rule applied to a *return* type instead of a parameter:
+`@Destination`/`DownloadProgressListener` only make sense - and only
+compile as generated code - on a `File`-returning method, since their
+codegen references the destination `File` local `finishGeneratedSyncFile`
+needs. `toSupportedMethodModel` now cross-checks this the same way it
+already does for `@Multipart`: any `DESTINATION`/`DOWNLOAD_PROGRESS`-kind
+parameter on a method whose `ReturnKind` isn't `FILE` disqualifies the
+whole method, and (new, since a `File` return needs to know unambiguously
+which parameter to write into, unlike anything checked before) exactly one
+`@Destination` parameter is required whenever the return kind *is* `FILE`
+- zero or more than one both disqualify, rather than generating source
+that references the wrong local or none at all.
+
+#### 9.7.3 What's now real and testable
+
+`GeneratedApi` gained `getBinary` (`byte[]`), `downloadBinary`
+(`File`+`@Destination`+`DownloadProgressListener`, asserting both the
+written file's bytes and that the progress listener actually fired),
+`getWithResponse` (`RipResponse<String>`), and `getBinaryWithResponse`
+(`RipResponse<byte[]>`) - each verified against a real embedded
+`HttpServer`'s `/binary` endpoint, mirroring `RipIntegrationTest`'s own
+binary-response test pattern. `GeneratedApiWithAsyncReturn` (added in
+§9.6) continues to serve as the "still correctly disqualifies" regression
+coverage, now for the one feature genuinely still missing:
+`CompletableFuture<T>`.
+
+### 9.8 Step 2, fifth and final slice: `CompletableFuture<T>` (async), for every return-type shape
+
+The last item in §5's table, and the only slice to widen the *set of
+return-type shapes* to a genuinely orthogonal dimension rather than adding
+a new one to the list: `CompletableFuture<T>` isn't a sibling of
+`PLAIN`/`BYTES`/`FILE`/`RIP_RESPONSE`, it's each of them wrapped - a
+method can return a plain `String` synchronously or asynchronously, and
+the same is true of `byte[]`, `File`, and `RipResponse<T>`. That meant
+doubling `RestRequestProcessor`'s terminal-call surface (one async sibling
+per existing sync terminal method) rather than adding a fifth `ReturnKind`
+case to `RestClientProcessor`'s dispatch switch.
+
+#### 9.8.1 Five new async terminal methods, mirroring the five sync ones
+
+`RestRequestProcessor` gained `finishGeneratedAsync`,
+`finishGeneratedAsyncBytes`, `finishGeneratedAsyncFile`,
+`finishGeneratedAsyncRipResponse`, and
+`finishGeneratedAsyncRipResponseBytes` - each the direct async counterpart
+of an existing `finishGeneratedSync*` method, built the same way the
+reflective path's own `processAsync` already works: apply interceptors,
+call `executeAsyncWithRetry` (which already existed, used by the
+reflective path, and needed no changes) with the request's
+`::asStringAsync`/`::asBytesAsync` method reference instead of a
+synchronous call, then `.thenApply(response -> decodeOrThrow(...))` to
+chain the same decoding logic every sync path already shares, onto the
+returned `CompletableFuture` instead of running it inline. No new decoding
+or retry logic was needed anywhere - the entire slice is "run the existing
+machinery on a future instead of a value."
+
+#### 9.8.2 `ReturnModel` gained `isAsync`; `decodeTypeName` replaces `innerTypeName`; `VOID` folded into `PLAIN`
+
+Detecting `CompletableFuture<T>` needs the same "compare the type's
+erasure against a known raw type" idiom §9.7.1 introduced for
+`RipResponse<T>` - here against `java.util.concurrent.CompletableFuture` -
+but unlike `RipResponse<T>`, a `CompletableFuture<T>`'s `T` isn't itself a
+new terminal shape; it's any of the *existing* four kinds, classified the
+same way whether or not it's wrapped. `returnModelOf` was split into an
+outer method that checks for the `CompletableFuture` wrapper first
+(recording `isAsync = true` and recursing into a new
+`nonAsyncReturnModelOf(TypeMirror)` helper for the wrapped type argument)
+and falls through to the same helper directly, unwrapped, when there's no
+`CompletableFuture` - so a method's `ReturnKind` is always classified by
+the same code regardless of async-ness.
+
+This also exposed that `ReturnModel`'s `innerTypeName` field, added in
+§9.7.1 specifically for `RipResponse<T>`'s wrapped inner type, was really
+serving double duty: it was also being used, for every other kind, as
+"the type to decode the response body into" - which is `javaTypeName`
+itself for `PLAIN`/`BYTES`/`FILE`, but diverges from it once a
+`CompletableFuture` is involved (a method returning
+`CompletableFuture<String>` has `javaTypeName =
+"java.util.concurrent.CompletableFuture<java.lang.String>"` but must still
+decode into plain `String.class`). Renamed to `decodeTypeName` to name
+what it actually is - "the literal `Class<?>` to decode the response body
+into" - independent of `isAsync`, since wrapping a return type in a
+`CompletableFuture` never changes what class the body decodes into, only
+what the generated method's own signature returns and which
+`finishGenerated*` method it calls. `ReturnKind.VOID` was folded into
+`PLAIN` at the same time (distinguished, now that a dedicated dispatch
+case is no longer worth keeping for it, purely by `decodeTypeName` being
+the literal string `"void"`), since async and sync `void`-returning
+methods otherwise needed no different handling from `String`/POJO ones
+beyond that string check already present in `finishGeneratedSync`/
+`finishGeneratedAsync`.
+
+#### 9.8.3 What's now real and testable, and what's permanently not
+
+`GeneratedApiWithAsyncReturn` - the "still correctly disqualifies"
+regression interface since §9.6 - is repurposed as a *positive* test
+(the same pattern every terminal "still unsupported" interface in this
+package has followed as its feature graduated: `GeneratedApiWithHeaders`
+in §9.5, `GeneratedApiWithMultipart` in §9.6), asserting a real
+`_RipImpl` is generated for a `CompletableFuture<String>`-returning
+method and that calling it and blocking on `.get(5, TimeUnit.SECONDS)`
+produces the correct decoded result.
+
+Since every item in §5's table is now supported, a new regression
+interface was needed for a feature that is not merely "not yet
+implemented" but genuinely can never be: `GeneratedApiWithListReturn`,
+using a `List<String>` return type. `nonAsyncReturnModelOf` returns `null`
+for it (it's a `TypeKind.DECLARED` type with a non-empty type-argument
+list that matches none of the recognized raw types), so no
+`_RipImpl` is generated and `RIP.getClient(...)` falls back to the
+reflective proxy - the reflective path can still handle it, since
+`method.getReturnType()` erases to plain `List` and Jackson can
+deserialize a JSON array into a raw `List`, but the compile-time
+generator has no way to hand `decodeBody` anything more specific than a
+`Class<?>` literal, and `List.class` alone would lose the element type
+entirely for any consumer that cares.
+
+The in-repo sample consumer's `UnsupportedApi` needed updating for the
+third time, for the same reason as §9.5 and §9.6 - it had been moved to
+`CompletableFuture<String>` in §9.6, which this slice made real - so it
+now demonstrates the fallback via the same `List<String>` return type as
+`GeneratedApiWithListReturn`. This also let the sample drop the
+`RIP.useDaemonThreadsForAsync()` workaround §9.6 added: with nothing left
+in the sample exercising Unirest's async client, the non-daemon-thread
+hang that workaround existed for no longer applies. The sample's fallback
+demonstration for `UnsupportedApi` now stops at confirming no generated
+class exists and that `RIP.getClient(...)` returns the reflective proxy -
+it doesn't call through it, since the sample's plain-text local server
+response isn't valid JSON and decoding it into a `List` would fail,
+which was never the point of that demonstration (only the fallback
+itself is).

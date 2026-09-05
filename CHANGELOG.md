@@ -92,6 +92,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a method combining the step-1 supported shape with either annotation is
   generated for (honoring it) instead of falling back to the reflective
   proxy.
+- Compile-time proxy generation now also covers `@Headers`, `@HeaderParam`,
+  `@HeaderMap`, `@QueryMap`, required-or-defaulted `@QueryParam`/
+  `@HeaderParam`, `@Body`, `@Url`, and `@ErrorType`.
+- Compile-time proxy generation now also covers `@Multipart`, `@Part`,
+  `@PartMap`, and `UploadProgressListener`.
+- Compile-time proxy generation now also covers `byte[]`, `File` (with
+  `@Destination`/`DownloadProgressListener`), and `RipResponse<T>` return
+  types - only `CompletableFuture<T>` (async) remains unsupported.
+- Compile-time proxy generation now also covers `CompletableFuture<T>`
+  (async), for every supported return-type shape - `String`/POJO,
+  `byte[]`, `File`, and `RipResponse<T>` alike. This was the last item on
+  the design doc's feature-parity table: compile-time proxy generation now
+  has full feature parity with the reflective proxy.
 
 ### Changed
 

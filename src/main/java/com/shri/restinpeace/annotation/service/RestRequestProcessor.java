@@ -190,6 +190,7 @@ public class RestRequestProcessor {
 		request = applyInterceptors(request, context);
 		applyDownloadMonitor(request, resolveDownloadProgressListener(method, args));
 
+		Class<?> errorType = errorTypeOf(method);
 		Class<?> returnType = method.getReturnType();
 		if (returnType == CompletableFuture.class) {
 			return processAsync(request, method, args, context);
@@ -198,97 +199,247 @@ public class RestRequestProcessor {
 			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
 			if (innerType == byte[].class) {
 				HttpResponse<byte[]> response = executeSyncWithRetry(method, innerType, context, request::asBytes);
-				return wrapResponse(response, decodeOrThrow(response, method, innerType));
+				return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 			}
 			HttpResponse<String> response = executeSyncWithRetry(method, innerType, context, request::asString);
-			return wrapResponse(response, decodeOrThrow(response, method, innerType));
+			return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 		}
 		if (returnType == byte[].class) {
 			HttpResponse<byte[]> response = executeSyncWithRetry(method, returnType, context, request::asBytes);
-			return decodeOrThrow(response, method, returnType);
+			return decodeOrThrow(response, errorType, returnType);
 		}
 		if (returnType == File.class) {
 			File destination = resolveDestinationFile(method, args);
 			HttpResponse<byte[]> response = executeSyncWithRetry(method, byte[].class, context, request::asBytes);
-			byte[] bytes = (byte[]) decodeOrThrow(response, method, byte[].class);
+			byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
 		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context, request::asString);
-		return decodeOrThrow(response, method, returnType);
+		return decodeOrThrow(response, errorType, returnType);
 	}
+
+	// ---------------------------------------------------------------------
+	// Non-reflective entry points below this line are used exclusively by a
+	// compile-time-generated @RestClient implementation (see
+	// com.shri.restinpeace.processor.RestClientProcessor) - never called
+	// directly by application code. Public only because generated code lives
+	// in an arbitrary consumer package, not because these are part of RIP's
+	// application-facing API; see docs/design/compile-time-proxy-generation.md.
+	// Generated code assembles a request by calling a sequence of these
+	// (mirroring RestClientProcessor's own per-feature dispatch), then calls
+	// one "finishGenerated*" method matching its return type to execute and
+	// decode the response - the same request-building/execution machinery
+	// the reflective path above uses, minus the reflection.
+	// ---------------------------------------------------------------------
 
 	/**
-	 * Non-reflective entry point used by a compile-time-generated
-	 * {@code @RestClient} implementation (see
-	 * {@code com.shri.restinpeace.processor.RestClientProcessor}) for a
-	 * method whose HTTP verb, URL template, path/query param names, return
-	 * type, and (optional) {@code @Timeout}/{@code @Retry} are all known at
-	 * compile time - so building and decoding the request never needs to
-	 * look any of that up via reflection on a {@link Method}, unlike
-	 * {@link #processRestRequest} on the reflective proxy path. Still goes
-	 * through the same query-param, interceptor, timeout, retry, and
-	 * error-handling machinery as that path; a method using
-	 * {@code @Headers}, {@code @ErrorType}, or any other feature not listed
-	 * above is never routed here by the processor in the first place - see
-	 * {@code docs/design/compile-time-proxy-generation.md}.
-	 *
-	 * @param httpMethod       the method's HTTP verb
-	 * @param urlTemplate      the method's URL template, exactly as written
-	 *                         on its HTTP method annotation
-	 * @param interfaceBaseUrl the interface's {@code @BaseUrl} value, or
-	 *                         {@code null} if it has none - only consulted
-	 *                         when {@code urlTemplate} is relative and this
-	 *                         processor has no runtime base URL override
-	 * @param pathParamNames   the method's {@code @PathParam} placeholder
-	 *                         names, in declaration order
-	 * @param pathParamValues  the corresponding argument values
-	 * @param queryParamNames        the method's {@code @QueryParam} names, in
-	 *                               declaration order
-	 * @param queryParamValues       the corresponding argument values
-	 * @param returnType             the method's return type
-	 *                               ({@code void.class}, {@code String.class},
-	 *                               or a POJO class)
-	 * @param connectMillis          the method's {@code @Timeout}
-	 *                               {@code connectMillis}, or {@code -1} (its
-	 *                               own "unset" default) if it has no
-	 *                               {@code @Timeout}
-	 * @param readMillis             the method's {@code @Timeout}
-	 *                               {@code readMillis}, or {@code -1} if it
-	 *                               has no {@code @Timeout}
-	 * @param hasRetry               whether the method has a {@code @Retry}
-	 *                               at all - the five parameters below are
-	 *                               meaningless (and ignored) when this is
-	 *                               {@code false}
-	 * @param retryTimes             the method's {@code @Retry#times()}
-	 * @param retryDelayMillis       the method's {@code @Retry#delayMillis()}
-	 * @param retryBackoffMultiplier the method's
-	 *                               {@code @Retry#backoffMultiplier()}
-	 * @param retryOnStatus          the method's {@code @Retry#retryOnStatus()}
-	 * @return the decoded response body, or {@code null} for {@code void}
+	 * Resolves a generated method's request URL from its (possibly relative)
+	 * URL template, substituting {@code @PathParam}s - the generated-code
+	 * counterpart of {@link #resolveUrl}, used when the method has no
+	 * {@code @Url} parameter (which bypasses this entirely; see
+	 * {@link #requireUrlParam}).
 	 */
-	public Object processGeneratedRequest(HTTPMethod httpMethod, String urlTemplate, String interfaceBaseUrl,
-			String[] pathParamNames, Object[] pathParamValues, String[] queryParamNames, Object[] queryParamValues,
-			Class<?> returnType, int connectMillis, int readMillis, boolean hasRetry, int retryTimes,
-			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
-		String url = resolveUrlForGenerated(urlTemplate, interfaceBaseUrl, pathParamNames, pathParamValues);
-		RequestContext context = new RequestContext(httpMethod, url);
-		HttpRequest<?> request = createRequest(httpMethod, url);
-		applyTimeout(request, connectMillis, readMillis);
-		for (int i = 0; i < queryParamNames.length; i++) {
-			if (queryParamValues[i] != null) {
-				applyQueryValue(request, queryParamNames[i], queryParamValues[i]);
-			}
-		}
-		request = applyInterceptors(request, context);
-		HttpResponse<String> response = executeSyncWithRetry(null, returnType, context, request::asString, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
-		return decodeOrThrow(response, null, returnType);
-	}
-
-	private String resolveUrlForGenerated(String urlTemplate, String interfaceBaseUrl, String[] pathParamNames,
+	public String resolveGeneratedUrl(String urlTemplate, String interfaceBaseUrl, String[] pathParamNames,
 			Object[] pathParamValues) {
 		return substitutePathParamsLiteral(applyBaseUrlLiteral(urlTemplate, interfaceBaseUrl), pathParamNames,
 				pathParamValues);
+	}
+
+	/**
+	 * The generated-code counterpart of a method annotated {@code @Url}:
+	 * {@code value} used verbatim as the request URL, bypassing
+	 * {@link #resolveGeneratedUrl} (and everything it would otherwise
+	 * resolve - {@code @BaseUrl}, a runtime base URL, {@code @PathParam})
+	 * entirely, mirroring {@link #resolveUrlParam}.
+	 */
+	public static String requireUrlParam(Object value, String methodDescription) {
+		if (value == null) {
+			throw new RestInPeaceException(String.format("Missing value for @Url parameter in method %s.",
+					methodDescription));
+		}
+		return String.valueOf(value);
+	}
+
+	/**
+	 * Builds the request and applies its {@code @Timeout} (if any) - the
+	 * generated-code counterpart of {@link #createRequest(HTTPMethod, String)}
+	 * plus {@link #applyTimeout(HttpRequest, Method)}, taking
+	 * {@code @Timeout}'s values as literals (or {@code -1}, its own "unset"
+	 * default, for a method with none) instead of a reflective lookup.
+	 */
+	public HttpRequest<?> createGeneratedRequest(HTTPMethod httpMethod, String url, int connectMillis,
+			int readMillis) {
+		HttpRequest<?> request = createRequest(httpMethod, url);
+		applyTimeout(request, connectMillis, readMillis);
+		return request;
+	}
+
+	/** The generated-code counterpart of {@link #applyFixedHeaders}, taking {@code @Headers}' entries as a literal. */
+	public void applyGeneratedHeaders(HttpRequest<?> request, String[] headerEntries) {
+		applyHeaderEntries(request, headerEntries);
+	}
+
+	/**
+	 * Applies a query param or header value that has {@code @QueryParam}/
+	 * {@code @HeaderParam}'s {@code required}/{@code defaultValue} semantics -
+	 * shared by the reflective path's {@link #applyParams} and generated
+	 * code, which calls this directly then applies the result itself
+	 * ({@link #applyQueryValue} for a query param; {@code
+	 * request.headerReplace(name, String.valueOf(value))} - a plain public
+	 * Unirest call - for a header param, so no separate "generated header
+	 * param" method is needed).
+	 *
+	 * @return {@code argValue} if non-{@code null}, else {@code defaultValue}
+	 *         if set, else {@code null} (or a thrown exception if
+	 *         {@code required})
+	 */
+	public Object resolveValue(Object argValue, boolean required, String defaultValue, String paramName) {
+		if (argValue != null) {
+			return argValue;
+		}
+		if (!RIPConstant.DEFAULT.equals(defaultValue)) {
+			return defaultValue;
+		}
+		if (required) {
+			throw new RestInPeaceException(String.format("Missing required value for param '%s'.", paramName));
+		}
+		return null;
+	}
+
+	/** The generated-code counterpart of {@link #applyBody}, applying a {@code @Body} value only if it's non-{@code null}. */
+	public HttpRequest<?> applyGeneratedBodyIfPresent(HttpRequest<?> request, Object value) {
+		if (value == null) {
+			return request;
+		}
+		return applyBody(request, value,
+				"A @Body request was attempted on an HTTP method that does not support a request body.");
+	}
+
+	/**
+	 * Executes and decodes a sync request whose return type is {@code void},
+	 * {@code String}, or a POJO - the generated-code counterpart of the
+	 * plain (non-{@code byte[]}/{@code File}/{@code RipResponse}/
+	 * {@code CompletableFuture}) branch of {@link #processRestRequest},
+	 * applying registered interceptors first.
+	 */
+	public Object finishGeneratedSync(HttpRequest<?> request, RequestContext context, Class<?> returnType,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<String> response = executeSyncWithRetry(errorType, returnType, context, request::asString,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		return decodeOrThrow(response, errorType, returnType);
+	}
+
+	/** The generated-code counterpart of {@link #processRestRequest}'s {@code byte[]}-return branch. */
+	public byte[] finishGeneratedSyncBytes(HttpRequest<?> request, RequestContext context, Class<?> errorType,
+			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
+			int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		return (byte[]) decodeOrThrow(response, errorType, byte[].class);
+	}
+
+	/** The generated-code counterpart of {@link #processRestRequest}'s {@code File}-return branch. */
+	public File finishGeneratedSyncFile(HttpRequest<?> request, RequestContext context, File destination,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
+		return writeToFile(destination, bytes);
+	}
+
+	/**
+	 * The generated-code counterpart of {@link #processRestRequest}'s
+	 * {@code RipResponse<T>}-return branch for a {@code String}/POJO
+	 * {@code T} - {@code innerType} is {@code T}. Erased to
+	 * {@code RipResponse<?>}; generated code casts the result to its own
+	 * exact {@code RipResponse<T>} return type.
+	 */
+	public RipResponse<?> finishGeneratedSyncRipResponse(HttpRequest<?> request, RequestContext context,
+			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<String> response = executeSyncWithRetry(errorType, innerType, context, request::asString,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		return (RipResponse<?>) wrapResponse(response, decodeOrThrow(response, errorType, innerType));
+	}
+
+	/** The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedSyncRipResponse}, for a {@code RipResponse<byte[]>} return type. */
+	public RipResponse<byte[]> finishGeneratedSyncRipResponseBytes(HttpRequest<?> request, RequestContext context,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		request = applyInterceptors(request, context);
+		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		@SuppressWarnings("unchecked")
+		RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
+				decodeOrThrow(response, errorType, byte[].class));
+		return result;
+	}
+
+	/** The generated-code counterpart of {@link #processAsync}'s plain (non-{@code byte[]}/{@code File}/{@code RipResponse}) branch. */
+	public CompletableFuture<?> finishGeneratedAsync(HttpRequest<?> request, RequestContext context,
+			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, returnType, context, interceptedRequest::asStringAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> decodeOrThrow(response, errorType, returnType));
+	}
+
+	/** The generated-code counterpart of {@link #processAsync}'s {@code byte[]}-inner-type branch. */
+	public CompletableFuture<byte[]> finishGeneratedAsyncBytes(HttpRequest<?> request, RequestContext context,
+			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> (byte[]) decodeOrThrow(response, errorType, byte[].class));
+	}
+
+	/** The generated-code counterpart of {@link #processAsync}'s {@code File}-inner-type branch. */
+	public CompletableFuture<File> finishGeneratedAsyncFile(HttpRequest<?> request, RequestContext context,
+			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
+	}
+
+	/**
+	 * The generated-code counterpart of {@link #processAsync}'s
+	 * {@code RipResponse<T>}-inner-type branch for a {@code String}/POJO
+	 * {@code T}. Erased to {@code CompletableFuture<RipResponse<?>>};
+	 * generated code casts the result to its own exact
+	 * {@code CompletableFuture<RipResponse<T>>} return type.
+	 */
+	public CompletableFuture<RipResponse<?>> finishGeneratedAsyncRipResponse(HttpRequest<?> request,
+			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
+			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, innerType, context, interceptedRequest::asStringAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				.thenApply(response -> (RipResponse<?>) wrapResponse(response,
+						decodeOrThrow(response, errorType, innerType)));
+	}
+
+	/** The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedAsyncRipResponse}, for a {@code CompletableFuture<RipResponse<byte[]>>} return type. */
+	public CompletableFuture<RipResponse<byte[]>> finishGeneratedAsyncRipResponseBytes(HttpRequest<?> request,
+			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
+			double retryBackoffMultiplier, int[] retryOnStatus) {
+		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus).thenApply(response -> {
+					@SuppressWarnings("unchecked")
+					RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
+							decodeOrThrow(response, errorType, byte[].class));
+					return result;
+				});
 	}
 
 	private String applyBaseUrlLiteral(String url, String interfaceBaseUrl) {
@@ -319,12 +470,12 @@ public class RestRequestProcessor {
 		return request;
 	}
 
-	private <B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Method method,
+	private <B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
 			Class<?> returnType) {
 		if (INTERCEPTORS.isEmpty()) {
 			return;
 		}
-		Object body = decodeBody(response, method, returnType);
+		Object body = decodeBody(response, errorType, returnType);
 		// LIFO, mirroring beforeRequest: the first interceptor registered wraps every
 		// other one and is notified last, symmetric with it running beforeRequest first.
 		List<RequestInterceptor> reversed = new ArrayList<>(INTERCEPTORS);
@@ -334,59 +485,59 @@ public class RestRequestProcessor {
 
 	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, Object[] args,
 			RequestContext context) {
+		Class<?> errorType = errorTypeOf(method);
 		Type futureInnerType = resolveFutureInnerType(method);
 		if (isRipResponseType(futureInnerType)) {
 			Class<?> innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
 				return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
-						.thenApply(response -> wrapResponse(response, decodeOrThrow(response, method, innerType)));
+						.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
 			}
 			return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
-					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, method, innerType)));
+					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
 		}
 		Class<?> innerType = requireClass(futureInnerType, method);
 		if (innerType == byte[].class) {
 			return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
-					.thenApply(response -> decodeOrThrow(response, method, innerType));
+					.thenApply(response -> decodeOrThrow(response, errorType, innerType));
 		}
 		if (innerType == File.class) {
 			File destination = resolveDestinationFile(method, args);
-			return executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync)
-					.thenApply(response -> writeToFile(destination, (byte[]) decodeOrThrow(response, method, byte[].class)));
+			return executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync).thenApply(
+					response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
 		}
 		return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
-				.thenApply(response -> decodeOrThrow(response, method, innerType));
+				.thenApply(response -> decodeOrThrow(response, errorType, innerType));
 	}
 
 	/**
 	 * Decodes a settled response, throwing {@link RestInPeaceHttpException}
 	 * for a non-2xx status instead of returning a value.
 	 */
-	private Object decodeOrThrow(HttpResponse<?> response, Method method, Class<?> returnType) {
+	private Object decodeOrThrow(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
 		if (!isSuccessStatus(response.getStatus())) {
 			throw new RestInPeaceHttpException(response.getStatus(), toRawBodyString(response.getBody()),
-					decodeBody(response, method, returnType));
+					decodeBody(response, errorType, returnType));
 		}
-		return decodeBody(response, method, returnType);
+		return decodeBody(response, errorType, returnType);
 	}
 
 	/**
 	 * Decodes a response's body for a success status (into {@code returnType},
 	 * the same as {@link #decodeOrThrow}'s success case) or a non-2xx one
-	 * (into the method's {@code @ErrorType}, or left as the raw body if it
-	 * has none) - without throwing either way, for reporting to
-	 * interceptors mid-retry as well as for the final settled response.
-	 * {@code method} is {@code null} for a compile-time-generated call (see
-	 * {@link #processGeneratedRequest}), which never has an {@code @ErrorType}
-	 * to look up.
+	 * (into {@code errorType}, or left as the raw body if it's {@code null})
+	 * - without throwing either way, for reporting to interceptors mid-retry
+	 * as well as for the final settled response. The reflective path derives
+	 * {@code errorType} from {@code method.getAnnotation(ErrorType.class)};
+	 * a compile-time-generated call passes its {@code @ErrorType}'s value as
+	 * a literal, or {@code null} if it has none.
 	 */
-	private Object decodeBody(HttpResponse<?> response, Method method, Class<?> returnType) {
+	private Object decodeBody(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
 		Object rawBody = response.getBody();
 		if (!isSuccessStatus(response.getStatus())) {
 			String rawBodyString = toRawBodyString(rawBody);
-			ErrorType errorType = method == null ? null : method.getAnnotation(ErrorType.class);
 			if (errorType != null && rawBodyString != null && !rawBodyString.isEmpty()) {
-				return getObjectMapper().readValue(rawBodyString, errorType.value());
+				return getObjectMapper().readValue(rawBodyString, errorType);
 			}
 			return rawBodyString;
 		}
@@ -422,30 +573,37 @@ public class RestRequestProcessor {
 
 	private <B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call) {
+		Class<?> errorType = errorTypeOf(method);
 		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
 		if (retry == null) {
-			return executeSyncWithRetry(method, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
+			return executeSyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
 		}
-		return executeSyncWithRetry(method, returnType, context, call, true, retry.times(), retry.delayMillis(),
+		return executeSyncWithRetry(errorType, returnType, context, call, true, retry.times(), retry.delayMillis(),
 				retry.backoffMultiplier(), retry.retryOnStatus());
 	}
 
+	private static Class<?> errorTypeOf(Method method) {
+		if (method == null) {
+			return null;
+		}
+		ErrorType errorType = method.getAnnotation(ErrorType.class);
+		return errorType == null ? null : errorType.value();
+	}
+
 	/**
-	 * Non-reflective counterpart taking {@code @Retry}'s values as literal
-	 * arguments instead of an annotation lookup, shared by the reflective
-	 * path above (which still derives {@code method}, for
-	 * {@link #notifyAfterResponse}'s {@code @ErrorType} lookup, even when
-	 * {@code hasRetry} is {@code false}) and
-	 * {@link #processGeneratedRequest}'s compile-time-generated call
-	 * ({@code method} is {@code null} there, so it never has an
-	 * {@code @ErrorType} to look up either).
+	 * Non-reflective counterpart taking {@code @Retry}'s values and
+	 * {@code @ErrorType}'s value as literal arguments instead of annotation
+	 * lookups, shared by the reflective path above (which derives both from
+	 * {@code method}) and every {@code processGenerated*} entry point used
+	 * by compile-time-generated code, which has both as compile-time
+	 * literals (or {@code null}/{@code false} if the method has neither).
 	 */
-	private <B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
+	private <B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Class<?> returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call, boolean hasRetry, int times, long delayMillis, double backoffMultiplier,
 			int[] retryOnStatus) {
 		if (!hasRetry) {
 			HttpResponse<B> response = call.get();
-			notifyAfterResponse(context, response, method, returnType);
+			notifyAfterResponse(context, response, errorType, returnType);
 			return response;
 		}
 		long delay = delayMillis;
@@ -454,7 +612,7 @@ public class RestRequestProcessor {
 			RuntimeException failure = null;
 			try {
 				response = call.get();
-				notifyAfterResponse(context, response, method, returnType);
+				notifyAfterResponse(context, response, errorType, returnType);
 			} catch (RuntimeException e) {
 				failure = e;
 			}
@@ -472,25 +630,44 @@ public class RestRequestProcessor {
 
 	private <B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
+		Class<?> errorType = errorTypeOf(method);
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
+			return executeAsyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
+		}
+		return executeAsyncWithRetry(errorType, returnType, context, call, true, retry.times(), retry.delayMillis(),
+				retry.backoffMultiplier(), retry.retryOnStatus());
+	}
+
+	/**
+	 * Non-reflective counterpart taking {@code @Retry}'s values and
+	 * {@code @ErrorType}'s value as literal arguments, mirroring
+	 * {@link #executeSyncWithRetry(Class, Class, RequestContext, Supplier, boolean, int, long, double, int[])}
+	 * for the async path.
+	 */
+	private <B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Class<?> returnType,
+			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call, boolean hasRetry, int times,
+			long delayMillis, double backoffMultiplier, int[] retryOnStatus) {
+		if (!hasRetry) {
 			return call.get().thenApply(response -> {
-				notifyAfterResponse(context, response, method, returnType);
+				notifyAfterResponse(context, response, errorType, returnType);
 				return response;
 			});
 		}
-		return attemptAsync(call, method, returnType, context, retry, 1, retry.delayMillis());
+		return attemptAsync(call, errorType, returnType, context, times, backoffMultiplier, retryOnStatus, 1,
+				delayMillis);
 	}
 
 	private <B> CompletableFuture<HttpResponse<B>> attemptAsync(Supplier<CompletableFuture<HttpResponse<B>>> call,
-			Method method, Class<?> returnType, RequestContext context, Retry retry, int attempt, long delay) {
+			Class<?> errorType, Class<?> returnType, RequestContext context, int times, double backoffMultiplier,
+			int[] retryOnStatus, int attempt, long delay) {
 		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
 		call.get().whenComplete((response, failure) -> {
 			if (response != null) {
-				notifyAfterResponse(context, response, method, returnType);
+				notifyAfterResponse(context, response, errorType, returnType);
 			}
-			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retry.retryOnStatus());
-			if (!retryable || attempt >= retry.times()) {
+			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
+			if (!retryable || attempt >= times) {
 				if (failure != null) {
 					result.completeExceptionally(failure);
 				} else {
@@ -499,8 +676,8 @@ public class RestRequestProcessor {
 				return;
 			}
 			RETRY_SCHEDULER.schedule(
-					() -> attemptAsync(call, method, returnType, context, retry, attempt + 1,
-							nextDelay(delay, retry.backoffMultiplier()))
+					() -> attemptAsync(call, errorType, returnType, context, times, backoffMultiplier, retryOnStatus,
+							attempt + 1, nextDelay(delay, backoffMultiplier))
 							.whenComplete((r, t) -> {
 								if (t != null) {
 									result.completeExceptionally(t);
@@ -732,7 +909,11 @@ public class RestRequestProcessor {
 		if (headers == null) {
 			return;
 		}
-		for (String entry : headers.value()) {
+		applyHeaderEntries(request, headers.value());
+	}
+
+	private static void applyHeaderEntries(HttpRequest<?> request, String[] entries) {
+		for (String entry : entries) {
 			int colon = entry.indexOf(':');
 			String name = entry.substring(0, colon).trim();
 			String value = entry.substring(colon + 1).trim();
@@ -786,7 +967,8 @@ public class RestRequestProcessor {
 		return null;
 	}
 
-	private void applyDownloadMonitor(HttpRequest<?> request, DownloadProgressListener listener) {
+	/** Also used directly by compile-time-generated code for a {@code DownloadProgressListener} parameter. */
+	public void applyDownloadMonitor(HttpRequest<?> request, DownloadProgressListener listener) {
 		if (listener == null) {
 			return;
 		}
@@ -794,9 +976,19 @@ public class RestRequestProcessor {
 				.onProgress(bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
 	}
 
-	private void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
+	/** Also used directly by compile-time-generated code for an {@code UploadProgressListener} parameter. */
+	public void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
 		multipartBody.uploadMonitor((field, fileName, bytesWritten, totalBytes) -> listener.onProgress(field,
 				bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
+	}
+
+	/**
+	 * The generated-code counterpart of the reflective path's own
+	 * {@code ((HttpRequestWithBody) request).multiPartContent()} call for a
+	 * {@code @Multipart} method - see {@link #applyParams}.
+	 */
+	public MultipartBody beginGeneratedMultipart(HttpRequest<?> request) {
+		return ((HttpRequestWithBody) request).multiPartContent();
 	}
 
 	private static File writeToFile(File destination, byte[] bytes) {
@@ -880,7 +1072,8 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
+	/** Also used directly by compile-time-generated code for a {@code @PartMap} parameter. */
+	public void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
 		partMap.forEach((name, value) -> {
 			if (value != null) {
 				applyPartValue(multipartBody, String.valueOf(name), "", value);
@@ -888,7 +1081,8 @@ public class RestRequestProcessor {
 		});
 	}
 
-	private void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
+	/** Also used directly by compile-time-generated code for a {@code @Part} parameter. */
+	public void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
 		Object effectiveValue = value;
 		String effectiveFileName = fileName;
 		if (value instanceof PartValue) {
@@ -920,7 +1114,8 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private void applyQueryMap(HttpRequest<?> request, Map<?, ?> queryMap) {
+	/** Also used directly by compile-time-generated code for a {@code @QueryMap} parameter. */
+	public void applyQueryMap(HttpRequest<?> request, Map<?, ?> queryMap) {
 		queryMap.forEach((name, value) -> {
 			if (value != null) {
 				applyQueryValue(request, String.valueOf(name), value);
@@ -934,9 +1129,10 @@ public class RestRequestProcessor {
 	 * a {@code Collection} (e.g. a {@code List<String>} of tags producing
 	 * {@code ?tag=a&tag=b}), matching Unirest's own
 	 * {@code queryString(String, Collection)} overload that {@code Object}-typed
-	 * dispatch would otherwise never reach.
+	 * dispatch would otherwise never reach. Also used directly by
+	 * compile-time-generated code for a {@code @QueryParam}.
 	 */
-	private static void applyQueryValue(HttpRequest<?> request, String name, Object value) {
+	public static void applyQueryValue(HttpRequest<?> request, String name, Object value) {
 		if (value instanceof Collection) {
 			request.queryString(name, (Collection<?>) value);
 		} else {
@@ -944,7 +1140,8 @@ public class RestRequestProcessor {
 		}
 	}
 
-	private void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
+	/** Also used directly by compile-time-generated code for a {@code @HeaderMap} parameter. */
+	public void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
 		headerMap.forEach((name, value) -> {
 			if (value != null) {
 				request.headerReplace(String.valueOf(name), String.valueOf(value));
@@ -953,10 +1150,14 @@ public class RestRequestProcessor {
 	}
 
 	private HttpRequest<?> applyBody(HttpRequest<?> request, Method method, Object value) {
+		return applyBody(request, value, String.format(
+				"The method %s is annotated with @Body but its HTTP method does not support a request body.",
+				method));
+	}
+
+	private HttpRequest<?> applyBody(HttpRequest<?> request, Object value, String unsupportedMessage) {
 		if (!(request instanceof HttpRequestWithBody)) {
-			throw new RestInPeaceException(String.format(
-					"The method %s is annotated with @Body but its HTTP method does not support a request body.",
-					method));
+			throw new RestInPeaceException(unsupportedMessage);
 		}
 		HttpRequestWithBody bodyRequest = (HttpRequestWithBody) request;
 		if (value instanceof String) {
@@ -998,19 +1199,6 @@ public class RestRequestProcessor {
 		} catch (UnsupportedEncodingException e) {
 			throw new RestInPeaceException("UTF-8 encoding is not supported by this JVM.", e);
 		}
-	}
-
-	private Object resolveValue(Object argValue, boolean required, String defaultValue, String paramName) {
-		if (argValue != null) {
-			return argValue;
-		}
-		if (!RIPConstant.DEFAULT.equals(defaultValue)) {
-			return defaultValue;
-		}
-		if (required) {
-			throw new RestInPeaceException(String.format("Missing required value for param '%s'.", paramName));
-		}
-		return null;
 	}
 
 }
