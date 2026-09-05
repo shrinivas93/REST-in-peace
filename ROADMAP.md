@@ -156,6 +156,34 @@ for reference rather than tracked in code. Check items off as they land.
       for the wrong reason. A transport-swap version remains a possible
       future addition if real usage ever shows the socket overhead is
       actually a problem - not before.
+      - [x] **Follow-up: routing/ergonomics enhancements.** Four of the
+            enhancement ideas noted when this shipped, picked for being
+            cheap and immediately useful rather than speculative:
+            `MockRestServer.reset()` clears queued responses, registered
+            routes, and recorded requests, so one server can be reused
+            across a test class's methods instead of paying to start a new
+            one each time; `MockResponse.json(Object)` serializes a plain
+            object with the same Unirest `ObjectMapper` RIP itself
+            delegates to, instead of hand-writing JSON strings;
+            `MockRestServer.on(httpMethod, pathTemplate, queryParams,
+            response)` adds an optional exact-match query-param constraint
+            to route matching, for an endpoint that behaves differently by
+            query param (e.g. `?status=active` vs. `?status=archived`);
+            and `MockRestServerExtension` (a JUnit 5
+            `BeforeEachCallback`/`AfterEachCallback`) removes the
+            `@BeforeEach`/`@AfterEach` `MockRestServer.start()`/`.close()`
+            boilerplate every test class otherwise needs. The extension
+            required promoting `junit-jupiter` from `test` to `provided`
+            scope in `pom.xml`, since a main-source class now implements
+            JUnit 5 extension interfaces - verified non-transitive (a
+            consumer's own `dependency:tree` shows no `junit-jupiter`
+            entry at all), so this costs nothing for a consumer who
+            doesn't use the extension. Remaining enhancement ideas (slow/
+            broken-connection simulation, multipart part introspection,
+            a "flaky mode", auto-logging on failure, record/replay) are
+            still deliberately deferred, per the same "don't build the
+            expensive version before real usage shows you need it"
+            reasoning as the transport-swap option above.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,

@@ -128,6 +128,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   server rather than a fake transport, `@Retry`, `@Timeout`, and every
   registered `RequestInterceptor` run completely unmodified, against both
   the reflective and compile-time-generated dispatch paths.
+- Four follow-up enhancements to `MockRestServer`: `.reset()` clears queued
+  responses, registered routes, and recorded requests, so one server can be
+  reused across a test class's methods instead of starting a new one each
+  time; `MockResponse.json(Object)` serializes a plain object with the same
+  Unirest `ObjectMapper` RIP itself delegates to, instead of hand-writing
+  JSON strings; `.on(httpMethod, pathTemplate, queryParams, response)` adds
+  an optional exact-match query-param constraint to route matching, for an
+  endpoint that behaves differently by query param (e.g. `?status=active`
+  vs. `?status=archived`); and `com.shri.restinpeace.mock.MockRestServerExtension`,
+  a JUnit 5 `BeforeEachCallback`/`AfterEachCallback`, starts a fresh server
+  before each test and stops it afterward, removing the
+  `@BeforeEach`/`@AfterEach` boilerplate otherwise needed. The extension
+  required promoting `junit-jupiter` from `test` to `provided` scope, since
+  it's now implemented by a main-source class - verified non-transitive, so
+  this costs nothing for a consumer who doesn't use it.
 
 ### Changed
 
