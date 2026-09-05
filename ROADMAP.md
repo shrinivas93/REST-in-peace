@@ -126,8 +126,304 @@ for reference rather than tracked in code. Check items off as they land.
       settings (`verifySsl`, mutual TLS) or duplicating a mechanism RIP
       already has a better answer for (default headers, via
       `HeaderInterceptor`).
-- [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
-      `@RestClient` interfaces without hitting real HTTP.
+- [x] **A `MockRestServer` test double** — let consumers unit-test their
+      `@RestClient` interfaces without hitting real HTTP. Originally scoped
+      as "a `MockInterceptor`" in this item's own title, but
+      `RequestInterceptor` turned out to be architecturally unable to do
+      this - it's a pure observer (`beforeRequest`/`afterResponse`), with no
+      way to short-circuit the real network call and substitute a canned
+      response. Implemented instead as `com.shri.restinpeace.mock.MockRestServer`
+      - a real, local `com.sun.net.httpserver.HttpServer` (the same one this
+      project's own integration test suite already uses), not a fake
+      transport swapped in underneath Unirest. Deliberate tradeoff: a
+      transport-swap approach (implementing Unirest's own `Client`/
+      `AsyncClient` SPI, ~20 methods across two interfaces) would run
+      without real sockets, but leaks a third-party SPI into RIP's public
+      surface, skips real request serialization entirely (the swap point
+      sits above where Unirest turns a request into wire bytes), and needs
+      two parallel fake implementations kept in lockstep with every future
+      return-type shape. A real embedded server has none of those costs -
+      `@Retry`, `@Timeout`, and every registered `RequestInterceptor` all
+      run completely unmodified, against both the reflective and
+      compile-time-generated dispatch paths - at the cost of using real
+      loopback sockets instead of an in-memory fake. `MockRestServer.on(...)`
+      registers a sticky response for a method+path (with `{name}`
+      placeholder matching); `MockRestServer.enqueue(...)` scripts a
+      one-time sequence (e.g. a `503` then a `200`, to prove `@Retry`
+      recovers); `RecordedRequest` exposes the path, query params, headers,
+      and body of what was actually received; an unmatched request fails
+      loudly (a `500` with a clear message) instead of silently succeeding
+      for the wrong reason. A transport-swap version remains a possible
+      future addition if real usage ever shows the socket overhead is
+      actually a problem - not before.
+      - [x] **Follow-up: routing/ergonomics enhancements.** Four of the
+            enhancement ideas noted when this shipped, picked for being
+            cheap and immediately useful rather than speculative:
+            `MockRestServer.reset()` clears queued responses, registered
+            routes, and recorded requests, so one server can be reused
+            across a test class's methods instead of paying to start a new
+            one each time; `MockResponse.json(Object)` serializes a plain
+            object with the same Unirest `ObjectMapper` RIP itself
+            delegates to, instead of hand-writing JSON strings;
+            `MockRestServer.on(httpMethod, pathTemplate, queryParams,
+            response)` adds an optional exact-match query-param constraint
+            to route matching, for an endpoint that behaves differently by
+            query param (e.g. `?status=active` vs. `?status=archived`);
+            and `MockRestServerExtension`, a JUnit 5 extension registered
+            with `@ExtendWith`, starts one server per test class,
+            `reset()`s it before each test, and resolves it as a test (or
+            `@BeforeEach`) method parameter - removing the
+            `@BeforeEach`/`@AfterEach` `MockRestServer.start()`/`.close()`
+            boilerplate, and, because the server's base URL is now stable
+            for the whole class, the need to rebuild a `@RestClient` proxy
+            per test too. Sharing one server across a class's tests isn't
+            safe under parallel test execution within that class - not a
+            concern for the common case, but worth knowing. The extension
+            required promoting `junit-jupiter` from `test` to `provided`
+            scope in `pom.xml`, since a main-source class now implements
+            JUnit 5 extension interfaces - verified non-transitive (a
+            consumer's own `dependency:tree` shows no `junit-jupiter`
+            entry at all), so this costs nothing for a consumer who
+            doesn't use the extension.
+      - [x] **Follow-up: two correctness fixes found by re-reading the
+            implementation.** `MockRestServer.routes` was a bare
+            `ArrayList`, unlike the already-`synchronized`-wrapped `queue`
+            and `recorded` fields - a route registered (`.on(...)`) while a
+            prior async (`CompletableFuture`) request from the same test
+            was still being served raced a plain `ArrayList` read against a
+            write. Wrapped in `Collections.synchronizedList(...)` to match
+            the other two fields, with `reset()` and the route-matching
+            loop in `handle(...)` both now synchronizing on it explicitly
+            (a `synchronizedList`'s iteration still needs external
+            synchronization - wrapping alone isn't enough). Not covered by
+            a new test - a race condition doesn't have a deterministic
+            repro, so this is a code-inspection fix verified by matching
+            the existing pattern, not a red-then-green test.
+            Separately, `MockResponse.header(name, value)` stored into a
+            `Map<String, String>`, so calling it twice for the same name
+            silently replaced the first value instead of adding a second -
+            unlike `RecordedRequest`/`RipResponse`, both of which already
+            support a header repeating (e.g. multiple `Set-Cookie`
+            headers). Changed to `Map<String, List<String>>`, appending on
+            each call; `writeTo` now calls the underlying
+            `HttpExchange`'s `Headers.add(...)` per value instead of
+            `.set(...)`. Covered by a new test exercising two `.header(...)`
+            calls for the same name through a real request/response round
+            trip.
+      - [x] **Follow-up: the two must-have gaps from the triage below.**
+            `MockRestServer`'s own javadoc claims `@Retry`, `@Timeout`,
+            and every registered `RequestInterceptor` "run completely
+            unmodified" through it - these closed the two cases that
+            couldn't actually be exercised:
+            - `MockResponse.connectionFailure()` closes the connection
+              before sending any response, instead of returning an HTTP
+              status - proving RIP's "no response at all" error path (a
+              `kong.unirest.UnirestException` thrown directly, never
+              wrapped in `RestInPeaceHttpException`) behaves as
+              documented, and that `@Retry` treats it as unconditionally
+              retryable regardless of `retryOnStatus`. Verified Apache
+              HttpClient's own internal `NoHttpResponseException` retry
+              (visible in test output as several automatic retries against
+              the same closed connection) doesn't interfere - RIP's own
+              retry logic and single-shot calls both still see the correct
+              final outcome.
+            - `MockResponse.delay(millis)` sleeps before sending the
+              response, to simulate a slow server - the only way to prove
+              `@Timeout(readMillis = ...)` (or
+              `RipClientConfig.readTimeoutMillis(...)`) actually fires,
+              rather than assuming it does because the annotation is
+              present. `RipIntegrationTest` already hand-rolled this exact
+              pattern (a raw `HttpServer` handler with `Thread.sleep(...)`)
+              to test `@Timeout` - this formalizes it as a first-class
+              `MockRestServer` capability instead of requiring every
+              consumer to duplicate that setup themselves.
+      - [x] **Follow-up: fixed the `on`/`enqueue` interaction bug, then
+            per-route enqueue and flaky mode.** `enqueue(...)`'s own
+            javadoc claimed it was "the way to script a sequence of
+            responses to the same endpoint," but that was only true for a
+            path with no route registered via `on(...)` at all - route
+            matching happens unconditionally before the queue is ever
+            consulted, so a route always shadowed it completely for that
+            path. Fixed by giving each route its own one-time-response
+            queue: `MockRestServer.enqueueFor(httpMethod, pathTemplate,
+            response)` scripts a response for a route already registered
+            via `on(...)`, consumed before that route's sticky response -
+            so "fail twice then succeed forever" can now be expressed for
+            a route that also has a sticky final answer, which was
+            previously impossible to combine. `onFlaky(httpMethod,
+            pathTemplate, failuresBeforeSuccess, failureResponse,
+            successResponse)` is sugar on top of the same mechanism
+            (register the sticky success, then call `enqueueFor` with the
+            failure that many times) - the actual "flaky mode" ask.
+            `enqueue(...)`'s javadoc now correctly documents the
+            limitation instead of overpromising.
+      - [x] **Follow-up: `on(...)` upsert instead of append, plus
+            `remove(...)`, closing a related dead-code footgun.**
+            Registering the same `(httpMethod, pathTemplate,
+            requiredQueryParams)` route twice used to append a second,
+            permanently-shadowed `Route` (the first registration always
+            wins, since routes match in registration order) - silently
+            dead code, and no way to change or remove a route's behavior
+            mid-test without a full `reset()`, which also wipes queued
+            responses and recorded-request history. `on(...)` now
+            replaces the existing route in place (same list position, so
+            precedence relative to other routes is unaffected) when
+            called again with the same key; `MockRestServer.remove(httpMethod,
+            pathTemplate)` removes a route outright (returning `false` if
+            none matched), for a test that wants an endpoint to stop
+            being covered by any route rather than replacing what it
+            returns.
+      - [x] **Follow-up: matching on request headers or body content.**
+            `MockRestServer.on(httpMethod, pathTemplate, matcher,
+            response)` takes a `Predicate<RecordedRequest>` checked
+            alongside the path/method match, for a constraint the
+            `requiredQueryParams` overload can't express - a header value
+            (`request -> "v2".equals(request.getHeader("X-Api-Version"))`)
+            or the request body
+            (`request -> request.getBody().contains("premium")`). Kept as
+            a general predicate rather than a second `requiredHeaders`
+            map (which would've meant two same-typed `Map` parameters on
+            one overload) - one mechanism covers headers, body content,
+            or any combination, instead of needing a new parameter for
+            each. Deliberately excluded from `on(...)`'s upsert and from
+            `enqueueFor`/`remove`'s lookup: two arbitrary `Predicate`s
+            can't be compared for equality the way a `requiredQueryParams`
+            map can, so re-registering with a matcher always appends
+            rather than replacing.
+      - [x] **Follow-up: decoded multipart-part access on
+            `RecordedRequest`.** `getParts()` decodes a
+            `multipart/form-data` body into individual `Part`s (name,
+            optional file name, optional content type, content), for
+            asserting on what a `@Multipart` method actually sent instead
+            of substring-matching the raw encoded body. Required a
+            correctness fix underneath: `RecordedRequest` previously
+            captured the body as a single UTF-8-decoded `String` at
+            capture time - lossy for a `@Multipart` request's binary parts
+            (a `byte[]`/`InputStream`/non-text `File` part), since the raw
+            bytes were already gone by the time anything tried to read
+            them back. Now captures raw `byte[]` instead, with `getBody()`
+            decoding to UTF-8 on demand (unchanged observable behavior for
+            a text body) and a new `getRawBody()` for binary-safe access.
+            The multipart parser itself is hand-written (the JDK has none
+            built in): finds the boundary from the `Content-Type` header,
+            splits the raw bytes on it, and parses each part's
+            `Content-Disposition`/`Content-Type` sub-headers - verified
+            directly against Unirest's own real wire format (not assumed),
+            passing on the first attempt.
+      - [x] **Follow-up: verification sugar - `countOf(httpMethod,
+            pathTemplate)`.** Answers "was this endpoint called, and how
+            many times" without manually filtering
+            `getRecordedRequests()` or looping over `takeRequest()`.
+            Deliberately a plain `int`-returning primitive a test wraps in
+            its own `assertEquals(...)`, rather than a `server.verify(...)`
+            assertion DSL - this library hasn't added a custom assertion
+            framework anywhere else, and the roadmap's own original
+            phrasing for this item was just a sketch, not a committed
+            API shape. Reuses `Route`'s private path-template-to-`Pattern`
+            compilation (accessible from the enclosing `MockRestServer`
+            class, since a nested class's private members are visible to
+            its enclosing class in Java) rather than duplicating that
+            logic.
+      - [x] **Follow-up: route-coverage assertion -
+            `getUnhitRoutes()`.** Returns every registered route that
+            hasn't matched any recorded request yet, as `"METHOD path"`
+            strings - catches a route left registered after the
+            code path that used to exercise it was removed, which
+            otherwise causes no failure at all. Each `Route` now tracks
+            whether it's ever been selected as a match (a `volatile
+            boolean`, flipped in `handle(...)` alongside sending its
+            response - a one-directional flag needs no stronger
+            synchronization than that), reported back as a plain
+            `"METHOD pathTemplate"` string since `Route` itself is
+            private and can't be handed out directly. With this, every
+            item from the original "good to have" tier is now done -
+            only the "not needed now" tier remains, unless real usage
+            surfaces a reason to reconsider one:
+            - **Not needed now** - niche or speculative; no known use
+              case yet:
+              - Multi-segment wildcard paths (`/orders/**`), not just
+                single-segment `{name}`.
+              - Chunked/delayed response body writing (today's `writeTo`
+                does one `OutputStream.write` for the whole body), so a
+                `DownloadProgressListener`-consuming test could
+                deterministically observe more than one progress
+                callback.
+              - Auto-dumping recorded requests/responses when a test
+                fails.
+              - HTTPS/TLS support (loopback plain-HTTP only today -
+                relevant only if a client under test hardcodes a TLS
+                assumption).
+            Same reasoning as the transport-swap option and the first
+            follow-up round above applies here too - these are documented
+            for when real usage shows a need, not built speculatively.
+      - [x] **Follow-up: a second must-have found on a fresh discovery
+            pass - `RecordedRequest.getReceivedAt()`.** `@Retry`'s own
+            javadoc makes a precise, numeric claim: waiting
+            `delayMillis()` between attempts and "multiplying that wait
+            by `backoffMultiplier()` after each one." Until now there was
+            no way to verify that claim at all through `MockRestServer` -
+            only that N attempts happened, never that the gap between
+            them actually grew. A silently-broken backoff multiplier
+            (hardcoded to `1.0`, or applied in the wrong direction) would
+            have passed every existing test. `getReceivedAt()` timestamps
+            each request as it's captured (`Instant.now()`, taken after
+            the body is fully read, so it reflects "fully received" for
+            every request consistently), letting a test measure the gap
+            between consecutive attempts directly. Two other fresh-pass
+            candidates - simulating a redirect response and a
+            gzip-compressed one - were considered but didn't clear the
+            same bar: RIP has no code and makes no documented claim about
+            either, so there's no broken promise to prove, only an
+            unverified reliance on Apache HttpClient's default behavior -
+            a real but weaker risk, left as good-to-have-tier candidates
+            rather than built here.
+      - [ ] **Parked: record/replay against real traffic captured once**
+            (pulled out of the "not needed now" list above - explicit
+            interest, revisit this before the rest of that tier). A
+            "record mode" that proxies real requests through to a real
+            base URL, capturing method/path/query/headers/body/response
+            into a persisted format (a VCR/WireMock-style "cassette"),
+            and a "replay mode" that reads that format back and
+            auto-registers matching routes - so a complex third-party
+            API's actual responses can be captured once and replayed
+            offline/deterministically forever after, instead of
+            hand-writing every `MockResponse`. Substantially bigger than
+            every other `MockRestServer` follow-up so far - closer to a
+            second, small feature (a minimal WireMock) than an
+            incremental addition to the existing `on`/`enqueue` model.
+            For testing *your* client code against a third-party API you
+            don't control - a different use case from the rest of
+            `MockRestServer`, which exists to test RIP's own `@Retry`/
+            `@Timeout`/interceptor behavior. Not designed yet; a few
+            things worth keeping from an expansion pass:
+            - **Record mode can likely reuse existing plumbing almost for
+              free**, rather than needing a separate proxy class:
+              `handle(...)`'s current fallback for an unmatched request
+              (the "no response was queued or registered" `500`) is
+              exactly the hook point - replace it with "forward to a
+              configured upstream base URL and capture the real
+              request/response" instead of failing loudly.
+            - **Replay of the same request recorded more than once**
+              (e.g. a real `503` followed by a real retry's `200`) maps
+              directly onto `enqueueFor(...)` (already built) - script
+              the exact recorded sequence instead of one fixed response,
+              no new mechanism needed.
+            - **Replay of the same path distinguished by query params**
+              (e.g. pagination) maps directly onto the existing
+              `requiredQueryParams` overload of `on(...)` - also no new
+              matching logic needed.
+            - **A real, non-optional risk**: a cassette can capture
+              sensitive headers (`Authorization`, API keys) or response
+              fields, and cassette files are the kind of thing that end
+              up committed to source control. A redaction/filter hook
+              before anything is persisted isn't a nice-to-have, it's a
+              precondition for this being safe to ship.
+            - A **replay-only first slice** (cassette produced some other
+              way, no recording/forwarding mode yet) would prove the
+              concept - given the two synergies above, most of what
+              replay needs may already exist - before taking on the
+              real-network-forwarding and redaction complexity that
+              record mode requires.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,

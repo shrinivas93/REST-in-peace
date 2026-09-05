@@ -31,10 +31,16 @@
 			<version>${unirest.version}</version>
 		</dependency>
 		<dependency>
+			<!-- provided, not test: MockRestServerExtension (main source) implements
+			     JUnit 5 extension interfaces, so this needs to be on the main
+			     compile classpath too, not just test. provided is still
+			     non-transitive - consumers who never reference that class see no
+			     dependency change; using it just requires junit-jupiter-api on
+			     their own test classpath, which a JUnit 5 project already has. -->
 			<groupId>org.junit.jupiter</groupId>
 			<artifactId>junit-jupiter</artifactId>
 			<version>${junit.version}</version>
-			<scope>test</scope>
+			<scope>provided</scope>
 		</dependency>
 	</dependencies>
 
