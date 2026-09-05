@@ -271,6 +271,33 @@ class MockRestServerTest {
 		assertEquals(1, server.requestCount());
 	}
 
+	@Test
+	void onRouteWithMatcher_onlyMatchesWhenTheHeaderPredicateIsTrue() {
+		server.on(HTTPMethod.GET, "/secure", request -> "Bearer good-token".equals(request.getHeader("Authorization")),
+				MockResponse.ok("granted"));
+		server.on(HTTPMethod.GET, "/secure", MockResponse.status(403, "denied"));
+
+		String granted = api.getSecure("Bearer good-token");
+		RestInPeaceHttpException denied = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getSecure("Bearer bad-token"));
+
+		assertEquals("granted", granted);
+		assertEquals(403, denied.getStatus());
+	}
+
+	@Test
+	void onRouteWithMatcher_canMatchOnBodyContent() {
+		server.on(HTTPMethod.POST, "/orders", request -> request.getBody().contains("premium"),
+				MockResponse.ok("{\"orderId\":\"premium-1\"}"));
+		server.on(HTTPMethod.POST, "/orders", MockResponse.ok("{\"orderId\":\"standard-1\"}"));
+
+		String premium = api.createOrder("{\"sku\":\"premium-item\"}");
+		String standard = api.createOrder("{\"sku\":\"basic-item\"}");
+
+		assertEquals("{\"orderId\":\"premium-1\"}", premium);
+		assertEquals("{\"orderId\":\"standard-1\"}", standard);
+	}
+
 	private static final class OrderStatus {
 		@SuppressWarnings("unused")
 		public final String status;
