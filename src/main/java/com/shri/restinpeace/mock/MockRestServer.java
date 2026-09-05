@@ -9,6 +9,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -166,6 +167,39 @@ public final class MockRestServer implements AutoCloseable {
 				routes.add(route);
 			}
 		}
+		return this;
+	}
+
+	/**
+	 * Same as {@link #on(HTTPMethod, String, MockResponse)}, but only
+	 * matches a request for which {@code matcher} also returns
+	 * {@code true} - for matching on a request header or the request body,
+	 * neither of which the {@code requiredQueryParams} overload covers,
+	 * e.g. {@code request -> "v2".equals(request.getHeader("X-Api-Version"))}
+	 * or {@code request -> request.getBody().contains("\"tier\":\"premium\"")}.
+	 * As with the other overloads, routes are checked in registration order
+	 * and the first match wins - register the more specific (matcher)
+	 * route first if a less specific one for the same path would otherwise
+	 * shadow it.
+	 *
+	 * <p>
+	 * Unlike the other {@code on(...)} overloads, calling this again never
+	 * replaces an earlier registration - two arbitrary {@link Predicate}s
+	 * can't be compared for equality the way a {@code requiredQueryParams}
+	 * map can, so there's no reliable way to tell whether it's "the same"
+	 * route being re-registered. Use {@link #remove} first if that's the
+	 * intent.
+	 *
+	 * @param httpMethod   the HTTP method to match
+	 * @param pathTemplate the path to match, with optional {@code {name}}
+	 *                     placeholders
+	 * @param matcher      an additional condition the request must satisfy
+	 * @param response     the response to send for every matching request
+	 * @return this server
+	 */
+	public MockRestServer on(HTTPMethod httpMethod, String pathTemplate, Predicate<RecordedRequest> matcher,
+			MockResponse response) {
+		routes.add(new Route(httpMethod, pathTemplate, matcher, response));
 		return this;
 	}
 
@@ -411,15 +445,26 @@ public final class MockRestServer implements AutoCloseable {
 		private final String pathTemplate;
 		private final Pattern pathPattern;
 		private final Map<String, String> requiredQueryParams;
+		private final Predicate<RecordedRequest> matcher;
 		private final MockResponse response;
 		private final Deque<MockResponse> queue = new ArrayDeque<>();
 
 		Route(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
 				MockResponse response) {
+			this(httpMethod, pathTemplate, requiredQueryParams, null, response);
+		}
+
+		Route(HTTPMethod httpMethod, String pathTemplate, Predicate<RecordedRequest> matcher, MockResponse response) {
+			this(httpMethod, pathTemplate, Collections.emptyMap(), matcher, response);
+		}
+
+		private Route(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
+				Predicate<RecordedRequest> matcher, MockResponse response) {
 			this.httpMethod = httpMethod;
 			this.pathTemplate = pathTemplate;
 			this.pathPattern = compile(pathTemplate);
 			this.requiredQueryParams = requiredQueryParams;
+			this.matcher = matcher;
 			this.response = response;
 		}
 
@@ -432,11 +477,11 @@ public final class MockRestServer implements AutoCloseable {
 					return false;
 				}
 			}
-			return true;
+			return matcher == null || matcher.test(request);
 		}
 
 		boolean hasKey(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams) {
-			return this.httpMethod == httpMethod && this.pathTemplate.equals(pathTemplate)
+			return matcher == null && this.httpMethod == httpMethod && this.pathTemplate.equals(pathTemplate)
 					&& this.requiredQueryParams.equals(requiredQueryParams);
 		}
 

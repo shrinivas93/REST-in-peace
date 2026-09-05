@@ -273,13 +273,28 @@ for reference rather than tracked in code. Check items off as they land.
             none matched), for a test that wants an endpoint to stop
             being covered by any route rather than replacing what it
             returns.
+      - [x] **Follow-up: matching on request headers or body content.**
+            `MockRestServer.on(httpMethod, pathTemplate, matcher,
+            response)` takes a `Predicate<RecordedRequest>` checked
+            alongside the path/method match, for a constraint the
+            `requiredQueryParams` overload can't express - a header value
+            (`request -> "v2".equals(request.getHeader("X-Api-Version"))`)
+            or the request body
+            (`request -> request.getBody().contains("premium")`). Kept as
+            a general predicate rather than a second `requiredHeaders`
+            map (which would've meant two same-typed `Map` parameters on
+            one overload) - one mechanism covers headers, body content,
+            or any combination, instead of needing a new parameter for
+            each. Deliberately excluded from `on(...)`'s upsert and from
+            `enqueueFor`/`remove`'s lookup: two arbitrary `Predicate`s
+            can't be compared for equality the way a `requiredQueryParams`
+            map can, so re-registering with a matcher always appends
+            rather than replacing.
       - [ ] **Follow-up: further hardening and feature ideas**, from a
             fresh re-read of the implementation (not yet built), triaged
             by necessity rather than just theme:
             - **Good to have** - real value, but each has a workaround
               today, so none is blocking:
-              - Matching on request headers or body content, not just
-                method+path+query.
               - Decoded multipart-part access on `RecordedRequest` -
                 today `getBody()` on a `@Multipart` request returns the
                 raw multipart-encoded bytes as a `String`, with no way to
