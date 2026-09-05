@@ -1,6 +1,6 @@
 # Design: compile-time proxy generation
 
-Status: **steps 1-3 landed, step 4 not started** (see §8's rollout plan -
+Status: **all four steps landed - this roadmap item is done** (see §8's rollout plan -
 `RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
 `GeneratedApiTest`). Step 2's slices landed: `@Timeout`/`@Retry` (§9.4);
 `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/required-or-defaulted
@@ -19,12 +19,19 @@ and found and fixed a real, load-bearing bug: `RIP.getClient`'s own
 generated-impl lookup used a dynamically-computed `Class.forName`, which
 native-image's static analysis can't resolve, so every generated class
 was unusable under native-image until `RestClientProcessor` was taught to
-emit each one's `reflect-config.json` alongside it. The compile-testing
-validation suite (step 4) is not started. Roadmap item: "Compile-time proxy
-generation instead of a JDK dynamic proxy" in `ROADMAP.md`. The sections
-below are mostly the original sketch; §9 records what actually landed and
-the real deviations from the sketch, discovered only while implementing
-it.
+emit each one's `reflect-config.json` alongside it. Step 4, the
+compile-testing validation suite, landed in §9.10: a new
+`CompileTimeValidator` reimplements `RestClientValidator`'s semantic rules
+against `javax.lang.model` and fails compilation outright for a
+semantically invalid `@RestClient` interface - the same message
+`RestClientValidator` would otherwise only report at the first
+`RIP.getClient(...)` call - and a hand-rolled `javax.tools.JavaCompiler`
+test suite proves both directions (invalid interfaces fail compilation,
+valid ones compile clean and generate a real impl). Roadmap item:
+"Compile-time proxy generation instead of a JDK dynamic proxy" in
+`ROADMAP.md` is now fully checked off. The sections below are mostly the
+original sketch; §9 records what actually landed and the real deviations
+from the sketch, discovered only while implementing it.
 
 ## 1. Problem
 
@@ -1011,3 +1018,108 @@ it, so a native-image failure is reported distinctly), installs a GraalVM
 JDK via `graalvm/setup-graalvm`, runs `mvn -Pnative package`, and executes
 the resulting binary - green on every push/PR to `develop`/`master` from
 here on.
+
+### 9.10 Step 4: the compile-testing validation suite
+
+The exit criterion for the whole roadmap item (§8 step 4): every semantic
+rule `RestClientValidator` enforces reflectively at the first
+`RIP.getClient(...)` call now also fails **compilation** outright, with
+the same message, when a `@RestClient` interface is processed by
+`RestClientProcessor` - closing the gap this design's own §7 open
+question left unresolved on purpose ("a decision to make once the
+compile-time side is actually attempted, not before").
+
+#### 9.10.1 A second, independent validator - not a shared abstraction
+
+`CompileTimeValidator` is a new, self-contained class, deliberately *not*
+sharing an abstraction with `RestClientValidator` - §7's open question
+predicted this might be the pragmatic outcome, and it was: the two APIs
+(`java.lang.reflect.Method`/`Parameter` vs.
+`javax.lang.model.element.ExecutableElement`/`VariableElement`) differ
+enough - resolving a `Class<?>`-valued annotation attribute, walking a
+generic type's actual type arguments, checking a subtype relationship -
+that forcing a shared abstraction would have cost more than it saved.
+Every one of `RestClientValidator`'s ~15 rule groups (HTTP-method-count,
+`@Body`, `@Retry`, `@Timeout`, `@Headers`, `@Multipart`,
+`@QueryMap`/`@HeaderMap`/`@PartMap`, `@Destination`, `@Url`,
+upload/download listeners, `CompletableFuture<T>`/`RipResponse<T>`
+return-type shape) is reimplemented method-for-method against
+`javax.lang.model`, each reporting a `Diagnostic.Kind.ERROR` via
+`Messager` instead of accumulating into a `ValidationResult` - which is
+what actually fails `javac`, unlike a list of strings.
+
+`RestClientProcessor.processRestClient` runs `CompileTimeValidator.validate(...)`
+first, on *every* `@RestClient` interface it sees - not only ones that
+also happen to fall within the codegen-supported shape from steps 1-2.
+An interface can be semantically invalid yet still structurally
+"supported" (e.g. `@Multipart` on a `GET` method is a shape the generator
+knows how to emit code for, and a validation error `RestClientValidator`
+catches) - before this slice, that combination would silently generate a
+working-looking `_RipImpl` and only blow up at the first real call. Now
+it fails the build. If validation finds any error, codegen is skipped
+entirely for that interface (matching runtime behavior exactly: an
+invalid interface should never be reachable through either path).
+
+#### 9.10.2 The one deliberate gap: relative URLs and `@BaseUrl`
+
+`RestClientValidator` requires either `@BaseUrl` on the interface or a
+runtime base URL (`RIP.getClient(Class, String)`/`RipClientConfig`) for
+a method with a relative URL - and which of those ends up used is
+inherently a runtime fact the processor cannot know at compile time (the
+interface might be called through either overload at different call
+sites, or never with the plain `getClient(Class)` overload at all). So
+this one rule is *not* enforced at compile time - a relative URL with no
+`@BaseUrl` is not an error here, unlike at runtime. Every other URL
+check (syntax validity, unmatched path params) still runs, directly
+against the method's own URL template rather than a base-combined one,
+since neither of those checks was ever base-dependent to begin with -
+path param placeholders only ever come from the method's own literal URL
+string.
+
+#### 9.10.3 A real regression this slice's own test suite caught
+
+Running the full test suite after wiring `CompileTimeValidator` in broke
+an existing fixture: `SampleApi` (a top-level interface backing the
+long-dormant `RestInPeaceTest.main()` smoke check) declared two methods,
+`bar` and `foobar`, purely to hold a missing and a duplicated HTTP-method
+annotation - and neither was ever actually invoked by anything. Before
+this slice, that was harmless: the interface still compiled fine, since
+nothing checked annotation *semantics* at compile time. With
+`CompileTimeValidator` in place, `RestClientProcessor` now runs on every
+top-level `@RestClient` interface on the compilation classpath, `bar`/
+`foobar` included, and correctly fails the build for exactly the
+annotation misuse they were written to represent.
+`RestClientValidatorTest` already has its own dedicated *nested*
+interfaces for both scenarios (`MissingHttpMethodAnnotation`,
+`MultipleHttpMethodAnnotations` - nested interfaces are excluded from
+`RestClientProcessor` entirely, per §7's still-open nested/private
+question), making `SampleApi.bar`/`.foobar` pure duplication that had
+only ever survived because nothing previously compiled them through a
+validator. Fixed by deleting both, leaving `SampleApi` with only the one
+method `RestInPeaceTest` actually calls - a simplification the new
+validator's own correctness surfaced, not a workaround for it.
+
+#### 9.10.4 The compile-testing suite itself
+
+`CompileTimeValidationTest` compiles small, self-contained
+`@RestClient` interfaces through a real, isolated `javac` invocation -
+`javax.tools.JavaCompiler.getTask(...)` against an in-memory
+`SimpleJavaFileObject`, with the current JVM's own classpath (so
+`RestClientProcessor` auto-activates via its bundled SPI file exactly as
+it would for a real downstream consumer, with no explicit `-processor`
+flag) - and asserts on the resulting `DiagnosticCollector` output. Never
+a real `.java` file under `src/test/java`: an invalid fixture there would
+fail the ordinary `mvn test-compile` itself, the same failure mode
+§9.10.3 just found and fixed for `SampleApi`.
+
+Hand-rolled against `javax.tools.JavaCompiler` rather than Google's
+`compile-testing` library - both were offered as options in §6, and the
+hand-rolled route needs no new dependency, keeping this project at one
+runtime dependency (Unirest) exactly as before. One test per rule group
+(14 invalid cases, one representative violation of each `validate*`
+method in `CompileTimeValidator`, plus one valid interface asserting both
+a clean compile and a real generated `_RipImpl.class` on disk) - not
+exhaustive over every sub-condition of every rule, since the production
+validator's own correctness for the full rule set is already
+cross-checked by every existing valid fixture in the suite continuing to
+compile without new errors.
