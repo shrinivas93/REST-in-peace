@@ -126,8 +126,36 @@ for reference rather than tracked in code. Check items off as they land.
       settings (`verifySsl`, mutual TLS) or duplicating a mechanism RIP
       already has a better answer for (default headers, via
       `HeaderInterceptor`).
-- [ ] **A `MockInterceptor`/test double** — let consumers unit-test their
-      `@RestClient` interfaces without hitting real HTTP.
+- [x] **A `MockRestServer` test double** — let consumers unit-test their
+      `@RestClient` interfaces without hitting real HTTP. Originally scoped
+      as "a `MockInterceptor`" in this item's own title, but
+      `RequestInterceptor` turned out to be architecturally unable to do
+      this - it's a pure observer (`beforeRequest`/`afterResponse`), with no
+      way to short-circuit the real network call and substitute a canned
+      response. Implemented instead as `com.shri.restinpeace.mock.MockRestServer`
+      - a real, local `com.sun.net.httpserver.HttpServer` (the same one this
+      project's own integration test suite already uses), not a fake
+      transport swapped in underneath Unirest. Deliberate tradeoff: a
+      transport-swap approach (implementing Unirest's own `Client`/
+      `AsyncClient` SPI, ~20 methods across two interfaces) would run
+      without real sockets, but leaks a third-party SPI into RIP's public
+      surface, skips real request serialization entirely (the swap point
+      sits above where Unirest turns a request into wire bytes), and needs
+      two parallel fake implementations kept in lockstep with every future
+      return-type shape. A real embedded server has none of those costs -
+      `@Retry`, `@Timeout`, and every registered `RequestInterceptor` all
+      run completely unmodified, against both the reflective and
+      compile-time-generated dispatch paths - at the cost of using real
+      loopback sockets instead of an in-memory fake. `MockRestServer.on(...)`
+      registers a sticky response for a method+path (with `{name}`
+      placeholder matching); `MockRestServer.enqueue(...)` scripts a
+      one-time sequence (e.g. a `503` then a `200`, to prove `@Retry`
+      recovers); `RecordedRequest` exposes the path, query params, headers,
+      and body of what was actually received; an unmatched request fails
+      loudly (a `500` with a clear message) instead of silently succeeding
+      for the wrong reason. A transport-swap version remains a possible
+      future addition if real usage ever shows the socket overhead is
+      actually a problem - not before.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,
