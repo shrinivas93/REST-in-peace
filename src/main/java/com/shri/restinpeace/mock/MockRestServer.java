@@ -86,10 +86,15 @@ public final class MockRestServer implements AutoCloseable {
 	}
 
 	/**
-	 * Queues a response for the next request that doesn't match a route
-	 * registered via {@link #on}, consumed in the order requests arrive - the
-	 * way to script a sequence of responses to the same endpoint (e.g. a
-	 * {@code 503} then a {@code 200}, to prove {@code @Retry} recovers).
+	 * Queues a response for the next request that doesn't match any route
+	 * registered via {@link #on} - a route always wins over this queue for a
+	 * request it matches, so this only ever answers a path with no matching
+	 * route at all. To script a sequence of responses to a path that also
+	 * has a sticky final answer (e.g. a {@code 503} then a {@code 200}, to
+	 * prove {@code @Retry} recovers, while still returning {@code 200} for
+	 * every request after that), register the route with {@link #on} first
+	 * and use {@link #enqueueFor} instead - this method can't do that for a
+	 * path any route already covers.
 	 *
 	 * @param response the response to queue
 	 * @return this server
@@ -110,6 +115,11 @@ public final class MockRestServer implements AutoCloseable {
 	 * e.g. {@code "/orders/{id}"} matches {@code /orders/abc123} but not
 	 * {@code /orders/abc/123}. Checked before the {@link #enqueue} queue, in
 	 * the order routes were registered - the first matching route wins.
+	 * Calling this again for the same {@code httpMethod} and
+	 * {@code pathTemplate} replaces that route's response in place (keeping
+	 * its position relative to other routes) instead of adding a second,
+	 * permanently-shadowed registration - the way to change one route's
+	 * behavior mid-test.
 	 *
 	 * @param httpMethod   the HTTP method to match
 	 * @param pathTemplate the path to match, with optional {@code {name}}
@@ -131,7 +141,10 @@ public final class MockRestServer implements AutoCloseable {
 	 * {@code ?status=archived} on the same path. As with the simpler
 	 * overload, routes are checked in registration order and the first match
 	 * wins - register the more specific (query-constrained) route first if a
-	 * less specific one for the same path would otherwise shadow it.
+	 * less specific one for the same path would otherwise shadow it. Calling
+	 * this again with the same {@code httpMethod}, {@code pathTemplate}, and
+	 * {@code requiredQueryParams} replaces that route in place, the same as
+	 * the simpler overload.
 	 *
 	 * @param httpMethod          the HTTP method to match
 	 * @param pathTemplate        the path to match, with optional
@@ -144,8 +157,114 @@ public final class MockRestServer implements AutoCloseable {
 	 */
 	public MockRestServer on(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
 			MockResponse response) {
-		routes.add(new Route(httpMethod, pathTemplate, requiredQueryParams, response));
+		Route route = new Route(httpMethod, pathTemplate, requiredQueryParams, response);
+		synchronized (routes) {
+			int existingIndex = indexOfRoute(httpMethod, pathTemplate, requiredQueryParams);
+			if (existingIndex >= 0) {
+				routes.set(existingIndex, route);
+			} else {
+				routes.add(route);
+			}
+		}
 		return this;
+	}
+
+	/**
+	 * Scripts a one-time response for a route already registered via
+	 * {@link #on(HTTPMethod, String, MockResponse)}, consumed - in the order
+	 * queued - before that route's sticky response, the way to combine a
+	 * scripted failure sequence with a sticky final answer for the same
+	 * path (e.g. a {@code 503} then a {@code 200}, to prove {@code @Retry}
+	 * recovers, while every request after that still gets the {@code 200}
+	 * the route was registered with). Unlike {@link #enqueue}, which only
+	 * ever answers a path with no route at all, this attaches to a specific
+	 * route regardless of what other routes are registered.
+	 *
+	 * @param httpMethod   the HTTP method of the route to script a response
+	 *                     for
+	 * @param pathTemplate the path template of the route, exactly as passed
+	 *                     to {@link #on(HTTPMethod, String, MockResponse)}
+	 * @param response     the one-time response to queue
+	 * @return this server
+	 * @throws NoSuchElementException if no route matching {@code httpMethod}
+	 *                                and {@code pathTemplate} has been
+	 *                                registered via {@link #on} yet
+	 */
+	public MockRestServer enqueueFor(HTTPMethod httpMethod, String pathTemplate, MockResponse response) {
+		return enqueueFor(httpMethod, pathTemplate, Collections.emptyMap(), response);
+	}
+
+	/**
+	 * Same as {@link #enqueueFor(HTTPMethod, String, MockResponse)}, for a
+	 * route registered via
+	 * {@link #on(HTTPMethod, String, Map, MockResponse)} with the same
+	 * {@code requiredQueryParams}.
+	 *
+	 * @param httpMethod          the HTTP method of the route to script a
+	 *                            response for
+	 * @param pathTemplate        the path template of the route, exactly as
+	 *                            passed to {@link #on(HTTPMethod, String,
+	 *                            Map, MockResponse)}
+	 * @param requiredQueryParams the required query params of the route,
+	 *                            exactly as passed to
+	 *                            {@link #on(HTTPMethod, String, Map,
+	 *                            MockResponse)}
+	 * @param response            the one-time response to queue
+	 * @return this server
+	 * @throws NoSuchElementException if no matching route has been
+	 *                                registered via {@link #on} yet
+	 */
+	public MockRestServer enqueueFor(HTTPMethod httpMethod, String pathTemplate,
+			Map<String, String> requiredQueryParams, MockResponse response) {
+		synchronized (routes) {
+			int index = indexOfRoute(httpMethod, pathTemplate, requiredQueryParams);
+			if (index < 0) {
+				throw new NoSuchElementException("No route registered via on(...) for " + httpMethod + " "
+						+ pathTemplate + " - call on(...) first to give it a sticky response, then enqueueFor(...) "
+						+ "to script one-time responses before it.");
+			}
+			routes.get(index).enqueue(response);
+		}
+		return this;
+	}
+
+	/**
+	 * Registers a route that fails {@code failuresBeforeSuccess} times with
+	 * {@code failureResponse} before settling into {@code successResponse}
+	 * for every request after that - sugar for calling
+	 * {@link #on(HTTPMethod, String, MockResponse)} with
+	 * {@code successResponse} and then {@link #enqueueFor} with
+	 * {@code failureResponse} {@code failuresBeforeSuccess} times.
+	 *
+	 * @param httpMethod            the HTTP method to match
+	 * @param pathTemplate          the path to match, with optional
+	 *                              {@code {name}} placeholders
+	 * @param failuresBeforeSuccess how many requests get
+	 *                              {@code failureResponse} before
+	 *                              {@code successResponse} takes over
+	 * @param failureResponse       the response sent for the first
+	 *                              {@code failuresBeforeSuccess} matching
+	 *                              requests
+	 * @param successResponse       the response sent for every matching
+	 *                              request after that
+	 * @return this server
+	 */
+	public MockRestServer onFlaky(HTTPMethod httpMethod, String pathTemplate, int failuresBeforeSuccess,
+			MockResponse failureResponse, MockResponse successResponse) {
+		on(httpMethod, pathTemplate, successResponse);
+		for (int i = 0; i < failuresBeforeSuccess; i++) {
+			enqueueFor(httpMethod, pathTemplate, failureResponse);
+		}
+		return this;
+	}
+
+	private int indexOfRoute(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams) {
+		for (int i = 0; i < routes.size(); i++) {
+			if (routes.get(i).hasKey(httpMethod, pathTemplate, requiredQueryParams)) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/**
@@ -227,7 +346,7 @@ public final class MockRestServer implements AutoCloseable {
 			}
 		}
 		if (matchedRoute != null) {
-			matchedRoute.response.writeTo(exchange);
+			matchedRoute.nextResponse().writeTo(exchange);
 			return;
 		}
 		MockResponse response;
@@ -243,13 +362,16 @@ public final class MockRestServer implements AutoCloseable {
 
 	private static final class Route {
 		private final HTTPMethod httpMethod;
+		private final String pathTemplate;
 		private final Pattern pathPattern;
 		private final Map<String, String> requiredQueryParams;
 		private final MockResponse response;
+		private final Deque<MockResponse> queue = new ArrayDeque<>();
 
 		Route(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
 				MockResponse response) {
 			this.httpMethod = httpMethod;
+			this.pathTemplate = pathTemplate;
 			this.pathPattern = compile(pathTemplate);
 			this.requiredQueryParams = requiredQueryParams;
 			this.response = response;
@@ -265,6 +387,24 @@ public final class MockRestServer implements AutoCloseable {
 				}
 			}
 			return true;
+		}
+
+		boolean hasKey(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams) {
+			return this.httpMethod == httpMethod && this.pathTemplate.equals(pathTemplate)
+					&& this.requiredQueryParams.equals(requiredQueryParams);
+		}
+
+		void enqueue(MockResponse response) {
+			synchronized (queue) {
+				queue.add(response);
+			}
+		}
+
+		MockResponse nextResponse() {
+			synchronized (queue) {
+				MockResponse queued = queue.poll();
+				return queued != null ? queued : response;
+			}
 		}
 
 		private static Pattern compile(String pathTemplate) {

@@ -184,6 +184,63 @@ class MockRestServerTest {
 		assertThrows(RuntimeException.class, () -> api.getOrderWithShortTimeout("abc123"));
 	}
 
+	@Test
+	void enqueueFor_withoutOn_throwsNoSuchElementException() {
+		assertThrows(NoSuchElementException.class,
+				() -> server.enqueueFor(HTTPMethod.GET, "/orders/{id}", MockResponse.status(503, "")));
+	}
+
+	@Test
+	void enqueueFor_scriptsResponsesBeforeTheRoutesStickyResponseTakesOver() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"status\":\"CONFIRMED\"}"));
+		server.enqueueFor(HTTPMethod.GET, "/orders/{id}", MockResponse.status(503, ""));
+		server.enqueueFor(HTTPMethod.GET, "/orders/{id}", MockResponse.status(503, ""));
+
+		RestInPeaceHttpException first = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getOrder("abc123", "false"));
+		RestInPeaceHttpException second = assertThrows(RestInPeaceHttpException.class,
+				() -> api.getOrder("abc123", "false"));
+		String third = api.getOrder("abc123", "false");
+		String fourth = api.getOrder("abc123", "false");
+
+		assertEquals(503, first.getStatus());
+		assertEquals(503, second.getStatus());
+		assertEquals("{\"status\":\"CONFIRMED\"}", third);
+		assertEquals("{\"status\":\"CONFIRMED\"}", fourth);
+	}
+
+	@Test
+	void onFlaky_failsGivenTimesThenSucceedsSticky() {
+		server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2, MockResponse.status(503, ""),
+				MockResponse.ok("{\"status\":\"CONFIRMED\"}"));
+
+		assertThrows(RestInPeaceHttpException.class, () -> api.getOrder("abc123", "false"));
+		assertThrows(RestInPeaceHttpException.class, () -> api.getOrder("abc123", "false"));
+		assertEquals("{\"status\":\"CONFIRMED\"}", api.getOrder("abc123", "false"));
+		assertEquals("{\"status\":\"CONFIRMED\"}", api.getOrder("abc123", "false"));
+	}
+
+	@Test
+	void onFlaky_thenRetryRecoversInOneClientCall() {
+		server.onFlaky(HTTPMethod.POST, "/orders", 2, MockResponse.status(503, ""),
+				MockResponse.ok("{\"orderId\":\"new-1\"}"));
+
+		String result = api.createOrder("{\"sku\":\"sku-1\"}");
+
+		assertEquals("{\"orderId\":\"new-1\"}", result);
+		assertEquals(3, server.requestCount());
+	}
+
+	@Test
+	void on_calledTwiceForTheSameRoute_replacesInsteadOfShadowing() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"status\":\"PENDING\"}"));
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"status\":\"CONFIRMED\"}"));
+
+		String result = api.getOrder("abc123", "false");
+
+		assertEquals("{\"status\":\"CONFIRMED\"}", result);
+	}
+
 	private static final class OrderStatus {
 		@SuppressWarnings("unused")
 		public final String status;
