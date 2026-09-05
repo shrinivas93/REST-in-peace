@@ -44,4 +44,8 @@ public interface MockServerTestApi {
 	@Multipart
 	String upload(@Part("caption") String caption, @Part(value = "file", fileName = "data.bin") byte[] file);
 
+	@POST("/orders")
+	@Retry(times = 3, delayMillis = 100, backoffMultiplier = 3.0, retryOnStatus = { 503 })
+	String createOrderWithBackoff(@Body String payload);
+
 }
