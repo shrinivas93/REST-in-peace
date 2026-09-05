@@ -1,12 +1,15 @@
 package com.shri.restinpeace.mock;
 
 import static java.util.Collections.singletonMap;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import org.junit.jupiter.api.AfterEach;
@@ -296,6 +299,37 @@ class MockRestServerTest {
 
 		assertEquals("{\"orderId\":\"premium-1\"}", premium);
 		assertEquals("{\"orderId\":\"standard-1\"}", standard);
+	}
+
+	@Test
+	void getParts_decodesAMultipartRequestIntoItsIndividualParts() {
+		server.on(HTTPMethod.POST, "/upload", MockResponse.ok("{}"));
+
+		api.upload("a caption", new byte[] { 1, 2, 3, 4 });
+
+		RecordedRequest request = server.takeRequest();
+		List<RecordedRequest.Part> parts = request.getParts();
+		assertEquals(2, parts.size());
+
+		RecordedRequest.Part caption = parts.get(0);
+		assertEquals("caption", caption.getName());
+		assertNull(caption.getFileName());
+		assertEquals("a caption", caption.getContentAsString());
+
+		RecordedRequest.Part file = parts.get(1);
+		assertEquals("file", file.getName());
+		assertEquals("data.bin", file.getFileName());
+		assertArrayEquals(new byte[] { 1, 2, 3, 4 }, file.getContent());
+	}
+
+	@Test
+	void getParts_onANonMultipartRequest_throwsIllegalStateException() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+
+		api.getOrder("abc123", "false");
+
+		RecordedRequest request = server.takeRequest();
+		assertThrows(IllegalStateException.class, request::getParts);
 	}
 
 	private static final class OrderStatus {

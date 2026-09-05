@@ -290,15 +290,28 @@ for reference rather than tracked in code. Check items off as they land.
             can't be compared for equality the way a `requiredQueryParams`
             map can, so re-registering with a matcher always appends
             rather than replacing.
-      - [ ] **Follow-up: further hardening and feature ideas**, from a
-            fresh re-read of the implementation (not yet built), triaged
-            by necessity rather than just theme:
+      - [x] **Follow-up: decoded multipart-part access on
+            `RecordedRequest`.** `getParts()` decodes a
+            `multipart/form-data` body into individual `Part`s (name,
+            optional file name, optional content type, content), for
+            asserting on what a `@Multipart` method actually sent instead
+            of substring-matching the raw encoded body. Required a
+            correctness fix underneath: `RecordedRequest` previously
+            captured the body as a single UTF-8-decoded `String` at
+            capture time - lossy for a `@Multipart` request's binary parts
+            (a `byte[]`/`InputStream`/non-text `File` part), since the raw
+            bytes were already gone by the time anything tried to read
+            them back. Now captures raw `byte[]` instead, with `getBody()`
+            decoding to UTF-8 on demand (unchanged observable behavior for
+            a text body) and a new `getRawBody()` for binary-safe access.
+            The multipart parser itself is hand-written (the JDK has none
+            built in): finds the boundary from the `Content-Type` header,
+            splits the raw bytes on it, and parses each part's
+            `Content-Disposition`/`Content-Type` sub-headers - verified
+            directly against Unirest's own real wire format (not assumed),
+            passing on the first attempt.
             - **Good to have** - real value, but each has a workaround
               today, so none is blocking:
-              - Decoded multipart-part access on `RecordedRequest` -
-                today `getBody()` on a `@Multipart` request returns the
-                raw multipart-encoded bytes as a `String`, with no way to
-                assert on an individual `@Part`/`@PartMap` entry.
               - Fluent verification sugar (`server.verify(GET,
                 "/orders/{id}")`) instead of manual `takeRequest()` plus
                 field-by-field asserts.
