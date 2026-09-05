@@ -9,6 +9,7 @@ import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.annotation.timeout.Timeout;
 
 /**
  * A minimal {@code @RestClient} interface for {@link MockRestServerTest} -
@@ -32,5 +33,9 @@ public interface MockServerTestApi {
 
 	@GET("/with-headers")
 	RipResponse<String> getWithHeaders();
+
+	@GET("/orders/{id}")
+	@Timeout(readMillis = 100)
+	String getOrderWithShortTimeout(@PathParam("id") String id);
 
 }

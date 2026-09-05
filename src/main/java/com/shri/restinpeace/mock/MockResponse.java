@@ -24,10 +24,17 @@ public final class MockResponse {
 	private final int status;
 	private final byte[] body;
 	private final Map<String, List<String>> headers = new LinkedHashMap<>();
+	private final boolean connectionFailure;
+	private long delayMillis;
 
 	private MockResponse(int status, byte[] body) {
+		this(status, body, false);
+	}
+
+	private MockResponse(int status, byte[] body, boolean connectionFailure) {
 		this.status = status;
 		this.body = body;
+		this.connectionFailure = connectionFailure;
 	}
 
 	/**
@@ -105,6 +112,23 @@ public final class MockResponse {
 	}
 
 	/**
+	 * Simulates a transport-level failure - the connection is closed before
+	 * any response is sent, instead of returning an HTTP status - so a test
+	 * can exercise RIP's "no response at all" error path (a
+	 * {@code kong.unirest.UnirestException} thrown directly, not wrapped in
+	 * {@link com.shri.restinpeace.exception.RestInPeaceHttpException}, and
+	 * always retried by {@code @Retry} regardless of {@code retryOnStatus})
+	 * instead of only ever seeing a non-2xx status. Any {@link #header} or
+	 * {@link #delay} set on the returned response is ignored, since no
+	 * response is ever sent.
+	 *
+	 * @return the new response
+	 */
+	public static MockResponse connectionFailure() {
+		return new MockResponse(0, new byte[0], true);
+	}
+
+	/**
 	 * Adds a response header. Calling this more than once for the same
 	 * {@code name} adds an additional value rather than replacing the
 	 * previous one - the way HTTP itself allows a header to repeat (e.g.
@@ -120,13 +144,47 @@ public final class MockResponse {
 		return this;
 	}
 
+	/**
+	 * Delays sending this response by {@code delayMillis}, to simulate a
+	 * slow server - the way to prove {@code @Timeout(readMillis = ...)} (or
+	 * {@code RipClientConfig.readTimeoutMillis(...)}) actually fires,
+	 * rather than assuming it does because the annotation is present. The
+	 * delay happens before any response bytes are sent, simulating the
+	 * server being slow to start responding - exactly what a read timeout
+	 * guards against on a connection that's already open, as one to a
+	 * loopback {@link MockRestServer} always is.
+	 *
+	 * @param delayMillis how long to wait before sending this response
+	 * @return this response
+	 */
+	public MockResponse delay(long delayMillis) {
+		this.delayMillis = delayMillis;
+		return this;
+	}
+
 	void writeTo(HttpExchange exchange) throws IOException {
+		if (delayMillis > 0) {
+			sleep(delayMillis);
+		}
+		if (connectionFailure) {
+			exchange.close();
+			return;
+		}
 		headers.forEach((name, values) -> values.forEach(value -> exchange.getResponseHeaders().add(name, value)));
 		exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
 		if (body.length > 0) {
 			try (OutputStream responseBody = exchange.getResponseBody()) {
 				responseBody.write(body);
 			}
+		}
+	}
+
+	private static void sleep(long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new RestInPeaceException("Interrupted while simulating a MockResponse delay.", e);
 		}
 	}
 

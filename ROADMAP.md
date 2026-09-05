@@ -210,27 +210,36 @@ for reference rather than tracked in code. Check items off as they land.
             `.set(...)`. Covered by a new test exercising two `.header(...)`
             calls for the same name through a real request/response round
             trip.
+      - [x] **Follow-up: the two must-have gaps from the triage below.**
+            `MockRestServer`'s own javadoc claims `@Retry`, `@Timeout`,
+            and every registered `RequestInterceptor` "run completely
+            unmodified" through it - these closed the two cases that
+            couldn't actually be exercised:
+            - `MockResponse.connectionFailure()` closes the connection
+              before sending any response, instead of returning an HTTP
+              status - proving RIP's "no response at all" error path (a
+              `kong.unirest.UnirestException` thrown directly, never
+              wrapped in `RestInPeaceHttpException`) behaves as
+              documented, and that `@Retry` treats it as unconditionally
+              retryable regardless of `retryOnStatus`. Verified Apache
+              HttpClient's own internal `NoHttpResponseException` retry
+              (visible in test output as several automatic retries against
+              the same closed connection) doesn't interfere - RIP's own
+              retry logic and single-shot calls both still see the correct
+              final outcome.
+            - `MockResponse.delay(millis)` sleeps before sending the
+              response, to simulate a slow server - the only way to prove
+              `@Timeout(readMillis = ...)` (or
+              `RipClientConfig.readTimeoutMillis(...)`) actually fires,
+              rather than assuming it does because the annotation is
+              present. `RipIntegrationTest` already hand-rolled this exact
+              pattern (a raw `HttpServer` handler with `Thread.sleep(...)`)
+              to test `@Timeout` - this formalizes it as a first-class
+              `MockRestServer` capability instead of requiring every
+              consumer to duplicate that setup themselves.
       - [ ] **Follow-up: further hardening and feature ideas**, from a
             fresh re-read of the implementation (not yet built), triaged
             by necessity rather than just theme:
-            - **Must have** - real capability gaps, not just ergonomics.
-              This class's own javadoc claims `@Retry`, `@Timeout`, and
-              every registered `RequestInterceptor` "run completely
-              unmodified" through it, but two of those can't actually be
-              exercised today:
-              - *Transport-level failure simulation.* Every request today
-                gets **some** HTTP response, even the "no route matched"
-                fallback (a `500`) - there's no way to simulate a genuine
-                transport-level failure (connection refused, reset, or a
-                mid-response socket close), so the code path RIP itself
-                distinguishes - "a transport failure (no response at
-                all)" throwing directly, vs. a non-2xx status throwing
-                `RestInPeaceHttpException` - has no way to be exercised
-                through this server at all.
-              - *Per-response artificial latency.* Without a way to make
-                a mocked response slow, `@Timeout` can't actually be
-                proven to fire through this server, despite it being
-                named as a covered case in this class's own javadoc.
             - **Good to have** - real value, but each has a workaround
               today, so none is blocking:
               - "Flaky mode" (fail the first N requests to a route, then
@@ -269,9 +278,8 @@ for reference rather than tracked in code. Check items off as they land.
                 assumption).
               - Record/replay against real traffic captured once.
             Same reasoning as the transport-swap option and the first
-            follow-up round above applies here too - even the "must have"
-            pair is documented for when it's actually picked up, not
-            built speculatively just because it's flagged as necessary.
+            follow-up round above applies here too - these are documented
+            for when real usage shows a need, not built speculatively.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,
