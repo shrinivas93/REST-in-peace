@@ -137,12 +137,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   an optional exact-match query-param constraint to route matching, for an
   endpoint that behaves differently by query param (e.g. `?status=active`
   vs. `?status=archived`); and `com.shri.restinpeace.mock.MockRestServerExtension`,
-  a JUnit 5 `BeforeEachCallback`/`AfterEachCallback`, starts a fresh server
-  before each test and stops it afterward, removing the
-  `@BeforeEach`/`@AfterEach` boilerplate otherwise needed. The extension
-  required promoting `junit-jupiter` from `test` to `provided` scope, since
-  it's now implemented by a main-source class - verified non-transitive, so
-  this costs nothing for a consumer who doesn't use it.
+  a JUnit 5 extension registered with `@ExtendWith`, starts one server for a
+  test class, resets it before each test, and hands it to test (or
+  `@BeforeEach`) methods as a parameter - removing not just the
+  `start()`/`.close()` boilerplate but the need to rebuild a `@RestClient`
+  per test, since the server's base URL is now stable across the whole
+  class. The extension required promoting `junit-jupiter` from `test` to
+  `provided` scope, since it's now implemented by a main-source class -
+  verified non-transitive, so this costs nothing for a consumer who doesn't
+  use it.
 
 ### Changed
 
