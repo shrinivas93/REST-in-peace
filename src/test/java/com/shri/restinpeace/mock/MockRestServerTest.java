@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Arrays;
 import java.util.NoSuchElementException;
 
 import org.junit.jupiter.api.AfterEach;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import kong.unirest.JsonObjectMapper;
 
 import com.shri.restinpeace.RIP;
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 
@@ -135,6 +137,16 @@ class MockRestServerTest {
 
 		assertEquals("{\"detail\":\"full\"}", verbose);
 		assertEquals("{\"detail\":\"summary\"}", summary);
+	}
+
+	@Test
+	void header_calledTwiceForTheSameNameSendsBothValues() {
+		server.on(HTTPMethod.GET, "/with-headers",
+				MockResponse.ok("{}").header("Set-Cookie", "a=1").header("Set-Cookie", "b=2"));
+
+		RipResponse<String> response = api.getWithHeaders();
+
+		assertEquals(Arrays.asList("a=1", "b=2"), response.getHeaders().get("Set-Cookie"));
 	}
 
 	private static final class OrderStatus {

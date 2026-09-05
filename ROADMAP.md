@@ -184,12 +184,76 @@ for reference rather than tracked in code. Check items off as they land.
             JUnit 5 extension interfaces - verified non-transitive (a
             consumer's own `dependency:tree` shows no `junit-jupiter`
             entry at all), so this costs nothing for a consumer who
-            doesn't use the extension. Remaining enhancement ideas (slow/
-            broken-connection simulation, multipart part introspection,
-            a "flaky mode", auto-logging on failure, record/replay) are
-            still deliberately deferred, per the same "don't build the
-            expensive version before real usage shows you need it"
-            reasoning as the transport-swap option above.
+            doesn't use the extension.
+      - [x] **Follow-up: two correctness fixes found by re-reading the
+            implementation.** `MockRestServer.routes` was a bare
+            `ArrayList`, unlike the already-`synchronized`-wrapped `queue`
+            and `recorded` fields - a route registered (`.on(...)`) while a
+            prior async (`CompletableFuture`) request from the same test
+            was still being served raced a plain `ArrayList` read against a
+            write. Wrapped in `Collections.synchronizedList(...)` to match
+            the other two fields, with `reset()` and the route-matching
+            loop in `handle(...)` both now synchronizing on it explicitly
+            (a `synchronizedList`'s iteration still needs external
+            synchronization - wrapping alone isn't enough). Not covered by
+            a new test - a race condition doesn't have a deterministic
+            repro, so this is a code-inspection fix verified by matching
+            the existing pattern, not a red-then-green test.
+            Separately, `MockResponse.header(name, value)` stored into a
+            `Map<String, String>`, so calling it twice for the same name
+            silently replaced the first value instead of adding a second -
+            unlike `RecordedRequest`/`RipResponse`, both of which already
+            support a header repeating (e.g. multiple `Set-Cookie`
+            headers). Changed to `Map<String, List<String>>`, appending on
+            each call; `writeTo` now calls the underlying
+            `HttpExchange`'s `Headers.add(...)` per value instead of
+            `.set(...)`. Covered by a new test exercising two `.header(...)`
+            calls for the same name through a real request/response round
+            trip.
+      - [ ] **Follow-up: further hardening and feature ideas**, from a
+            fresh re-read of the implementation (not yet built - ranked
+            roughly by value):
+            - *Failure simulation, the biggest real gap:* every request
+              today gets **some** HTTP response, even the "no route
+              matched" fallback (a `500`) - there's no way to simulate a
+              genuine transport-level failure (connection refused, reset,
+              or a mid-response socket close) at all, so the code path RIP
+              itself distinguishes - "a transport failure (no response at
+              all)" throwing directly, vs. a non-2xx status throwing
+              `RestInPeaceHttpException` - has no way to be exercised
+              through this server. Per-response artificial latency (to
+              prove `@Timeout` actually fires) and a "flaky mode" (fail the
+              first N requests to a route, then succeed, without
+              hand-scripting each one via `enqueue`) are the same category.
+            - *Routing/matching:* matching on request headers or body
+              content, not just method+path+query; multi-segment wildcard
+              paths (`/orders/**`), not just single-segment `{name}`;
+              per-route `enqueue(...)` (today's `enqueue` is one global
+              FIFO shared by every unmatched request, so "route A fails
+              twice then succeeds" while route B behaves normally
+              throughout can't be scripted); `MockRestServer.remove(...)`/
+              in-place route replacement, so one route's behavior can
+              change mid-test without a full `reset()`.
+            - *Introspection:* decoded multipart-part access on
+              `RecordedRequest` (today `getBody()` on a `@Multipart`
+              request returns the raw multipart-encoded bytes as a
+              `String`, with no way to assert on an individual `@Part`/
+              `@PartMap` entry); chunked/delayed response body writing (
+              today's `writeTo` does one `OutputStream.write` for the whole
+              body), so a `DownloadProgressListener`-consuming test can
+              deterministically observe more than one progress callback.
+            - *Assertion ergonomics:* fluent verification sugar
+              (`server.verify(GET, "/orders/{id}")`) instead of manual
+              `takeRequest()` plus field-by-field asserts; a route-coverage
+              assertion (did every registered route get hit); auto-dumping
+              recorded requests/responses when a test fails.
+            - *Niche:* HTTPS/TLS support (loopback plain-HTTP only today -
+              relevant only if a client under test hardcodes a TLS
+              assumption); record/replay against real traffic captured
+              once.
+            Same reasoning as the transport-swap option and the first
+            follow-up round above applies here too - these are documented
+            for when real usage shows a need, not built speculatively.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,
