@@ -146,6 +146,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `provided` scope, since it's now implemented by a main-source class -
   verified non-transitive, so this costs nothing for a consumer who doesn't
   use it.
+- `MockResponse.connectionFailure()` and `.delay(millis)` simulate a
+  transport-level failure and a slow response - the two cases
+  `MockRestServer`'s own documentation claimed were testable (`@Retry`'s
+  "no response at all" retry path, and `@Timeout` actually firing) but
+  had no way to be exercised until now.
+- `MockRestServer.enqueueFor(httpMethod, pathTemplate, response)` scripts
+  a one-time response for a route already registered via `.on(...)`,
+  consumed before that route's sticky response - so a route can fail a
+  fixed number of times before settling into a sticky final answer,
+  which the server-wide `.enqueue(...)` queue can't express once any
+  route covers the same path. `.onFlaky(httpMethod, pathTemplate,
+  failuresBeforeSuccess, failureResponse, successResponse)` is sugar
+  over the same mechanism.
+- `MockRestServer.remove(httpMethod, pathTemplate)` removes a registered
+  route outright, so a test can stop covering an endpoint mid-test
+  without a full `.reset()` (which also wipes every other route, the
+  queue, and recorded-request history).
+- `MockRestServer.on(httpMethod, pathTemplate, matcher, response)`
+  matches on a request header or the request body via a
+  `Predicate<RecordedRequest>`, for a constraint `requiredQueryParams`
+  can't express (e.g. an `X-Api-Version` header, or a field in the
+  request body).
+- `RecordedRequest.getParts()` decodes a `multipart/form-data` body into
+  its individual parts (name, optional file name, optional content
+  type, content), for asserting on what a `@Multipart` method actually
+  sent instead of substring-matching the raw encoded body.
+  `RecordedRequest` now captures the raw request body as `byte[]`
+  internally (exposed via a new `getRawBody()`) instead of eagerly
+  UTF-8-decoding it, since the old approach was lossy for a
+  `@Multipart` request's binary parts.
+- `MockRestServer.countOf(httpMethod, pathTemplate)` returns how many
+  recorded requests match, without manually filtering
+  `getRecordedRequests()` or looping over `takeRequest()`.
+- `MockRestServer.getUnhitRoutes()` returns every registered route that
+  hasn't matched any recorded request yet - a coverage check for a
+  route left registered after the code path that used to exercise it
+  was removed, which otherwise causes no failure at all.
+- `RecordedRequest.getReceivedAt()` timestamps each request, so a test
+  can verify `@Retry`'s `backoffMultiplier` actually grows the delay
+  between attempts, instead of only counting how many attempts were
+  made.
 
 ### Changed
 
@@ -188,6 +229,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configured at all now throws `RestInPeaceException` naming the problem
   and pointing at `RIP.setObjectMapper(...)`, instead of a bare
   `kong.unirest.UnirestConfigException` with no mention of RIP.
+- `MockRestServer`'s registered routes list wasn't thread-safe, unlike
+  its response queue and recorded-request list - a route registered via
+  `.on(...)` while a prior async (`CompletableFuture`) request from the
+  same test was still being served could race a concurrent read.
+- `MockResponse.header(name, value)` silently replaced an earlier value
+  for the same header name instead of adding a second one, unlike
+  `RecordedRequest`/`RipResponse`, both of which already support a
+  header repeating (e.g. multiple `Set-Cookie` headers).
+- `MockRestServer.enqueue(...)`'s own documentation claimed it was "the
+  way to script a sequence of responses to the same endpoint," but a
+  route registered via `.on(...)` for that endpoint shadowed the queue
+  entirely, since routes are matched before the queue is ever
+  consulted - `.enqueueFor(...)` (above) is the fix.
+- `MockRestServer.on(...)`, called twice for the same method and path
+  (and query params, if given), silently appended a second,
+  permanently-shadowed route instead of replacing the first - it now
+  replaces the existing route in place.
 
 ## [1.0.0.4] - 2026-08-30
 
