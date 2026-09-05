@@ -21,7 +21,9 @@ import com.sun.net.httpserver.HttpServer;
  *
  * <p>
  * See this directory's {@code README.md} for how to build and run it (after
- * {@code mvn install}-ing the parent {@code rest-in-peace} project).
+ * {@code mvn install}-ing the parent {@code rest-in-peace} project). See
+ * {@link NativeMain} for the narrower native-image smoke test built from
+ * this same project's {@code native} Maven profile.
  */
 public final class Main {
 

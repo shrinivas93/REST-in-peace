@@ -35,4 +35,52 @@
 		</dependency>
 	</dependencies>
 
+	<profiles>
+		<!--
+		Builds this same consumer as a GraalVM native executable - the
+		native-image smoke test for compile-time proxy generation (step 3 of
+		../../docs/design/compile-time-proxy-generation.md's rollout plan):
+		the concrete, checkable proof that RIP.getClient(ItemApi.class)'s
+		generated _RipImpl path is genuinely reflection-free, not just an
+		assumption resting on "we removed the Proxy/getAnnotation calls".
+		Kept behind a profile (mvn -Pnative package) so the plain `mvn
+		compile` flow the existing Sample Consumer Test CI job uses stays
+		exactly as fast and JDK-8-only as before - only a job that actually
+		wants a native executable needs a GraalVM JDK on its PATH.
+		-->
+		<profile>
+			<id>native</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.graalvm.buildtools</groupId>
+						<artifactId>native-maven-plugin</artifactId>
+						<version>0.10.3</version>
+						<extensions>true</extensions>
+						<executions>
+							<execution>
+								<id>build-native</id>
+								<goals>
+									<goal>compile-no-fork</goal>
+								</goals>
+								<phase>package</phase>
+							</execution>
+						</executions>
+						<configuration>
+							<imageName>compile-time-proxy-consumer</imageName>
+							<mainClass>com.example.consumer.NativeMain</mainClass>
+							<buildArgs>
+								<!-- Fail the build instead of silently falling back to a
+								     JVM-based executable on unsupported reflection/JNI usage -
+								     a fallback would hide exactly the failure this smoke test
+								     exists to catch. -->
+								<buildArg>--no-fallback</buildArg>
+							</buildArgs>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
 </project>

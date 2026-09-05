@@ -47,3 +47,53 @@ jobs:
           mvn -B compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
             -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
           java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
+
+  # The native-image smoke test (step 3 of
+  # docs/design/compile-time-proxy-generation.md's rollout plan) - the
+  # concrete, checkable proof that RIP.getClient(ItemApi.class)'s
+  # compile-time-generated path is genuinely reflection-free under
+  # GraalVM's closed-world analysis, not just an assumption. A separate job
+  # (not a step added to sample-consumer above) so a native-image failure
+  # is reported distinctly from the plain-JVM sample-consumer job, and so
+  # this job's GraalVM JDK doesn't affect that one's JDK 8 setup.
+  native-image-smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # GraalVM's bundled JDK compiles this project's -source/-target 8
+      # code just fine (it's simply reading older, always-forward-compatible
+      # bytecode instructions) - so one JDK setup covers both installing
+      # the library and building the native executable, instead of juggling
+      # two JDKs across the job.
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      - name: Install the library locally
+        run: mvn -B install -DskipTests --file pom.xml
+
+      - name: Determine the installed library version
+        id: rip-version
+        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' pom.xml)" >> "$GITHUB_OUTPUT"
+
+      # NativeMain - not Main - is this build's entry point: it exercises
+      # only the fully-covered ItemApi path, deliberately leaving out
+      # Main's UnsupportedApi fallback demonstration, which needs its own
+      # hand-written proxy-config.json under native-image and would muddy
+      # what this smoke test is proving. No reflect-config.json is
+      # hand-written anywhere in this project - the one RestClientProcessor
+      # itself emits alongside ItemApi_RipImpl is the only config involved.
+      - name: Build the native executable
+        working-directory: samples/compile-time-proxy-consumer
+        run: |
+          mvn -B -Pnative package -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
+
+      - name: Run the native executable
+        working-directory: samples/compile-time-proxy-consumer
+        run: timeout 30 ./target/compile-time-proxy-consumer

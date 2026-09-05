@@ -1,6 +1,6 @@
 # Design: compile-time proxy generation
 
-Status: **step 1 and step 2 both fully landed** (see §8's rollout plan -
+Status: **steps 1-3 landed, step 4 not started** (see §8's rollout plan -
 `RestClientProcessor`, `RIP.getClient`'s generated-impl-first lookup,
 `GeneratedApiTest`). Step 2's slices landed: `@Timeout`/`@Retry` (§9.4);
 `@Headers`/`@HeaderParam`/`@HeaderMap`/`@QueryMap`/required-or-defaulted
@@ -14,8 +14,13 @@ sequence-of-calls design (§9.5.1); `@Multipart`/`@Part`/`@PartMap`/
 unsupported - not a future slice, but excluded from §5's table from the
 start - is a generic collection return type (e.g. `List<String>`), since
 it isn't decodable via a single `Class<?>` literal the way every supported
-return type is. The compile-testing validation suite and the native-image
-smoke test (steps 3-4) are not started. Roadmap item: "Compile-time proxy
+return type is. Step 3, the native-image smoke test, landed in §9.9 -
+and found and fixed a real, load-bearing bug: `RIP.getClient`'s own
+generated-impl lookup used a dynamically-computed `Class.forName`, which
+native-image's static analysis can't resolve, so every generated class
+was unusable under native-image until `RestClientProcessor` was taught to
+emit each one's `reflect-config.json` alongside it. The compile-testing
+validation suite (step 4) is not started. Roadmap item: "Compile-time proxy
 generation instead of a JDK dynamic proxy" in `ROADMAP.md`. The sections
 below are mostly the original sketch; §9 records what actually landed and
 the real deviations from the sketch, discovered only while implementing
@@ -891,3 +896,118 @@ it doesn't call through it, since the sample's plain-text local server
 response isn't valid JSON and decoding it into a `List` would fail,
 which was never the point of that demonstration (only the fallback
 itself is).
+
+### 9.9 Step 3: the native-image smoke test - and the bug it actually found
+
+Per §8's own ordering, this should have landed before or alongside step
+2, "to validate the overall mechanism ... before investing in full
+feature parity" - it landed after instead, but nothing about it depended
+on step 2 being done. It's the first point in this whole effort where a
+claim ("GraalVM native-image friendly out of the box with zero reflection
+config," `ROADMAP.md`'s own wording) was actually checked by building a
+real native executable and running it, rather than argued from "we
+removed the `Proxy`/`getAnnotation` calls from the generated path." The
+first real attempt immediately falsified it.
+
+#### 9.9.1 The bug: `RIP.getClient`'s own lookup is itself dynamic reflection
+
+`samples/compile-time-proxy-consumer` gained a `native` Maven profile
+(`org.graalvm.buildtools:native-maven-plugin`) and a new, deliberately
+narrower entry point, `NativeMain` - exercising only `ItemApi`'s
+fully-covered path, not `UnsupportedApi`'s fallback (which needs its own
+hand-written `proxy-config.json` under native-image and is a genuinely
+different, expected story - see §9.9.3). Building it and running it
+immediately crashed:
+
+```
+MissingReflectionRegistrationError: The program tried to reflectively
+access the proxy class inheriting [com.example.consumer.ItemApi] without
+it being registered for runtime reflection.
+```
+
+The trace pointed at `Proxy.newProxyInstance` inside `RIP.getClient` -
+meaning `tryGeneratedImpl` had already failed and fallen through to the
+reflective proxy path for `ItemApi`, despite `ItemApi_RipImpl` genuinely
+existing on the classpath (confirmed separately, one line earlier in the
+same run, via `Class.forName("com.example.consumer.ItemApi_RipImpl")`
+succeeding). The root cause is `tryGeneratedImpl` itself:
+
+```java
+Class<?> implClass = Class.forName(restClient.getName() + "_RipImpl");
+```
+
+GraalVM's static analysis can automatically resolve `Class.forName` calls
+whose argument is a compile-time *constant* string literal, registering
+that exact class for reflection with zero configuration - which is
+exactly why `NativeMain`'s own literal `Class.forName("com.example.
+consumer.ItemApi_RipImpl")` succeeded. `restClient.getName() + "_RipImpl"`
+is not a constant - `restClient` is a runtime parameter - so the analysis
+has no way to know, for any given compilation, which class names this
+call might ever request, and registers nothing for it. Every single
+generated class was affected: this is the one lookup every
+`RIP.getClient(...)` call for a fully-covered interface goes through, so
+step 1 and 2's entire "zero reflection config" story silently didn't hold
+under native-image, for any interface, from the very first commit that
+introduced `tryGeneratedImpl`.
+
+#### 9.9.2 The fix: `RestClientProcessor` emits its own `reflect-config.json`
+
+The tempting quick fix - hand-write a `reflect-config.json` in the
+sample's own `src/main/resources` - is exactly the ergonomics problem
+this whole feature exists to remove (§1.1: "every consumer wanting a
+native-image build must hand-write reflection config for their own
+`@RestClient` interfaces"). Doing that in the sample would make it stop
+demonstrating the thing it's the sample *for*.
+
+The real fix keeps the fix where the class is generated: `writeImplementation`
+now also calls a new `writeNativeImageReflectConfig`, emitting one
+`META-INF/native-image/com.shri.restinpeace/<qualified impl
+name>/reflect-config.json` resource (via the same `Filer` the source file
+itself is written through) alongside every generated `<Interface>_RipImpl`,
+registering exactly the one constructor `tryGeneratedImpl` looks up:
+
+```json
+[
+  {
+    "name": "com.example.consumer.ItemApi_RipImpl",
+    "methods": [
+      { "name": "<init>", "parameterTypes": ["com.shri.restinpeace.annotation.service.RestRequestProcessor"] }
+    ]
+  }
+]
+```
+
+Since annotation processing already runs automatically via the bundled
+SPI file - the same property that makes the whole feature "zero extra
+configuration" to begin with - this resource lands in the *consumer's own*
+compiled output with no consumer action at all, and native-image
+automatically discovers any `META-INF/native-image/**/*.json` reachable
+on its classpath, consumer output included. One resource per generated
+class, keyed by that class's own fully-qualified name, so multiple
+`@RestClient` interfaces in one consumer project never collide.
+
+#### 9.9.3 What's proven, and what's deliberately out of scope
+
+With the fix in place, `NativeMain` built and ran clean on the first try
+with **zero hand-written native-image configuration anywhere in the
+sample project** - printing the correct decoded response through a real
+`native-image`-compiled binary. This is the concrete, checkable proof
+§1.1 asked for.
+
+`UnsupportedApi`'s reflective-proxy fallback is deliberately *not*
+exercised by `NativeMain`: `Proxy.newProxyInstance` for an
+interface native-image has never seen needs its own
+`proxy-config.json` `dynamic-proxy` entry, and that requirement is
+correct, expected behavior, not a bug - it's precisely the cost this
+feature lets a *covered* interface skip. Mixing that into the same smoke
+test would muddy which claim is actually being proven, so `Main` (the
+full demo, including the fallback) and `NativeMain` (the narrow
+native-image proof) are kept as two separate entry points, and only
+`NativeMain` backs the `native` Maven profile.
+
+A new CI job, `native-image-smoke-test` (a sibling of the existing
+`sample-consumer` job in `sample-consumer-test.yml`, not a step added to
+it, so a native-image failure is reported distinctly), installs a GraalVM
+JDK via `graalvm/setup-graalvm`, runs `mvn -Pnative package`, and executes
+the resulting binary - green on every push/PR to `develop`/`master` from
+here on.

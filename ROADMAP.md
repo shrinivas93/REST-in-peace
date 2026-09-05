@@ -200,7 +200,7 @@ up.
 - [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
       instead of hitting the network every time.
 - [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** (steps
-      1-2 done, steps 3-4 remain) — an
+      1-3 done, step 4 remains) — an
       annotation processor that generates a real class implementing each
       `@RestClient` interface at build time (like Dagger/MapStruct do)
       instead of `Proxy.newProxyInstance` + reflection at runtime. Makes the
@@ -323,6 +323,32 @@ up.
             sample-project example replaced the now-obsolete
             `CompletableFuture`-based ones. **Step 2 (full feature parity)
             is now complete.** See the design doc's §9.8.
+      - [x] **Step 3: native-image smoke test** — built
+            `samples/compile-time-proxy-consumer` into a real GraalVM
+            native executable and ran it, the concrete proof the "GraalVM
+            native-image friendly out of the box with zero reflection
+            config" claim actually holds, rather than an assumption
+            resting on "we removed the reflective calls from the
+            generated path." The first attempt immediately falsified that
+            claim: `RIP.getClient`'s own generated-impl lookup
+            (`Class.forName(restClient.getName() + "_RipImpl")`) is itself
+            a dynamically-computed reflective call GraalVM's static
+            analysis can't resolve, so every single generated class was
+            silently unusable under native-image, for any interface, from
+            the moment `tryGeneratedImpl` was first introduced (step 1).
+            Fixed at the source: `RestClientProcessor` now emits a
+            `reflect-config.json` resource alongside every generated
+            `<Interface>_RipImpl`, registering exactly the one constructor
+            the lookup needs - zero hand-written configuration anywhere in
+            the consumer project, keeping the same "zero extra
+            configuration" property the rest of this feature already has.
+            A new `NativeMain` entry point and `native` Maven profile in
+            the sample project, plus a new `native-image-smoke-test` CI
+            job, exercise only the fully-covered path (not the reflective
+            proxy fallback, which still needs its own hand-written
+            `proxy-config.json` under native-image - correct, expected
+            behavior for an interface the generator doesn't cover, not a
+            bug). See the design doc's §9.9.
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small
