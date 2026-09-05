@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -298,10 +299,10 @@ class CompileTimeValidationTest {
 
 		try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null,
 				StandardCharsets.UTF_8)) {
-			fileManager.setLocation(StandardLocation.CLASS_OUTPUT, List.of(outputDir.toFile()));
+			fileManager.setLocation(StandardLocation.CLASS_OUTPUT, Collections.singletonList(outputDir.toFile()));
 			List<String> options = Arrays.asList("-classpath", System.getProperty("java.class.path"));
 			JavaCompiler.CompilationTask task = compiler.getTask(null, fileManager, diagnostics, options, null,
-					List.of(sourceFile));
+					Collections.singletonList(sourceFile));
 			task.call();
 		}
 		return diagnostics.getDiagnostics();
