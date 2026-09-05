@@ -211,49 +211,67 @@ for reference rather than tracked in code. Check items off as they land.
             calls for the same name through a real request/response round
             trip.
       - [ ] **Follow-up: further hardening and feature ideas**, from a
-            fresh re-read of the implementation (not yet built - ranked
-            roughly by value):
-            - *Failure simulation, the biggest real gap:* every request
-              today gets **some** HTTP response, even the "no route
-              matched" fallback (a `500`) - there's no way to simulate a
-              genuine transport-level failure (connection refused, reset,
-              or a mid-response socket close) at all, so the code path RIP
-              itself distinguishes - "a transport failure (no response at
-              all)" throwing directly, vs. a non-2xx status throwing
-              `RestInPeaceHttpException` - has no way to be exercised
-              through this server. Per-response artificial latency (to
-              prove `@Timeout` actually fires) and a "flaky mode" (fail the
-              first N requests to a route, then succeed, without
-              hand-scripting each one via `enqueue`) are the same category.
-            - *Routing/matching:* matching on request headers or body
-              content, not just method+path+query; multi-segment wildcard
-              paths (`/orders/**`), not just single-segment `{name}`;
-              per-route `enqueue(...)` (today's `enqueue` is one global
-              FIFO shared by every unmatched request, so "route A fails
-              twice then succeeds" while route B behaves normally
-              throughout can't be scripted); `MockRestServer.remove(...)`/
-              in-place route replacement, so one route's behavior can
-              change mid-test without a full `reset()`.
-            - *Introspection:* decoded multipart-part access on
-              `RecordedRequest` (today `getBody()` on a `@Multipart`
-              request returns the raw multipart-encoded bytes as a
-              `String`, with no way to assert on an individual `@Part`/
-              `@PartMap` entry); chunked/delayed response body writing (
-              today's `writeTo` does one `OutputStream.write` for the whole
-              body), so a `DownloadProgressListener`-consuming test can
-              deterministically observe more than one progress callback.
-            - *Assertion ergonomics:* fluent verification sugar
-              (`server.verify(GET, "/orders/{id}")`) instead of manual
-              `takeRequest()` plus field-by-field asserts; a route-coverage
-              assertion (did every registered route get hit); auto-dumping
-              recorded requests/responses when a test fails.
-            - *Niche:* HTTPS/TLS support (loopback plain-HTTP only today -
-              relevant only if a client under test hardcodes a TLS
-              assumption); record/replay against real traffic captured
-              once.
+            fresh re-read of the implementation (not yet built), triaged
+            by necessity rather than just theme:
+            - **Must have** - real capability gaps, not just ergonomics.
+              This class's own javadoc claims `@Retry`, `@Timeout`, and
+              every registered `RequestInterceptor` "run completely
+              unmodified" through it, but two of those can't actually be
+              exercised today:
+              - *Transport-level failure simulation.* Every request today
+                gets **some** HTTP response, even the "no route matched"
+                fallback (a `500`) - there's no way to simulate a genuine
+                transport-level failure (connection refused, reset, or a
+                mid-response socket close), so the code path RIP itself
+                distinguishes - "a transport failure (no response at
+                all)" throwing directly, vs. a non-2xx status throwing
+                `RestInPeaceHttpException` - has no way to be exercised
+                through this server at all.
+              - *Per-response artificial latency.* Without a way to make
+                a mocked response slow, `@Timeout` can't actually be
+                proven to fire through this server, despite it being
+                named as a covered case in this class's own javadoc.
+            - **Good to have** - real value, but each has a workaround
+              today, so none is blocking:
+              - "Flaky mode" (fail the first N requests to a route, then
+                succeed, without hand-scripting each one via `enqueue`).
+              - Per-route `enqueue(...)` - today's `enqueue` is one global
+                FIFO shared by every unmatched request, so "route A fails
+                twice then succeeds" while route B behaves normally
+                throughout can't be scripted.
+              - `MockRestServer.remove(...)`/in-place route replacement,
+                so one route's behavior can change mid-test without a
+                full `reset()`.
+              - Matching on request headers or body content, not just
+                method+path+query.
+              - Decoded multipart-part access on `RecordedRequest` -
+                today `getBody()` on a `@Multipart` request returns the
+                raw multipart-encoded bytes as a `String`, with no way to
+                assert on an individual `@Part`/`@PartMap` entry.
+              - Fluent verification sugar (`server.verify(GET,
+                "/orders/{id}")`) instead of manual `takeRequest()` plus
+                field-by-field asserts.
+              - A route-coverage assertion (did every registered route
+                get hit).
+            - **Not needed now** - niche or speculative; no known use
+              case yet:
+              - Multi-segment wildcard paths (`/orders/**`), not just
+                single-segment `{name}`.
+              - Chunked/delayed response body writing (today's `writeTo`
+                does one `OutputStream.write` for the whole body), so a
+                `DownloadProgressListener`-consuming test could
+                deterministically observe more than one progress
+                callback.
+              - Auto-dumping recorded requests/responses when a test
+                fails.
+              - HTTPS/TLS support (loopback plain-HTTP only today -
+                relevant only if a client under test hardcodes a TLS
+                assumption).
+              - Record/replay against real traffic captured once.
             Same reasoning as the transport-swap option and the first
-            follow-up round above applies here too - these are documented
-            for when real usage shows a need, not built speculatively.
+            follow-up round above applies here too - even the "must have"
+            pair is documented for when it's actually picked up, not
+            built speculatively just because it's flagged as necessary.
 
 Items below are from a full-codebase gap analysis and feature brainstorm
 (2026-09-01), grouped as found: concrete gaps/bugs in the current code,
