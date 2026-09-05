@@ -105,6 +105,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `byte[]`, `File`, and `RipResponse<T>` alike. This was the last item on
   the design doc's feature-parity table: compile-time proxy generation now
   has full feature parity with the reflective proxy.
+- A native-image smoke test: `samples/compile-time-proxy-consumer` gained
+  a `native` Maven profile and CI job building it into a real GraalVM
+  native executable, the concrete proof that compile-time proxy
+  generation's covered path is genuinely reflection-free under
+  native-image's closed-world analysis, with zero hand-written
+  configuration in the consumer project.
+- A compile-testing validation suite: a `@RestClient` interface that fails
+  `RestClientValidator`'s semantic rules at runtime (an invalid `@Retry`, a
+  malformed `@Headers` entry, an unmatched path param, ...) now fails
+  **compilation** outright, with a matching error message, via a new
+  compile-time counterpart of that validator. This was the exit criterion
+  for the "compile-time proxy generation" roadmap item - full feature
+  parity plus this validation suite - which is now complete.
 
 ### Changed
 
@@ -122,6 +135,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reflective proxy. `@Timeout`/`@Retry` are now genuinely supported (see
   above); `@Headers`/`@ErrorType` now correctly disqualify a method, same
   as every other not-yet-supported feature.
+- Compile-time proxy generation: every generated `<Interface>_RipImpl`
+  class was silently unusable under GraalVM native-image - `RIP.getClient`
+  looks it up via a dynamically-computed `Class.forName`, which
+  native-image's static analysis can't resolve, so every call fell back
+  to the reflective proxy, which itself isn't registered for native-image
+  either, crashing. `RestClientProcessor` now emits a `reflect-config.json`
+  alongside every generated class, closing the gap with zero consumer
+  configuration.
+- Removed two long-unused methods from the internal `SampleApi` test
+  fixture that existed only to hold an invalid HTTP-method-annotation
+  combination for a different (reflective-path) test - coverage
+  `RestClientValidatorTest` already has via its own dedicated interfaces,
+  and which the new compile-time validator above now correctly flags as a
+  build error if left in place.
 - The hosted Javadoc site now always reflects the exact commit that was
   released, instead of `master`'s post-release `-SNAPSHOT` version bump.
 - `@PathParam` values are now percent-encoded before being substituted

@@ -49,6 +49,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Starts building a new config.
+	 *
 	 * @return a new builder
 	 */
 	public static Builder builder() {
@@ -56,6 +58,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the runtime base URL.
+	 *
 	 * @return the runtime base URL, or {@code null} to fall back to
 	 *         {@code @BaseUrl} on the interface
 	 */
@@ -64,6 +68,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the connect timeout.
+	 *
 	 * @return the connect timeout in milliseconds, or {@code null} to use
 	 *         the shared client's configured default
 	 */
@@ -72,6 +78,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the read (socket) timeout.
+	 *
 	 * @return the read (socket) timeout in milliseconds, or {@code null} to
 	 *         use the shared client's configured default
 	 */
@@ -80,6 +88,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the proxy host.
+	 *
 	 * @return the proxy host, or {@code null} if no proxy is configured
 	 */
 	public String getProxyHost() {
@@ -87,6 +97,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the proxy port.
+	 *
 	 * @return the proxy port; meaningless if {@link #getProxyHost()} is {@code null}
 	 */
 	public int getProxyPort() {
@@ -94,6 +106,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the proxy username.
+	 *
 	 * @return the proxy username, or {@code null} for an unauthenticated proxy
 	 */
 	public String getProxyUsername() {
@@ -101,6 +115,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the proxy password.
+	 *
 	 * @return the proxy password, or {@code null} for an unauthenticated proxy
 	 */
 	public String getProxyPassword() {
@@ -108,6 +124,8 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns the JSON {@code ObjectMapper} for this client.
+	 *
 	 * @return the JSON {@code ObjectMapper} for this client, or {@code null}
 	 *         to use the shared client's configured default (Unirest's own
 	 *         Gson-backed {@code JsonObjectMapper}, unless changed via
@@ -133,6 +151,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets the runtime base URL.
+		 *
 		 * @param baseUrl the runtime base URL to resolve relative method URLs
 		 *                against
 		 * @return this builder
@@ -143,6 +163,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets the connect timeout.
+		 *
 		 * @param connectTimeoutMillis the connect timeout in milliseconds; must
 		 *                             not be negative
 		 * @return this builder
@@ -156,6 +178,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets the read (socket) timeout.
+		 *
 		 * @param readTimeoutMillis the read (socket) timeout in milliseconds;
 		 *                          must not be negative
 		 * @return this builder
@@ -169,6 +193,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets an unauthenticated proxy.
+		 *
 		 * @param host the proxy host
 		 * @param port the proxy port
 		 * @return this builder
@@ -178,6 +204,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets an authenticated proxy.
+		 *
 		 * @param host     the proxy host
 		 * @param port     the proxy port
 		 * @param username the proxy username
@@ -193,6 +221,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets the JSON {@code ObjectMapper} for this client.
+		 *
 		 * @param objectMapper the JSON {@code ObjectMapper} for this client
 		 * @return this builder
 		 */
@@ -202,6 +232,8 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Builds the config.
+		 *
 		 * @return the built config
 		 */
 		public RipClientConfig build() {

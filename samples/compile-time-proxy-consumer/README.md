@@ -28,6 +28,16 @@ zero extra configuration.
 - **`Main`** starts a throwaway local HTTP server, calls both interfaces,
   and asserts (by throwing if anything's wrong) that both paths behave as
   described above.
+- **`NativeMain`** is the entry point for this project's `native` Maven
+  profile (`mvn -Pnative package`), which builds the whole thing into a
+  GraalVM native executable - the native-image smoke test for step 3 of
+  the design doc's rollout plan. It exercises only `ItemApi`'s
+  fully-covered path (not `UnsupportedApi`'s fallback, which needs its own
+  hand-written `proxy-config.json` under native-image and is a separate
+  concern from what this smoke test proves), with **zero hand-written
+  native-image configuration** anywhere in this project - the only
+  `reflect-config.json` involved is the one `RestClientProcessor` itself
+  emits alongside each generated `_RipImpl` class.
 
 ## Running it
 
@@ -59,6 +69,28 @@ projects, so nothing keeps the two in sync automatically, and the root
 version does change over time (each release bumps it). Omitting the flag
 falls back to the hardcoded default, which will fail to resolve once it
 drifts from whatever you just installed.
+
+### Running the native-image smoke test
+
+Requires a GraalVM JDK (with `native-image`) on `PATH`/`JAVA_HOME` instead
+of an ordinary JDK 8:
+
+```sh
+# From the repository root, using a GraalVM JDK:
+mvn install -DskipTests
+
+# Then, from this directory:
+cd samples/compile-time-proxy-consumer
+mvn -Pnative package \
+  -Drest-in-peace.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml)
+./target/compile-time-proxy-consumer
+```
+
+A successful run ends with:
+
+```
+NATIVE-IMAGE VERIFICATION PASSED: compile-time proxy generation works under GraalVM native-image with zero hand-written reflection config.
+```
 
 ## Try it yourself
 

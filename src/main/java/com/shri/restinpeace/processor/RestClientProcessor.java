@@ -23,7 +23,9 @@ import javax.lang.model.type.MirroredTypeException;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
+import javax.tools.FileObject;
 import javax.tools.JavaFileObject;
+import javax.tools.StandardLocation;
 
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
@@ -75,10 +77,25 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * entirety and left to the reflective proxy - generating a
  * partially-correct implementation would be worse than not generating one
  * at all.
+ *
+ * <p>
+ * Before any of that, every {@code @RestClient} interface this processor
+ * sees - whether or not it also happens to fall within the shape above - is
+ * run through {@link CompileTimeValidator}, the compile-time counterpart of
+ * {@link com.shri.restinpeace.validator.RestClientValidator}'s semantic
+ * rules (an invalid {@code @Retry}, a malformed {@code @Headers} entry, an
+ * unmatched path param, ...). A problem there fails compilation outright,
+ * with the same message {@code RestClientValidator} would otherwise only
+ * report at the first {@code RIP.getClient(...)} call - step 4 of
+ * {@code docs/design/compile-time-proxy-generation.md}.
  */
 @SupportedAnnotationTypes("com.shri.restinpeace.annotation.marker.RestClient")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class RestClientProcessor extends AbstractProcessor {
+
+	/** Instantiated reflectively by the annotation-processing tool via its {@code META-INF/services} SPI registration. */
+	public RestClientProcessor() {
+	}
 
 	@Override
 	public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -93,6 +110,15 @@ public class RestClientProcessor extends AbstractProcessor {
 	private void processRestClient(TypeElement interfaceElement) {
 		if (interfaceElement.getEnclosingElement().getKind() != ElementKind.PACKAGE) {
 			return; // nested/private interfaces aren't supported yet
+		}
+
+		// Runs on every @RestClient interface, whether or not it also happens to fall
+		// within the codegen-supported shape below - an interface can be semantically
+		// invalid (e.g. @Multipart on a GET) yet still structurally "supported", and
+		// should fail the build either way rather than silently falling back to the
+		// reflective proxy and only failing on the first actual call.
+		if (!CompileTimeValidator.validate(interfaceElement, processingEnv)) {
+			return;
 		}
 
 		List<MethodModel> methods = new ArrayList<>();
@@ -452,16 +478,54 @@ public class RestClientProcessor extends AbstractProcessor {
 		String simpleName = interfaceElement.getSimpleName().toString();
 		String implName = simpleName + "_RipImpl";
 
+		String qualifiedImplName = packageName.isEmpty() ? implName : packageName + "." + implName;
 		try {
-			JavaFileObject file = processingEnv.getFiler().createSourceFile(
-					packageName.isEmpty() ? implName : packageName + "." + implName, interfaceElement);
+			JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedImplName, interfaceElement);
 			try (Writer writer = file.openWriter()) {
 				writer.write(renderSource(packageName, implName, interfaceName, interfaceBaseUrl, methods));
 			}
+			writeNativeImageReflectConfig(qualifiedImplName, interfaceElement);
 		} catch (IOException e) {
 			processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
 					"Failed to generate RIP implementation for " + interfaceName + ": " + e.getMessage(),
 					interfaceElement);
+		}
+	}
+
+	/**
+	 * {@code RIP.getClient(...)} looks up {@code <Interface>_RipImpl} via
+	 * {@code Class.forName(restClient.getName() + "_RipImpl")} - a
+	 * dynamically-computed name GraalVM's native-image static analysis can't
+	 * resolve at build time the way it resolves a literal
+	 * {@code Class.forName("some.Constant")}, so without this, every
+	 * generated class's own constructor throws
+	 * {@code MissingReflectionRegistrationError} under native-image, and
+	 * every consumer wanting a native-image build would have to hand-write a
+	 * {@code reflect-config.json} entry per {@code @RestClient} interface -
+	 * exactly the ergonomics problem this whole feature exists to remove
+	 * (see the design doc's §1.1). Emitting this here, once per generated
+	 * class, keeps that config in sync with the generated source
+	 * automatically - zero extra consumer configuration, the same property
+	 * every other part of this feature already has.
+	 */
+	private void writeNativeImageReflectConfig(String qualifiedImplName, TypeElement interfaceElement)
+			throws IOException {
+		String resourcePath = "META-INF/native-image/com.shri.restinpeace/" + qualifiedImplName
+				+ "/reflect-config.json";
+		FileObject resource = processingEnv.getFiler().createResource(StandardLocation.CLASS_OUTPUT, "",
+				resourcePath, interfaceElement);
+		try (Writer writer = resource.openWriter()) {
+			writer.write("[\n" //
+					+ "  {\n" //
+					+ "    \"name\": \"" + qualifiedImplName + "\",\n" //
+					+ "    \"methods\": [\n" //
+					+ "      {\n" //
+					+ "        \"name\": \"<init>\",\n" //
+					+ "        \"parameterTypes\": [\"com.shri.restinpeace.annotation.service.RestRequestProcessor\"]\n" //
+					+ "      }\n" //
+					+ "    ]\n" //
+					+ "  }\n" //
+					+ "]\n");
 		}
 	}
 
