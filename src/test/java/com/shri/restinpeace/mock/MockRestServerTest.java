@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -365,6 +366,27 @@ class MockRestServerTest {
 		api.getSecure("Bearer test-token");
 
 		assertTrue(server.getUnhitRoutes().isEmpty());
+	}
+
+	@Test
+	void retryBackoff_actuallyGrowsTheDelayBetweenAttempts() {
+		server.onFlaky(HTTPMethod.POST, "/orders", 2, MockResponse.status(503, ""),
+				MockResponse.ok("{\"orderId\":\"new-1\"}"));
+
+		String result = api.createOrderWithBackoff("{\"sku\":\"sku-1\"}");
+
+		assertEquals("{\"orderId\":\"new-1\"}", result);
+		List<RecordedRequest> requests = server.getRecordedRequests();
+		assertEquals(3, requests.size());
+
+		Duration firstGap = Duration.between(requests.get(0).getReceivedAt(), requests.get(1).getReceivedAt());
+		Duration secondGap = Duration.between(requests.get(1).getReceivedAt(), requests.get(2).getReceivedAt());
+
+		assertTrue(firstGap.toMillis() >= 70,
+				"Expected at least ~100ms (delayMillis) before the first retry, was " + firstGap.toMillis() + "ms");
+		assertTrue(secondGap.toMillis() > firstGap.toMillis() * 2, "Expected the second gap (~300ms, backoffMultiplier "
+				+ "= 3.0) to be clearly larger than the first (~100ms) - was " + secondGap.toMillis() + "ms vs "
+				+ firstGap.toMillis() + "ms");
 	}
 
 	private static final class OrderStatus {

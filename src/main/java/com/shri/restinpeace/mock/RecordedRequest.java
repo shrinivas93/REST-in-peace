@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -34,14 +35,16 @@ public final class RecordedRequest {
 	private final Map<String, List<String>> queryParams;
 	private final Map<String, List<String>> headers;
 	private final byte[] rawBody;
+	private final Instant receivedAt;
 
 	private RecordedRequest(HTTPMethod httpMethod, String path, Map<String, List<String>> queryParams,
-			Map<String, List<String>> headers, byte[] rawBody) {
+			Map<String, List<String>> headers, byte[] rawBody, Instant receivedAt) {
 		this.httpMethod = httpMethod;
 		this.path = path;
 		this.queryParams = queryParams;
 		this.headers = headers;
 		this.rawBody = rawBody;
+		this.receivedAt = receivedAt;
 	}
 
 	static RecordedRequest capture(HttpExchange exchange) throws IOException {
@@ -51,7 +54,7 @@ public final class RecordedRequest {
 		Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 		headers.putAll(exchange.getRequestHeaders());
 		byte[] rawBody = readBody(exchange.getRequestBody());
-		return new RecordedRequest(httpMethod, path, queryParams, headers, rawBody);
+		return new RecordedRequest(httpMethod, path, queryParams, headers, rawBody, Instant.now());
 	}
 
 	/**
@@ -70,6 +73,18 @@ public final class RecordedRequest {
 	 */
 	public String getPath() {
 		return path;
+	}
+
+	/**
+	 * Returns when this request was fully received - the way to verify
+	 * timing-sensitive behavior like {@code @Retry}'s {@code delayMillis}/
+	 * {@code backoffMultiplier} actually growing the wait between attempts,
+	 * rather than only counting how many attempts were made.
+	 *
+	 * @return when this request was received
+	 */
+	public Instant getReceivedAt() {
+		return receivedAt;
 	}
 
 	/**

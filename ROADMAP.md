@@ -356,6 +356,27 @@ for reference rather than tracked in code. Check items off as they land.
             Same reasoning as the transport-swap option and the first
             follow-up round above applies here too - these are documented
             for when real usage shows a need, not built speculatively.
+      - [x] **Follow-up: a second must-have found on a fresh discovery
+            pass - `RecordedRequest.getReceivedAt()`.** `@Retry`'s own
+            javadoc makes a precise, numeric claim: waiting
+            `delayMillis()` between attempts and "multiplying that wait
+            by `backoffMultiplier()` after each one." Until now there was
+            no way to verify that claim at all through `MockRestServer` -
+            only that N attempts happened, never that the gap between
+            them actually grew. A silently-broken backoff multiplier
+            (hardcoded to `1.0`, or applied in the wrong direction) would
+            have passed every existing test. `getReceivedAt()` timestamps
+            each request as it's captured (`Instant.now()`, taken after
+            the body is fully read, so it reflects "fully received" for
+            every request consistently), letting a test measure the gap
+            between consecutive attempts directly. Two other fresh-pass
+            candidates - simulating a redirect response and a
+            gzip-compressed one - were considered but didn't clear the
+            same bar: RIP has no code and makes no documented claim about
+            either, so there's no broken promise to prove, only an
+            unverified reliance on Apache HttpClient's default behavior -
+            a real but weaker risk, left as good-to-have-tier candidates
+            rather than built here.
       - [ ] **Parked: record/replay against real traffic captured once**
             (pulled out of the "not needed now" list above - explicit
             interest, revisit this before the rest of that tier). A
