@@ -77,6 +77,17 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * entirety and left to the reflective proxy - generating a
  * partially-correct implementation would be worse than not generating one
  * at all.
+ *
+ * <p>
+ * Before any of that, every {@code @RestClient} interface this processor
+ * sees - whether or not it also happens to fall within the shape above - is
+ * run through {@link CompileTimeValidator}, the compile-time counterpart of
+ * {@link com.shri.restinpeace.validator.RestClientValidator}'s semantic
+ * rules (an invalid {@code @Retry}, a malformed {@code @Headers} entry, an
+ * unmatched path param, ...). A problem there fails compilation outright,
+ * with the same message {@code RestClientValidator} would otherwise only
+ * report at the first {@code RIP.getClient(...)} call - step 4 of
+ * {@code docs/design/compile-time-proxy-generation.md}.
  */
 @SupportedAnnotationTypes("com.shri.restinpeace.annotation.marker.RestClient")
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
@@ -95,6 +106,15 @@ public class RestClientProcessor extends AbstractProcessor {
 	private void processRestClient(TypeElement interfaceElement) {
 		if (interfaceElement.getEnclosingElement().getKind() != ElementKind.PACKAGE) {
 			return; // nested/private interfaces aren't supported yet
+		}
+
+		// Runs on every @RestClient interface, whether or not it also happens to fall
+		// within the codegen-supported shape below - an interface can be semantically
+		// invalid (e.g. @Multipart on a GET) yet still structurally "supported", and
+		// should fail the build either way rather than silently falling back to the
+		// reflective proxy and only failing on the first actual call.
+		if (!CompileTimeValidator.validate(interfaceElement, processingEnv)) {
+			return;
 		}
 
 		List<MethodModel> methods = new ArrayList<>();

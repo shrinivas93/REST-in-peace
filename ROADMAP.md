@@ -199,8 +199,7 @@ up.
       JSON/raw-string via `@Body` or multipart).
 - [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
       instead of hitting the network every time.
-- [ ] **Compile-time proxy generation instead of a JDK dynamic proxy** (steps
-      1-3 done, step 4 remains) — an
+- [x] **Compile-time proxy generation instead of a JDK dynamic proxy** — an
       annotation processor that generates a real class implementing each
       `@RestClient` interface at build time (like Dagger/MapStruct do)
       instead of `Proxy.newProxyInstance` + reflection at runtime. Makes the
@@ -349,6 +348,42 @@ up.
             `proxy-config.json` under native-image - correct, expected
             behavior for an interface the generator doesn't cover, not a
             bug). See the design doc's §9.9.
+      - [x] **Step 4: the compile-testing validation suite** — the exit
+            criterion for this whole roadmap item. A new
+            `CompileTimeValidator` reimplements every semantic rule
+            `RestClientValidator` enforces reflectively (HTTP-method
+            count, `@Body`, `@Retry`, `@Timeout`, `@Headers`,
+            `@Multipart`, `@QueryMap`/`@HeaderMap`/`@PartMap`,
+            `@Destination`, `@Url`, upload/download listeners,
+            `CompletableFuture<T>`/`RipResponse<T>` return-type shape)
+            against `javax.lang.model` instead of `java.lang.reflect`, so
+            a semantically invalid `@RestClient` interface now fails
+            **compilation** outright - the same message
+            `RestClientValidator` would otherwise only report at the
+            first `RIP.getClient(...)` call - instead of silently
+            compiling and blowing up on first use. Runs on every
+            `@RestClient` interface seen, not only ones within the
+            codegen-supported shape, and skips codegen entirely on any
+            error found. Deliberately a second, independent
+            implementation rather than a shared abstraction with
+            `RestClientValidator`, per the design doc's own §7 open
+            question - and deliberately does *not* enforce one rule
+            (a relative URL needing `@BaseUrl`), since which
+            `RIP.getClient(...)` overload ends up used is an inherently
+            runtime fact. Also found and fixed a real, if minor,
+            regression this same change caused: a long-dormant fixture
+            interface (`SampleApi`) had two unused methods purely to hold
+            invalid annotation combinations for a different (reflective)
+            test, which the new compile-time check now correctly flagged
+            - deleted as pure duplication of coverage
+            `RestClientValidatorTest` already has via its own nested
+            interfaces. A new `CompileTimeValidationTest` proves both
+            directions via a real, isolated `javac` invocation
+            (`javax.tools.JavaCompiler`, no new dependency): 14 invalid
+            interfaces each fail compilation with the expected message,
+            and a valid one compiles clean and produces a real generated
+            class. See the design doc's §9.10. **All four steps are now
+            complete - this roadmap item is done.**
 - [ ] **A pluggable `CallAdapter`-style return-type system** — return types
       are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`). Extracting that into a small
