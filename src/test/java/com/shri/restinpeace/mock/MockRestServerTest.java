@@ -1,5 +1,6 @@
 package com.shri.restinpeace.mock;
 
+import static java.util.Collections.singletonMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,8 @@ import java.util.NoSuchElementException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import kong.unirest.JsonObjectMapper;
 
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -21,6 +24,7 @@ class MockRestServerTest {
 
 	@BeforeEach
 	void setUp() {
+		RIP.setObjectMapper(new JsonObjectMapper());
 		server = MockRestServer.start();
 		api = RIP.getClient(MockServerTestApi.class, server.baseUrl());
 	}
@@ -98,6 +102,48 @@ class MockRestServerTest {
 	@Test
 	void takeRequest_onEmptyHistory_throwsNoSuchElementException() {
 		assertThrows(NoSuchElementException.class, () -> server.takeRequest());
+	}
+
+	@Test
+	void mockResponseJson_serializesAnObjectUsingTheConfiguredObjectMapper() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new OrderStatus("CONFIRMED")));
+
+		String result = api.getOrder("abc123", "false");
+
+		assertTrue(result.contains("CONFIRMED"), "Expected the serialized status in: " + result);
+	}
+
+	@Test
+	void reset_clearsQueuedResponsesRoutesAndRecordedRequests() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+		api.getOrder("abc123", "false");
+		assertEquals(1, server.requestCount());
+
+		server.reset();
+
+		assertEquals(0, server.requestCount());
+		assertThrows(RestInPeaceHttpException.class, () -> api.getOrder("abc123", "false"));
+	}
+
+	@Test
+	void onRouteWithQueryParams_onlyMatchesWhenTheyreEqual() {
+		server.on(HTTPMethod.GET, "/orders/{id}", singletonMap("verbose", "true"), MockResponse.ok("{\"detail\":\"full\"}"));
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"detail\":\"summary\"}"));
+
+		String verbose = api.getOrder("abc123", "true");
+		String summary = api.getOrder("abc123", "false");
+
+		assertEquals("{\"detail\":\"full\"}", verbose);
+		assertEquals("{\"detail\":\"summary\"}", summary);
+	}
+
+	private static final class OrderStatus {
+		@SuppressWarnings("unused")
+		public final String status;
+
+		OrderStatus(String status) {
+			this.status = status;
+		}
 	}
 
 }

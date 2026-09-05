@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.regex.Pattern;
 
@@ -117,7 +118,53 @@ public final class MockRestServer implements AutoCloseable {
 	 * @return this server
 	 */
 	public MockRestServer on(HTTPMethod httpMethod, String pathTemplate, MockResponse response) {
-		routes.add(new Route(httpMethod, pathTemplate, response));
+		return on(httpMethod, pathTemplate, Collections.emptyMap(), response);
+	}
+
+	/**
+	 * Same as {@link #on(HTTPMethod, String, MockResponse)}, but only matches
+	 * a request whose query params contain every entry in
+	 * {@code requiredQueryParams} with an equal value - any other query
+	 * params the request carries are ignored. Useful for an endpoint that
+	 * behaves differently depending on a query param, e.g. registering one
+	 * route for {@code ?status=active} and another for
+	 * {@code ?status=archived} on the same path. As with the simpler
+	 * overload, routes are checked in registration order and the first match
+	 * wins - register the more specific (query-constrained) route first if a
+	 * less specific one for the same path would otherwise shadow it.
+	 *
+	 * @param httpMethod          the HTTP method to match
+	 * @param pathTemplate        the path to match, with optional
+	 *                            {@code {name}} placeholders
+	 * @param requiredQueryParams the query params that must be present with
+	 *                            these exact values for this route to match
+	 * @param response            the response to send for every matching
+	 *                            request
+	 * @return this server
+	 */
+	public MockRestServer on(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
+			MockResponse response) {
+		routes.add(new Route(httpMethod, pathTemplate, requiredQueryParams, response));
+		return this;
+	}
+
+	/**
+	 * Clears every queued response, registered route, and recorded request,
+	 * so the same server can be reused across multiple tests instead of
+	 * paying to start a new one for each - e.g. from a
+	 * {@code @BeforeEach} method, with the server itself started once in a
+	 * {@code @BeforeAll}.
+	 *
+	 * @return this server
+	 */
+	public MockRestServer reset() {
+		synchronized (queue) {
+			queue.clear();
+		}
+		routes.clear();
+		synchronized (recorded) {
+			recorded.clear();
+		}
 		return this;
 	}
 
@@ -188,16 +235,27 @@ public final class MockRestServer implements AutoCloseable {
 	private static final class Route {
 		private final HTTPMethod httpMethod;
 		private final Pattern pathPattern;
+		private final Map<String, String> requiredQueryParams;
 		private final MockResponse response;
 
-		Route(HTTPMethod httpMethod, String pathTemplate, MockResponse response) {
+		Route(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
+				MockResponse response) {
 			this.httpMethod = httpMethod;
 			this.pathPattern = compile(pathTemplate);
+			this.requiredQueryParams = requiredQueryParams;
 			this.response = response;
 		}
 
 		boolean matches(RecordedRequest request) {
-			return httpMethod == request.getHttpMethod() && pathPattern.matcher(request.getPath()).matches();
+			if (httpMethod != request.getHttpMethod() || !pathPattern.matcher(request.getPath()).matches()) {
+				return false;
+			}
+			for (Map.Entry<String, String> required : requiredQueryParams.entrySet()) {
+				if (!required.getValue().equals(request.getQueryParam(required.getKey()))) {
+					return false;
+				}
+			}
+			return true;
 		}
 
 		private static Pattern compile(String pathTemplate) {

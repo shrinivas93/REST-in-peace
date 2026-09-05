@@ -8,6 +8,11 @@ import java.util.Map;
 
 import com.sun.net.httpserver.HttpExchange;
 
+import kong.unirest.Unirest;
+import kong.unirest.UnirestConfigException;
+
+import com.shri.restinpeace.exception.RestInPeaceException;
+
 /**
  * A canned response for {@link MockRestServer} to send back for a matching
  * request.
@@ -33,6 +38,36 @@ public final class MockResponse {
 	 */
 	public static MockResponse ok(String body) {
 		return status(200, body).header("Content-Type", "application/json");
+	}
+
+	/**
+	 * A {@code 200 OK} response, serializing {@code body} with the same
+	 * Unirest {@code ObjectMapper} RIP itself delegates to (the one
+	 * {@link com.shri.restinpeace.RIP#setObjectMapper} sets) - so a test can
+	 * hand this a plain object instead of hand-writing a JSON string. Uses
+	 * the globally-configured mapper specifically; a method under test whose
+	 * client was built with a per-client {@code RipClientConfig}'s own
+	 * {@code objectMapper(...)} isn't necessarily decoding with the same one
+	 * - pre-serialize to a {@code String} and use {@link #ok(String)} instead
+	 * in that case.
+	 *
+	 * @param body the object to serialize as the response body
+	 * @return the new response
+	 * @throws RestInPeaceException if no {@code ObjectMapper} is configured -
+	 *                              call {@link com.shri.restinpeace.RIP#setObjectMapper}
+	 *                              first, same as RIP itself requires for JSON
+	 *                              (de)serialization
+	 */
+	public static MockResponse json(Object body) {
+		try {
+			return ok(Unirest.config().getObjectMapper().writeValue(body));
+		} catch (UnirestConfigException e) {
+			throw new RestInPeaceException(
+					"No JSON ObjectMapper is configured. MockResponse.json(...) delegates to the same "
+							+ "Unirest ObjectMapper RIP itself uses - call RIP.setObjectMapper(...) first, or "
+							+ "pre-serialize to a String and use MockResponse.ok(String) instead.",
+					e);
+		}
 	}
 
 	/**
