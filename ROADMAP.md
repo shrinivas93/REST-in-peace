@@ -324,10 +324,21 @@ for reference rather than tracked in code. Check items off as they land.
             class, since a nested class's private members are visible to
             its enclosing class in Java) rather than duplicating that
             logic.
-            - **Good to have** - real value, but each has a workaround
-              today, so none is blocking:
-              - A route-coverage assertion (did every registered route
-                get hit).
+      - [x] **Follow-up: route-coverage assertion -
+            `getUnhitRoutes()`.** Returns every registered route that
+            hasn't matched any recorded request yet, as `"METHOD path"`
+            strings - catches a route left registered after the
+            code path that used to exercise it was removed, which
+            otherwise causes no failure at all. Each `Route` now tracks
+            whether it's ever been selected as a match (a `volatile
+            boolean`, flipped in `handle(...)` alongside sending its
+            response - a one-directional flag needs no stronger
+            synchronization than that), reported back as a plain
+            `"METHOD pathTemplate"` string since `Route` itself is
+            private and can't be handed out directly. With this, every
+            item from the original "good to have" tier is now done -
+            only the "not needed now" tier remains, unless real usage
+            surfaces a reason to reconsider one:
             - **Not needed now** - niche or speculative; no known use
               case yet:
               - Multi-segment wildcard paths (`/orders/**`), not just

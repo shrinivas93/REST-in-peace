@@ -346,6 +346,27 @@ class MockRestServerTest {
 		assertEquals(0, server.countOf(HTTPMethod.POST, "/orders/{id}"));
 	}
 
+	@Test
+	void getUnhitRoutes_listsRoutesThatWerentMatched() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+		server.on(HTTPMethod.GET, "/secure", MockResponse.ok("ok"));
+
+		api.getOrder("abc123", "false");
+
+		assertEquals(Arrays.asList("GET /secure"), server.getUnhitRoutes());
+	}
+
+	@Test
+	void getUnhitRoutes_isEmptyWhenEveryRouteWasHit() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+		server.on(HTTPMethod.GET, "/secure", MockResponse.ok("ok"));
+
+		api.getOrder("abc123", "false");
+		api.getSecure("Bearer test-token");
+
+		assertTrue(server.getUnhitRoutes().isEmpty());
+	}
+
 	private static final class OrderStatus {
 		@SuppressWarnings("unused")
 		public final String status;

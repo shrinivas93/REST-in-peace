@@ -431,6 +431,28 @@ public final class MockRestServer implements AutoCloseable {
 		return count;
 	}
 
+	/**
+	 * Returns every registered route that hasn't matched any recorded
+	 * request yet, as {@code "METHOD path"} strings (e.g.
+	 * {@code "GET /orders/{id}"}) - a coverage check for a route left
+	 * registered after the code path that used to exercise it was removed,
+	 * which otherwise causes no failure at all.
+	 *
+	 * @return the unhit routes, in registration order, or an empty list if
+	 *         every route has been hit at least once
+	 */
+	public List<String> getUnhitRoutes() {
+		synchronized (routes) {
+			List<String> unhit = new ArrayList<>();
+			for (Route route : routes) {
+				if (!route.wasHit()) {
+					unhit.add(route.describe());
+				}
+			}
+			return unhit;
+		}
+	}
+
 	/** Stops the server. */
 	@Override
 	public void close() {
@@ -451,6 +473,7 @@ public final class MockRestServer implements AutoCloseable {
 			}
 		}
 		if (matchedRoute != null) {
+			matchedRoute.markHit();
 			matchedRoute.nextResponse().writeTo(exchange);
 			return;
 		}
@@ -473,6 +496,7 @@ public final class MockRestServer implements AutoCloseable {
 		private final Predicate<RecordedRequest> matcher;
 		private final MockResponse response;
 		private final Deque<MockResponse> queue = new ArrayDeque<>();
+		private volatile boolean hit;
 
 		Route(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
 				MockResponse response) {
@@ -521,6 +545,18 @@ public final class MockRestServer implements AutoCloseable {
 				MockResponse queued = queue.poll();
 				return queued != null ? queued : response;
 			}
+		}
+
+		void markHit() {
+			hit = true;
+		}
+
+		boolean wasHit() {
+			return hit;
+		}
+
+		String describe() {
+			return httpMethod + " " + pathTemplate;
 		}
 
 		private static Pattern compile(String pathTemplate) {
