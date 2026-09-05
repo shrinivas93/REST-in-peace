@@ -334,6 +334,62 @@ class MockRestServerTest {
 	}
 
 	@Test
+	void formUrlEncoded_sendsContentTypeAndEncodedBody() {
+		server.on(HTTPMethod.POST, "/oauth/token", MockResponse.ok("{}"));
+
+		api.getToken("client_credentials", "abc@def.com");
+
+		RecordedRequest request = server.takeRequest();
+		assertEquals("application/x-www-form-urlencoded", request.getHeader("Content-Type"));
+		assertEquals("grant_type=client_credentials&client_id=abc%40def.com", request.getBody());
+	}
+
+	@Test
+	void getFormFields_decodesAFormUrlEncodedBody() {
+		server.on(HTTPMethod.POST, "/oauth/token", MockResponse.ok("{}"));
+
+		api.getToken("client_credentials", "abc@def.com");
+
+		RecordedRequest request = server.takeRequest();
+		assertEquals(Arrays.asList("client_credentials"), request.getFormFields().get("grant_type"));
+		assertEquals(Arrays.asList("abc@def.com"), request.getFormFields().get("client_id"));
+	}
+
+	@Test
+	void getFormFields_onANonFormUrlEncodedRequest_throwsIllegalStateException() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+
+		api.getOrder("abc123", "false");
+
+		RecordedRequest request = server.takeRequest();
+		assertThrows(IllegalStateException.class, request::getFormFields);
+	}
+
+	@Test
+	void fieldMap_sendsOneFieldPerEntryAndSkipsNullValues() {
+		server.on(HTTPMethod.POST, "/search", MockResponse.ok("{}"));
+		java.util.Map<String, Object> filters = new java.util.LinkedHashMap<>();
+		filters.put("status", "OPEN");
+		filters.put("owner", null);
+
+		api.searchForm(filters);
+
+		RecordedRequest request = server.takeRequest();
+		assertEquals(Arrays.asList("OPEN"), request.getFormFields().get("status"));
+		assertFalse(request.getFormFields().containsKey("owner"));
+	}
+
+	@Test
+	void field_withACollectionValue_repeatsTheKeyOncePerElement() {
+		server.on(HTTPMethod.POST, "/tags", MockResponse.ok("{}"));
+
+		api.submitTags(Arrays.asList("a", "b"));
+
+		RecordedRequest request = server.takeRequest();
+		assertEquals(Arrays.asList("a", "b"), request.getFormFields().get("tag"));
+	}
+
+	@Test
 	void countOf_countsOnlyRequestsMatchingMethodAndPath() {
 		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
 		server.on(HTTPMethod.GET, "/secure", MockResponse.ok("ok"));

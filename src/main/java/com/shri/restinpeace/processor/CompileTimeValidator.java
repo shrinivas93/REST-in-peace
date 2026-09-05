@@ -32,6 +32,9 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
+import com.shri.restinpeace.annotation.request.Field;
+import com.shri.restinpeace.annotation.request.FieldMap;
+import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
@@ -116,6 +119,7 @@ final class CompileTimeValidator {
 				validateMapParam(method, QueryMap.class, "@QueryMap", env, reporter);
 				validateMapParam(method, HeaderMap.class, "@HeaderMap", env, reporter);
 				validateMultipart(method, httpMethodAndUrl.httpMethod, env, reporter);
+				validateFormUrlEncoded(method, httpMethodAndUrl.httpMethod, env, reporter);
 				validateTimeout(method, reporter);
 				validateHeaders(method, reporter);
 				validateDestination(method, env.getTypeUtils(), reporter);
@@ -264,6 +268,10 @@ final class CompileTimeValidator {
 			reporter.error(String.format("The method %s is annotated with @Multipart and also has a @Body "
 					+ "parameter - use one or the other.", qualifiedName(method)), method);
 		}
+		if (multipart && method.getAnnotation(FormUrlEncoded.class) != null) {
+			reporter.error(String.format("The method %s is annotated with both @Multipart and @FormUrlEncoded - "
+					+ "use one or the other.", qualifiedName(method)), method);
+		}
 		if (!multipart && !parts.isEmpty()) {
 			reporter.error(String.format("The method %s has a @Part parameter but is not annotated with @Multipart.",
 					qualifiedName(method)), parts.get(0));
@@ -286,6 +294,47 @@ final class CompileTimeValidator {
 		String name = type.toString();
 		return "java.lang.String".equals(name) || "java.io.File".equals(name) || "byte[]".equals(name)
 				|| "java.io.InputStream".equals(name);
+	}
+
+	private static void validateFormUrlEncoded(ExecutableElement method, HTTPMethod httpMethod,
+			ProcessingEnvironment env, Reporter reporter) {
+		boolean formUrlEncoded = method.getAnnotation(FormUrlEncoded.class) != null;
+		List<VariableElement> fields = new ArrayList<>();
+		List<VariableElement> fieldMaps = new ArrayList<>();
+		VariableElement bodyParam = null;
+		for (VariableElement parameter : method.getParameters()) {
+			if (parameter.getAnnotation(Field.class) != null) {
+				fields.add(parameter);
+			}
+			if (parameter.getAnnotation(FieldMap.class) != null) {
+				fieldMaps.add(parameter);
+			}
+			if (parameter.getAnnotation(Body.class) != null) {
+				bodyParam = parameter;
+			}
+		}
+
+		if (formUrlEncoded && !BODY_SUPPORTED_METHODS.contains(httpMethod)) {
+			reporter.error(String.format("The method %s is annotated with @FormUrlEncoded but HTTP method %s does "
+					+ "not support a request body.", qualifiedName(method), httpMethod), method);
+		}
+		if (formUrlEncoded && fields.isEmpty() && fieldMaps.isEmpty()) {
+			reporter.error(String.format("The method %s is annotated with @FormUrlEncoded but has no @Field or "
+					+ "@FieldMap parameters.", qualifiedName(method)), method);
+		}
+		if (formUrlEncoded && bodyParam != null) {
+			reporter.error(String.format("The method %s is annotated with @FormUrlEncoded and also has a @Body "
+					+ "parameter - use one or the other.", qualifiedName(method)), method);
+		}
+		if (!formUrlEncoded && !fields.isEmpty()) {
+			reporter.error(String.format("The method %s has a @Field parameter but is not annotated with "
+					+ "@FormUrlEncoded.", qualifiedName(method)), fields.get(0));
+		}
+		if (!formUrlEncoded && !fieldMaps.isEmpty()) {
+			reporter.error(String.format("The method %s has a @FieldMap parameter but is not annotated with "
+					+ "@FormUrlEncoded.", qualifiedName(method)), fieldMaps.get(0));
+		}
+		validateMapParam(method, FieldMap.class, "@FieldMap", env, reporter);
 	}
 
 	private static void validateReturnType(ExecutableElement method, Types types, Reporter reporter) {
