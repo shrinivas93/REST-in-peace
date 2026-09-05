@@ -257,26 +257,27 @@ for reference rather than tracked in code. Check items off as they land.
             failure that many times) - the actual "flaky mode" ask.
             `enqueue(...)`'s javadoc now correctly documents the
             limitation instead of overpromising.
-      - [x] **Follow-up: `on(...)` upsert instead of append, closing a
-            related dead-code footgun.** Registering the same
-            `(httpMethod, pathTemplate, requiredQueryParams)` route twice
-            used to append a second, permanently-shadowed `Route` (the
-            first registration always wins, since routes match in
-            registration order) - silently dead code, and no way to
-            change a route's behavior mid-test without a full `reset()`,
-            which also wipes queued responses and recorded-request
-            history. `on(...)` now replaces the existing route in place
-            (same list position, so precedence relative to other routes
-            is unaffected) when called again with the same key.
+      - [x] **Follow-up: `on(...)` upsert instead of append, plus
+            `remove(...)`, closing a related dead-code footgun.**
+            Registering the same `(httpMethod, pathTemplate,
+            requiredQueryParams)` route twice used to append a second,
+            permanently-shadowed `Route` (the first registration always
+            wins, since routes match in registration order) - silently
+            dead code, and no way to change or remove a route's behavior
+            mid-test without a full `reset()`, which also wipes queued
+            responses and recorded-request history. `on(...)` now
+            replaces the existing route in place (same list position, so
+            precedence relative to other routes is unaffected) when
+            called again with the same key; `MockRestServer.remove(httpMethod,
+            pathTemplate)` removes a route outright (returning `false` if
+            none matched), for a test that wants an endpoint to stop
+            being covered by any route rather than replacing what it
+            returns.
       - [ ] **Follow-up: further hardening and feature ideas**, from a
             fresh re-read of the implementation (not yet built), triaged
             by necessity rather than just theme:
             - **Good to have** - real value, but each has a workaround
               today, so none is blocking:
-              - `MockRestServer.remove(httpMethod, pathTemplate)` to
-                remove a registered route outright (as opposed to
-                replacing it, which `on(...)` now does) without a full
-                `reset()`.
               - Matching on request headers or body content, not just
                 method+path+query.
               - Decoded multipart-part access on `RecordedRequest` -
