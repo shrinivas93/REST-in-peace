@@ -194,6 +194,28 @@ public final class RecordedRequest {
 		return parts;
 	}
 
+	/**
+	 * Decodes an {@code application/x-www-form-urlencoded} body into its
+	 * field name/value pairs, for asserting on what a
+	 * {@code @FormUrlEncoded} method actually sent - a repeated key (from a
+	 * {@code @FieldMap} entry, or a {@code Collection}-valued {@code @Field})
+	 * collects every value, in the order sent.
+	 *
+	 * @return the decoded form fields, keyed by name in the order first seen
+	 * @throws IllegalStateException if this request's {@code Content-Type}
+	 *                                isn't {@code application/x-www-form-urlencoded}
+	 */
+	public Map<String, List<String>> getFormFields() {
+		String contentType = getHeader("Content-Type");
+		if (contentType == null
+				|| !contentType.toLowerCase(Locale.ROOT).startsWith("application/x-www-form-urlencoded")) {
+			throw new IllegalStateException(
+					"getFormFields() requires an application/x-www-form-urlencoded Content-Type, but this request's was: "
+							+ contentType);
+		}
+		return parseQuery(getBody());
+	}
+
 	private boolean isTerminalBoundary(int afterDelimiterIndex) {
 		return afterDelimiterIndex + 1 < rawBody.length && rawBody[afterDelimiterIndex] == '-'
 				&& rawBody[afterDelimiterIndex + 1] == '-';

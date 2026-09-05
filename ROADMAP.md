@@ -490,9 +490,26 @@ up.
       `@HeaderParam`/`@HeaderMap` win over a `@Headers` entry of the same
       name, applied via Unirest's `headerReplace` since the per-call value
       is more specific than the always-on method annotation.
-- [ ] **Form-urlencoded bodies** — `@FormUrlEncoded` + `@Field`/`@FieldMap`,
-      for OAuth token endpoints and classic HTML forms (currently only
-      JSON/raw-string via `@Body` or multipart).
+- [x] **Form-urlencoded bodies** — `@FormUrlEncoded` + `@Field`/`@FieldMap`,
+      for OAuth token endpoints and classic HTML forms (previously only
+      JSON/raw-string via `@Body` or multipart). Mirrors `@Multipart`/`@Part`/
+      `@PartMap`'s design end to end: same validation rules (unsupported HTTP
+      method, no fields, combined with `@Body`), plus a new one - combined
+      with `@Multipart` - since a method now has two mutually exclusive
+      body-encoding strategies to pick between. Implemented in both dispatch
+      paths (the compile-time generator and the reflective proxy fallback).
+      One real design constraint: Unirest 3.x's `field(...)` always upgrades
+      a request to `MultipartBody`, so there's no dedicated url-encoded body
+      builder to accumulate into the way `@Multipart` does - the encoded
+      `name=value` pairs are accumulated into a `List<String>` instead and
+      joined into a single `body(...)` call with `Content-Type:
+      application/x-www-form-urlencoded` once every parameter is applied. A
+      `Collection`-valued `@Field`/`@FieldMap` entry repeats the key once per
+      element (`tag=a&tag=b`), the same convention `@QueryParam` uses.
+      `MockRestServer`'s `RecordedRequest` gained a matching
+      `getFormFields()` decoder, the `@FormUrlEncoded` counterpart to
+      `getParts()`, so a test can assert on a decoded field value instead of
+      substring-matching the raw encoded body.
 - [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
       instead of hitting the network every time.
 - [x] **Compile-time proxy generation instead of a JDK dynamic proxy** — an

@@ -51,6 +51,9 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
+import com.shri.restinpeace.annotation.request.Field;
+import com.shri.restinpeace.annotation.request.FieldMap;
+import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
@@ -182,6 +185,26 @@ class RipIntegrationTest {
 		@Multipart
 		String uploadMultipartWithProgress(@PathParam("port") int port, @PathParam("id") String id,
 				@Part("file") File file, UploadProgressListener listener);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@FormUrlEncoded
+		String postFormUrlEncoded(@PathParam("port") int port, @PathParam("id") String id,
+				@Field("grant_type") String grantType, @Field("client_id") String clientId);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@FormUrlEncoded
+		String postFormUrlEncodedWithRequiredField(@PathParam("port") int port, @PathParam("id") String id,
+				@Field(value = "grant_type", required = true) String grantType);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@FormUrlEncoded
+		String postFormUrlEncodedWithFieldMap(@PathParam("port") int port, @PathParam("id") String id,
+				@FieldMap Map<String, Object> fields);
+
+		@POST("http://localhost:{port}/items/{id}")
+		@FormUrlEncoded
+		String postFormUrlEncodedWithCollectionField(@PathParam("port") int port, @PathParam("id") String id,
+				@Field("tag") List<String> tags);
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMultiValueQuery(@PathParam("port") int port, @PathParam("id") String id,
@@ -922,6 +945,78 @@ class RipIntegrationTest {
 		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
 				() -> api.uploadMultipartWithPartMap(port, "abc", parts));
 		assertTrue(exception.getMessage().contains("Unsupported"));
+	}
+
+	@Test
+	void formUrlEncoded_withTwoFields_sendsEncodedBodyAndContentType() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.postFormUrlEncoded(port, "abc", "client_credentials", "abc@def.com");
+
+		assertEquals("ok", result);
+		CapturedRequest request = LAST_REQUEST.get();
+		assertEquals("application/x-www-form-urlencoded", request.header("Content-Type"));
+		assertEquals("grant_type=client_credentials&client_id=abc%40def.com", request.body);
+	}
+
+	@Test
+	void formUrlEncoded_withNullOptionalField_skipsThatField() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.postFormUrlEncoded(port, "abc", "client_credentials", null);
+
+		assertEquals("grant_type=client_credentials", LAST_REQUEST.get().body);
+	}
+
+	@Test
+	void formUrlEncoded_withMissingRequiredField_throwsRestInPeaceException() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> api.postFormUrlEncodedWithRequiredField(port, "abc", null));
+		assertTrue(exception.getMessage().contains("Missing required value"));
+	}
+
+	@Test
+	void fieldMap_withEntries_sendsEachAsAFormField() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> fields = new LinkedHashMap<>();
+		fields.put("status", "OPEN");
+		fields.put("owner", "shri");
+
+		api.postFormUrlEncodedWithFieldMap(port, "abc", fields);
+
+		assertEquals("status=OPEN&owner=shri", LAST_REQUEST.get().body);
+	}
+
+	@Test
+	void fieldMap_withNullMap_sendsEmptyBody() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.postFormUrlEncodedWithFieldMap(port, "abc", null);
+
+		assertEquals("", LAST_REQUEST.get().body);
+	}
+
+	@Test
+	void fieldMap_withNullValue_skipsThatEntry() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> fields = new LinkedHashMap<>();
+		fields.put("status", "OPEN");
+		fields.put("skip", null);
+
+		api.postFormUrlEncodedWithFieldMap(port, "abc", fields);
+
+		assertEquals("status=OPEN", LAST_REQUEST.get().body);
+	}
+
+	@Test
+	void field_withCollectionValue_repeatsTheKeyOncePerElement() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.postFormUrlEncodedWithCollectionField(port, "abc", Arrays.asList("a", "b"));
+
+		assertEquals("tag=a&tag=b", LAST_REQUEST.get().body);
 	}
 
 	@Test

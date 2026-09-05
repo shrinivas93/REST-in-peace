@@ -39,6 +39,9 @@ import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
+import com.shri.restinpeace.annotation.request.Field;
+import com.shri.restinpeace.annotation.request.FieldMap;
+import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
@@ -59,10 +62,11 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * currently-supported shape: a single fixed HTTP verb, {@code @PathParam}/
  * {@code @QueryParam}/{@code @HeaderParam}/{@code @QueryMap}/
  * {@code @HeaderMap}/{@code @Body}/{@code @Url}/{@code @Part}/
- * {@code @PartMap}/{@code @Destination}/an {@code UploadProgressListener}/
- * {@code DownloadProgressListener} parameter, optional {@code @Timeout}/
- * {@code @Retry}/{@code @Headers}/{@code @ErrorType}/{@code @Multipart},
- * and a {@code void}, {@code String}, non-generic POJO, {@code byte[]},
+ * {@code @PartMap}/{@code @Field}/{@code @FieldMap}/{@code @Destination}/an
+ * {@code UploadProgressListener}/{@code DownloadProgressListener} parameter,
+ * optional {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}/
+ * {@code @Multipart}/{@code @FormUrlEncoded}, and a {@code void},
+ * {@code String}, non-generic POJO, {@code byte[]},
  * {@code File}, or {@code RipResponse<T>} (for any of the previous
  * return-type shapes) return type. {@code RIP.getClient(...)} prefers this
  * generated class over the reflective {@code java.lang.reflect.Proxy} it
@@ -170,6 +174,10 @@ public class RestClientProcessor extends AbstractProcessor {
 		}
 
 		boolean isMultipart = methodElement.getAnnotation(Multipart.class) != null;
+		boolean isFormUrlEncoded = methodElement.getAnnotation(FormUrlEncoded.class) != null;
+		if (isMultipart && isFormUrlEncoded) {
+			return null; // @Multipart + @FormUrlEncoded is itself a validation error; fall back to reflective
+		}
 		int destinationCount = 0;
 		for (ParamModel param : params) {
 			boolean isMultipartOnlyKind = param.kind == ParamKind.PART || param.kind == ParamKind.PART_MAP
@@ -185,6 +193,16 @@ public class RestClientProcessor extends AbstractProcessor {
 			}
 			if (isMultipart && param.kind == ParamKind.BODY) {
 				return null; // @Multipart + @Body is itself a validation error; same reasoning as above
+			}
+			boolean isFormUrlEncodedOnlyKind = param.kind == ParamKind.FIELD || param.kind == ParamKind.FIELD_MAP;
+			if (isFormUrlEncodedOnlyKind && !isFormUrlEncoded) {
+				// Same reasoning as the @Multipart-only kinds above - a @Field/@FieldMap
+				// parameter with no @FormUrlEncoded on the method would reference a
+				// __ripFormFields local this processor never declares without it.
+				return null;
+			}
+			if (isFormUrlEncoded && param.kind == ParamKind.BODY) {
+				return null; // @FormUrlEncoded + @Body is itself a validation error; same reasoning as above
 			}
 			boolean isDownloadOnlyKind = param.kind == ParamKind.DESTINATION || param.kind == ParamKind.DOWNLOAD_PROGRESS;
 			if (isDownloadOnlyKind && returnModel.kind != ReturnKind.FILE) {
@@ -211,7 +229,7 @@ public class RestClientProcessor extends AbstractProcessor {
 
 		return new MethodModel(methodElement.getSimpleName().toString(), httpMethodAndUrl.httpMethod,
 				httpMethodAndUrl.urlTemplate, returnModel, params, timeoutModel, retryModel, headerEntries,
-				errorTypeClassName, isMultipart);
+				errorTypeClassName, isMultipart, isFormUrlEncoded);
 	}
 
 	private TimeoutModel timeoutModelOf(ExecutableElement methodElement) {
@@ -391,10 +409,12 @@ public class RestClientProcessor extends AbstractProcessor {
 		Url url = parameter.getAnnotation(Url.class);
 		Part part = parameter.getAnnotation(Part.class);
 		PartMap partMap = parameter.getAnnotation(PartMap.class);
+		Field field = parameter.getAnnotation(Field.class);
+		FieldMap fieldMap = parameter.getAnnotation(FieldMap.class);
 		Destination destination = parameter.getAnnotation(Destination.class);
 
 		int annotationCount = countNonNull(pathParam, queryParam, headerParam, queryMap, headerMap, body, url, part,
-				partMap, destination);
+				partMap, field, fieldMap, destination);
 		if (annotationCount != 1) {
 			return null; // no recognized annotation, or more than one - either way unsupported here
 		}
@@ -439,6 +459,15 @@ public class RestClientProcessor extends AbstractProcessor {
 		if (partMap != null) {
 			return isMapType(parameter.asType())
 					? new ParamModel(ParamKind.PART_MAP, "", javaParamName, javaTypeName, false, "", "")
+					: null;
+		}
+		if (field != null) {
+			return new ParamModel(ParamKind.FIELD, field.value(), javaParamName, javaTypeName, field.required(), "",
+					"");
+		}
+		if (fieldMap != null) {
+			return isMapType(parameter.asType())
+					? new ParamModel(ParamKind.FIELD_MAP, "", javaParamName, javaTypeName, false, "", "")
 					: null;
 		}
 		// url != null - the generated method assigns the resolved String straight into a
@@ -595,9 +624,17 @@ public class RestClientProcessor extends AbstractProcessor {
 					"\t\tkong.unirest.MultipartBody __ripMultipart = this.ripProcessor.beginGeneratedMultipart(__ripRequest);\n");
 			out.append("\t\t__ripRequest = __ripMultipart;\n");
 		}
+		if (method.isFormUrlEncoded) {
+			out.append("\t\tjava.util.List<String> __ripFormFields = new java.util.ArrayList<>();\n");
+		}
 
 		for (ParamModel param : method.params) {
 			appendParamApplication(out, param);
+		}
+
+		if (method.isFormUrlEncoded) {
+			out.append(
+					"\t\t__ripRequest = this.ripProcessor.applyFormUrlEncodedBody(__ripRequest, __ripFormFields);\n");
 		}
 
 		String errorTypeLiteral = method.errorTypeClassName == null ? "null" : method.errorTypeClassName + ".class";
@@ -713,6 +750,19 @@ public class RestClientProcessor extends AbstractProcessor {
 					.append(" != null) { this.ripProcessor.applyUploadMonitor(__ripMultipart, ")
 					.append(param.javaParamName).append("); }\n");
 			return;
+		case FIELD:
+			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
+					.append(", ").append(param.required)
+					.append(", com.shri.restinpeace.constant.RIPConstant.DEFAULT, ")
+					.append(stringLiteral(param.name)).append(");\n");
+			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.appendFormField(__ripFormFields, ")
+					.append(stringLiteral(param.name)).append(", __ripValue); }\n\t\t}\n");
+			return;
+		case FIELD_MAP:
+			out.append("\t\tif (").append(param.javaParamName)
+					.append(" != null) { this.ripProcessor.appendFormFieldMap(__ripFormFields, ")
+					.append(param.javaParamName).append("); }\n");
+			return;
 		case DESTINATION:
 			return; // consumed directly when calling finishGeneratedSyncFile
 		case DOWNLOAD_PROGRESS:
@@ -803,8 +853,8 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private enum ParamKind {
-		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL, PART, PART_MAP, UPLOAD_PROGRESS, DESTINATION,
-		DOWNLOAD_PROGRESS
+		PATH, QUERY, HEADER, QUERY_MAP, HEADER_MAP, BODY, URL, PART, PART_MAP, FIELD, FIELD_MAP, UPLOAD_PROGRESS,
+		DESTINATION, DOWNLOAD_PROGRESS
 	}
 
 	private enum ReturnKind {
@@ -857,10 +907,11 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String[] headerEntries;
 		final String errorTypeClassName;
 		final boolean isMultipart;
+		final boolean isFormUrlEncoded;
 
 		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, ReturnModel returnModel,
 				List<ParamModel> params, TimeoutModel timeout, RetryModel retry, String[] headerEntries,
-				String errorTypeClassName, boolean isMultipart) {
+				String errorTypeClassName, boolean isMultipart, boolean isFormUrlEncoded) {
 			this.name = name;
 			this.httpMethod = httpMethod;
 			this.urlTemplate = urlTemplate;
@@ -871,6 +922,7 @@ public class RestClientProcessor extends AbstractProcessor {
 			this.headerEntries = headerEntries;
 			this.errorTypeClassName = errorTypeClassName;
 			this.isMultipart = isMultipart;
+			this.isFormUrlEncoded = isFormUrlEncoded;
 		}
 	}
 
