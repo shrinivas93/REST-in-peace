@@ -406,6 +406,31 @@ public final class MockRestServer implements AutoCloseable {
 		return recorded.size();
 	}
 
+	/**
+	 * Returns how many recorded requests match {@code httpMethod} and
+	 * {@code pathTemplate} - a check for "was this endpoint called, and how
+	 * many times" without manually filtering {@link #getRecordedRequests()}
+	 * or looping over {@link #takeRequest()}.
+	 *
+	 * @param httpMethod   the HTTP method to match
+	 * @param pathTemplate the path to match, with optional {@code {name}}
+	 *                     placeholders, using the same syntax as
+	 *                     {@link #on(HTTPMethod, String, MockResponse)}
+	 * @return how many recorded requests matched
+	 */
+	public int countOf(HTTPMethod httpMethod, String pathTemplate) {
+		Pattern pathPattern = Route.compile(pathTemplate);
+		int count = 0;
+		synchronized (recorded) {
+			for (RecordedRequest request : recorded) {
+				if (request.getHttpMethod() == httpMethod && pathPattern.matcher(request.getPath()).matches()) {
+					count++;
+				}
+			}
+		}
+		return count;
+	}
+
 	/** Stops the server. */
 	@Override
 	public void close() {

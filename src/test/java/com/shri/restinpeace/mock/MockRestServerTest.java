@@ -332,6 +332,20 @@ class MockRestServerTest {
 		assertThrows(IllegalStateException.class, request::getParts);
 	}
 
+	@Test
+	void countOf_countsOnlyRequestsMatchingMethodAndPath() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+		server.on(HTTPMethod.GET, "/secure", MockResponse.ok("ok"));
+
+		api.getOrder("abc123", "false");
+		api.getOrder("xyz789", "false");
+		api.getSecure("Bearer test-token");
+
+		assertEquals(2, server.countOf(HTTPMethod.GET, "/orders/{id}"));
+		assertEquals(1, server.countOf(HTTPMethod.GET, "/secure"));
+		assertEquals(0, server.countOf(HTTPMethod.POST, "/orders/{id}"));
+	}
+
 	private static final class OrderStatus {
 		@SuppressWarnings("unused")
 		public final String status;
