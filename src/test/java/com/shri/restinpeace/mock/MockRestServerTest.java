@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import kong.unirest.JsonObjectMapper;
+import kong.unirest.UnirestException;
 
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipResponse;
@@ -147,6 +148,40 @@ class MockRestServerTest {
 		RipResponse<String> response = api.getWithHeaders();
 
 		assertEquals(Arrays.asList("a=1", "b=2"), response.getHeaders().get("Set-Cookie"));
+	}
+
+	@Test
+	void connectionFailure_throwsUnirestExceptionInsteadOfAnHttpStatus() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.connectionFailure());
+
+		assertThrows(UnirestException.class, () -> api.getOrder("abc123", "false"));
+	}
+
+	@Test
+	void connectionFailure_isAlwaysRetriedRegardlessOfRetryOnStatus() {
+		server.enqueue(MockResponse.connectionFailure());
+		server.enqueue(MockResponse.ok("{\"orderId\":\"new-1\"}"));
+
+		String result = api.createOrder("{\"sku\":\"sku-1\"}");
+
+		assertEquals("{\"orderId\":\"new-1\"}", result);
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void delay_shorterThanTimeout_succeeds() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}").delay(10));
+
+		String result = api.getOrderWithShortTimeout("abc123");
+
+		assertEquals("{}", result);
+	}
+
+	@Test
+	void delay_longerThanTimeout_throws() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}").delay(500));
+
+		assertThrows(RuntimeException.class, () -> api.getOrderWithShortTimeout("abc123"));
 	}
 
 	private static final class OrderStatus {
