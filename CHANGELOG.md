@@ -105,6 +105,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `byte[]`, `File`, and `RipResponse<T>` alike. This was the last item on
   the design doc's feature-parity table: compile-time proxy generation now
   has full feature parity with the reflective proxy.
+- A native-image smoke test: `samples/compile-time-proxy-consumer` gained
+  a `native` Maven profile and CI job building it into a real GraalVM
+  native executable, the concrete proof that compile-time proxy
+  generation's covered path is genuinely reflection-free under
+  native-image's closed-world analysis, with zero hand-written
+  configuration in the consumer project.
 
 ### Changed
 
@@ -122,6 +128,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reflective proxy. `@Timeout`/`@Retry` are now genuinely supported (see
   above); `@Headers`/`@ErrorType` now correctly disqualify a method, same
   as every other not-yet-supported feature.
+- Compile-time proxy generation: every generated `<Interface>_RipImpl`
+  class was silently unusable under GraalVM native-image - `RIP.getClient`
+  looks it up via a dynamically-computed `Class.forName`, which
+  native-image's static analysis can't resolve, so every call fell back
+  to the reflective proxy, which itself isn't registered for native-image
+  either, crashing. `RestClientProcessor` now emits a `reflect-config.json`
+  alongside every generated class, closing the gap with zero consumer
+  configuration.
 - The hosted Javadoc site now always reflects the exact commit that was
   released, instead of `master`'s post-release `-SNAPSHOT` version bump.
 - `@PathParam` values are now percent-encoded before being substituted
