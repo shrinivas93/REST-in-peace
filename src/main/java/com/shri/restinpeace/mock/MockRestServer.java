@@ -49,7 +49,7 @@ public final class MockRestServer implements AutoCloseable {
 
 	private final HttpServer server;
 	private final Deque<MockResponse> queue = new ArrayDeque<>();
-	private final List<Route> routes = new ArrayList<>();
+	private final List<Route> routes = Collections.synchronizedList(new ArrayList<>());
 	private final List<RecordedRequest> recorded = Collections.synchronizedList(new ArrayList<>());
 
 	private MockRestServer(HttpServer server) {
@@ -161,7 +161,9 @@ public final class MockRestServer implements AutoCloseable {
 		synchronized (queue) {
 			queue.clear();
 		}
-		routes.clear();
+		synchronized (routes) {
+			routes.clear();
+		}
 		synchronized (recorded) {
 			recorded.clear();
 		}
@@ -215,11 +217,18 @@ public final class MockRestServer implements AutoCloseable {
 		RecordedRequest request = RecordedRequest.capture(exchange);
 		recorded.add(request);
 
-		for (Route route : routes) {
-			if (route.matches(request)) {
-				route.response.writeTo(exchange);
-				return;
+		Route matchedRoute = null;
+		synchronized (routes) {
+			for (Route route : routes) {
+				if (route.matches(request)) {
+					matchedRoute = route;
+					break;
+				}
 			}
+		}
+		if (matchedRoute != null) {
+			matchedRoute.response.writeTo(exchange);
+			return;
 		}
 		MockResponse response;
 		synchronized (queue) {

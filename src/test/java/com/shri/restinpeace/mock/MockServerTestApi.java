@@ -1,5 +1,6 @@
 package com.shri.restinpeace.mock;
 
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.method.POST;
@@ -28,5 +29,8 @@ public interface MockServerTestApi {
 
 	@GET("/secure")
 	String getSecure(@HeaderParam("Authorization") String token);
+
+	@GET("/with-headers")
+	RipResponse<String> getWithHeaders();
 
 }

@@ -3,7 +3,9 @@ package com.shri.restinpeace.mock;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -21,7 +23,7 @@ public final class MockResponse {
 
 	private final int status;
 	private final byte[] body;
-	private final Map<String, String> headers = new LinkedHashMap<>();
+	private final Map<String, List<String>> headers = new LinkedHashMap<>();
 
 	private MockResponse(int status, byte[] body) {
 		this.status = status;
@@ -103,19 +105,23 @@ public final class MockResponse {
 	}
 
 	/**
-	 * Adds a response header.
+	 * Adds a response header. Calling this more than once for the same
+	 * {@code name} adds an additional value rather than replacing the
+	 * previous one - the way HTTP itself allows a header to repeat (e.g.
+	 * multiple {@code Set-Cookie} headers on one response) - so send several
+	 * values by calling this once per value, in order.
 	 *
 	 * @param name  the header name
 	 * @param value the header value
 	 * @return this response
 	 */
 	public MockResponse header(String name, String value) {
-		headers.put(name, value);
+		headers.computeIfAbsent(name, key -> new ArrayList<>()).add(value);
 		return this;
 	}
 
 	void writeTo(HttpExchange exchange) throws IOException {
-		headers.forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
+		headers.forEach((name, values) -> values.forEach(value -> exchange.getResponseHeaders().add(name, value)));
 		exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
 		if (body.length > 0) {
 			try (OutputStream responseBody = exchange.getResponseBody()) {
