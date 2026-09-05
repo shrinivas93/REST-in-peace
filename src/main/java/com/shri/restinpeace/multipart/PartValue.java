@@ -30,6 +30,8 @@ public final class PartValue {
 	}
 
 	/**
+	 * Wraps a {@code File} part value with an explicit file name.
+	 *
 	 * @param file     the file to send
 	 * @param fileName the file name to send it under, overriding the file's own name
 	 * @return a {@code PartValue} wrapping {@code file} with {@code fileName}
@@ -39,6 +41,8 @@ public final class PartValue {
 	}
 
 	/**
+	 * Wraps a {@code byte[]} part value with an explicit file name.
+	 *
 	 * @param bytes    the file content to send
 	 * @param fileName the file name to send it under
 	 * @return a {@code PartValue} wrapping {@code bytes} with {@code fileName}
@@ -48,6 +52,8 @@ public final class PartValue {
 	}
 
 	/**
+	 * Wraps an {@code InputStream} part value with an explicit file name.
+	 *
 	 * @param stream   the file content to send
 	 * @param fileName the file name to send it under
 	 * @return a {@code PartValue} wrapping {@code stream} with {@code fileName}
@@ -57,6 +63,8 @@ public final class PartValue {
 	}
 
 	/**
+	 * Returns the wrapped part value.
+	 *
 	 * @return the wrapped value
 	 */
 	public Object getValue() {
@@ -64,6 +72,8 @@ public final class PartValue {
 	}
 
 	/**
+	 * Returns the file name to send the wrapped value under.
+	 *
 	 * @return the file name to send the wrapped value under
 	 */
 	public String getFileName() {

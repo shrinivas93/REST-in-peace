@@ -238,6 +238,14 @@ public class RestRequestProcessor {
 	 * counterpart of {@link #resolveUrl}, used when the method has no
 	 * {@code @Url} parameter (which bypasses this entirely; see
 	 * {@link #requireUrlParam}).
+	 *
+	 * @param urlTemplate      the method's declared URL, possibly relative and/or
+	 *                         containing {@code {name}} path param placeholders
+	 * @param interfaceBaseUrl the interface's {@code @BaseUrl}, or {@code null}
+	 *                         if it has none
+	 * @param pathParamNames   the names of every {@code @PathParam} on the method
+	 * @param pathParamValues  the corresponding argument values, in the same order
+	 * @return the fully-resolved request URL
 	 */
 	public String resolveGeneratedUrl(String urlTemplate, String interfaceBaseUrl, String[] pathParamNames,
 			Object[] pathParamValues) {
@@ -251,6 +259,11 @@ public class RestRequestProcessor {
 	 * {@link #resolveGeneratedUrl} (and everything it would otherwise
 	 * resolve - {@code @BaseUrl}, a runtime base URL, {@code @PathParam})
 	 * entirely, mirroring {@link #resolveUrlParam}.
+	 *
+	 * @param value             the {@code @Url} parameter's argument value
+	 * @param methodDescription the interface and method name, for the exception
+	 *                          message if {@code value} is missing
+	 * @return {@code value} as a {@code String}
 	 */
 	public static String requireUrlParam(Object value, String methodDescription) {
 		if (value == null) {
@@ -266,6 +279,12 @@ public class RestRequestProcessor {
 	 * plus {@link #applyTimeout(HttpRequest, Method)}, taking
 	 * {@code @Timeout}'s values as literals (or {@code -1}, its own "unset"
 	 * default, for a method with none) instead of a reflective lookup.
+	 *
+	 * @param httpMethod    the HTTP method to issue
+	 * @param url           the fully-resolved request URL
+	 * @param connectMillis {@code @Timeout}'s {@code connectMillis}, or {@code -1} if unset
+	 * @param readMillis    {@code @Timeout}'s {@code readMillis}, or {@code -1} if unset
+	 * @return the built, not-yet-executed request
 	 */
 	public HttpRequest<?> createGeneratedRequest(HTTPMethod httpMethod, String url, int connectMillis,
 			int readMillis) {
@@ -274,7 +293,12 @@ public class RestRequestProcessor {
 		return request;
 	}
 
-	/** The generated-code counterpart of {@link #applyFixedHeaders}, taking {@code @Headers}' entries as a literal. */
+	/**
+	 * The generated-code counterpart of {@link #applyFixedHeaders}, taking {@code @Headers}' entries as a literal.
+	 *
+	 * @param request       the request to apply the headers to
+	 * @param headerEntries {@code @Headers}' {@code "Name: Value"} entries
+	 */
 	public void applyGeneratedHeaders(HttpRequest<?> request, String[] headerEntries) {
 		applyHeaderEntries(request, headerEntries);
 	}
@@ -289,6 +313,11 @@ public class RestRequestProcessor {
 	 * Unirest call - for a header param, so no separate "generated header
 	 * param" method is needed).
 	 *
+	 * @param argValue     the parameter's argument value, possibly {@code null}
+	 * @param required     {@code @QueryParam}/{@code @HeaderParam}'s {@code required}
+	 * @param defaultValue {@code @QueryParam}/{@code @HeaderParam}'s {@code defaultValue}
+	 * @param paramName    the query/header name, for the exception message if
+	 *                     {@code required} and no value or default is available
 	 * @return {@code argValue} if non-{@code null}, else {@code defaultValue}
 	 *         if set, else {@code null} (or a thrown exception if
 	 *         {@code required})
@@ -306,7 +335,13 @@ public class RestRequestProcessor {
 		return null;
 	}
 
-	/** The generated-code counterpart of {@link #applyBody}, applying a {@code @Body} value only if it's non-{@code null}. */
+	/**
+	 * The generated-code counterpart of {@link #applyBody}, applying a {@code @Body} value only if it's non-{@code null}.
+	 *
+	 * @param request the request to apply the body to
+	 * @param value   the {@code @Body} parameter's argument value, or {@code null}
+	 * @return {@code request}, with the body applied if {@code value} was non-{@code null}
+	 */
 	public HttpRequest<?> applyGeneratedBodyIfPresent(HttpRequest<?> request, Object value) {
 		if (value == null) {
 			return request;
@@ -321,6 +356,22 @@ public class RestRequestProcessor {
 	 * plain (non-{@code byte[]}/{@code File}/{@code RipResponse}/
 	 * {@code CompletableFuture}) branch of {@link #processRestRequest},
 	 * applying registered interceptors first.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param returnType            the method's declared return type to decode into
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return the decoded body, or {@code null} for a {@code void} method
 	 */
 	public Object finishGeneratedSync(HttpRequest<?> request, RequestContext context, Class<?> returnType,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
@@ -331,7 +382,24 @@ public class RestRequestProcessor {
 		return decodeOrThrow(response, errorType, returnType);
 	}
 
-	/** The generated-code counterpart of {@link #processRestRequest}'s {@code byte[]}-return branch. */
+	/**
+	 * The generated-code counterpart of {@link #processRestRequest}'s {@code byte[]}-return branch.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return the response body's raw bytes
+	 */
 	public byte[] finishGeneratedSyncBytes(HttpRequest<?> request, RequestContext context, Class<?> errorType,
 			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
 			int[] retryOnStatus) {
@@ -341,7 +409,25 @@ public class RestRequestProcessor {
 		return (byte[]) decodeOrThrow(response, errorType, byte[].class);
 	}
 
-	/** The generated-code counterpart of {@link #processRestRequest}'s {@code File}-return branch. */
+	/**
+	 * The generated-code counterpart of {@link #processRestRequest}'s {@code File}-return branch.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param destination           the file to write the response body into
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return {@code destination}, with the response body written into it
+	 */
 	public File finishGeneratedSyncFile(HttpRequest<?> request, RequestContext context, File destination,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
@@ -358,6 +444,22 @@ public class RestRequestProcessor {
 	 * {@code T} - {@code innerType} is {@code T}. Erased to
 	 * {@code RipResponse<?>}; generated code casts the result to its own
 	 * exact {@code RipResponse<T>} return type.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param innerType             the class to decode {@code T} into
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return the response wrapped with its status code and headers
 	 */
 	public RipResponse<?> finishGeneratedSyncRipResponse(HttpRequest<?> request, RequestContext context,
 			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
@@ -368,7 +470,24 @@ public class RestRequestProcessor {
 		return (RipResponse<?>) wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 	}
 
-	/** The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedSyncRipResponse}, for a {@code RipResponse<byte[]>} return type. */
+	/**
+	 * The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedSyncRipResponse}, for a {@code RipResponse<byte[]>} return type.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return the response's raw bytes, wrapped with its status code and headers
+	 */
 	public RipResponse<byte[]> finishGeneratedSyncRipResponseBytes(HttpRequest<?> request, RequestContext context,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
@@ -381,7 +500,26 @@ public class RestRequestProcessor {
 		return result;
 	}
 
-	/** The generated-code counterpart of {@link #processAsync}'s plain (non-{@code byte[]}/{@code File}/{@code RipResponse}) branch. */
+	/**
+	 * The generated-code counterpart of {@link #processAsync}'s plain (non-{@code byte[]}/{@code File}/{@code RipResponse}) branch.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param returnType            the class to decode into, once the future
+	 *                              completes
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return a future of the decoded body, or of {@code null} for a {@code void} method
+	 */
 	public CompletableFuture<?> finishGeneratedAsync(HttpRequest<?> request, RequestContext context,
 			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
@@ -391,7 +529,24 @@ public class RestRequestProcessor {
 				.thenApply(response -> decodeOrThrow(response, errorType, returnType));
 	}
 
-	/** The generated-code counterpart of {@link #processAsync}'s {@code byte[]}-inner-type branch. */
+	/**
+	 * The generated-code counterpart of {@link #processAsync}'s {@code byte[]}-inner-type branch.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return a future of the response body's raw bytes
+	 */
 	public CompletableFuture<byte[]> finishGeneratedAsyncBytes(HttpRequest<?> request, RequestContext context,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
@@ -401,7 +556,25 @@ public class RestRequestProcessor {
 				.thenApply(response -> (byte[]) decodeOrThrow(response, errorType, byte[].class));
 	}
 
-	/** The generated-code counterpart of {@link #processAsync}'s {@code File}-inner-type branch. */
+	/**
+	 * The generated-code counterpart of {@link #processAsync}'s {@code File}-inner-type branch.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param destination           the file to write the response body into
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return a future of {@code destination}, with the response body written into it
+	 */
 	public CompletableFuture<File> finishGeneratedAsyncFile(HttpRequest<?> request, RequestContext context,
 			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
@@ -417,6 +590,22 @@ public class RestRequestProcessor {
 	 * {@code T}. Erased to {@code CompletableFuture<RipResponse<?>>};
 	 * generated code casts the result to its own exact
 	 * {@code CompletableFuture<RipResponse<T>>} return type.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param innerType             the class to decode {@code T} into
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return a future of the response wrapped with its status code and headers
 	 */
 	public CompletableFuture<RipResponse<?>> finishGeneratedAsyncRipResponse(HttpRequest<?> request,
 			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
@@ -428,7 +617,24 @@ public class RestRequestProcessor {
 						decodeOrThrow(response, errorType, innerType)));
 	}
 
-	/** The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedAsyncRipResponse}, for a {@code CompletableFuture<RipResponse<byte[]>>} return type. */
+	/**
+	 * The {@code byte[]}-wrapped counterpart of {@link #finishGeneratedAsyncRipResponse}, for a {@code CompletableFuture<RipResponse<byte[]>>} return type.
+	 *
+	 * @param request               the request to execute
+	 * @param context               the interceptor/logging context for this call
+	 * @param errorType             the class to decode a non-2xx response's body
+	 *                              into, or {@code null} for none
+	 * @param hasRetry              whether the method is annotated {@code @Retry}
+	 * @param retryTimes            {@code @Retry}'s {@code times}, meaningless if
+	 *                              {@code hasRetry} is {@code false}
+	 * @param retryDelayMillis      {@code @Retry}'s {@code delayMillis}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
+	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
+	 * @return a future of the response's raw bytes, wrapped with its status code and headers
+	 */
 	public CompletableFuture<RipResponse<byte[]>> finishGeneratedAsyncRipResponseBytes(HttpRequest<?> request,
 			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
@@ -967,7 +1173,12 @@ public class RestRequestProcessor {
 		return null;
 	}
 
-	/** Also used directly by compile-time-generated code for a {@code DownloadProgressListener} parameter. */
+	/**
+	 * Also used directly by compile-time-generated code for a {@code DownloadProgressListener} parameter.
+	 *
+	 * @param request  the request to monitor
+	 * @param listener the listener to notify, or {@code null} for none
+	 */
 	public void applyDownloadMonitor(HttpRequest<?> request, DownloadProgressListener listener) {
 		if (listener == null) {
 			return;
@@ -976,7 +1187,13 @@ public class RestRequestProcessor {
 				.onProgress(bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
 	}
 
-	/** Also used directly by compile-time-generated code for an {@code UploadProgressListener} parameter. */
+	/**
+	 * Also used directly by compile-time-generated code for an {@code UploadProgressListener} parameter.
+	 *
+	 * @param multipartBody the multipart body to monitor
+	 * @param listener      the listener to notify (callers only invoke this once
+	 *                      a non-{@code null} listener argument is confirmed)
+	 */
 	public void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
 		multipartBody.uploadMonitor((field, fileName, bytesWritten, totalBytes) -> listener.onProgress(field,
 				bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
@@ -986,6 +1203,9 @@ public class RestRequestProcessor {
 	 * The generated-code counterpart of the reflective path's own
 	 * {@code ((HttpRequestWithBody) request).multiPartContent()} call for a
 	 * {@code @Multipart} method - see {@link #applyParams}.
+	 *
+	 * @param request the request to convert to a multipart body
+	 * @return {@code request}, as a {@code MultipartBody}
 	 */
 	public MultipartBody beginGeneratedMultipart(HttpRequest<?> request) {
 		return ((HttpRequestWithBody) request).multiPartContent();
@@ -1072,7 +1292,13 @@ public class RestRequestProcessor {
 		}
 	}
 
-	/** Also used directly by compile-time-generated code for a {@code @PartMap} parameter. */
+	/**
+	 * Also used directly by compile-time-generated code for a {@code @PartMap} parameter.
+	 *
+	 * @param multipartBody the multipart body to add parts to
+	 * @param partMap       the {@code @PartMap} parameter's argument value; a
+	 *                      {@code null}-valued entry is skipped
+	 */
 	public void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
 		partMap.forEach((name, value) -> {
 			if (value != null) {
@@ -1081,7 +1307,19 @@ public class RestRequestProcessor {
 		});
 	}
 
-	/** Also used directly by compile-time-generated code for a {@code @Part} parameter. */
+	/**
+	 * Also used directly by compile-time-generated code for a {@code @Part} parameter.
+	 *
+	 * @param multipartBody the multipart body to add the part to
+	 * @param name          the part's field name
+	 * @param fileName      the file name to send a {@code File}/{@code byte[]}/
+	 *                      {@code InputStream} part under, or empty to use
+	 *                      {@code name} (or, for a {@code File}, its own name)
+	 * @param value         the part's value - a {@code String}, {@code File},
+	 *                      {@code byte[]}, {@code InputStream}, or a
+	 *                      {@link PartValue} wrapping one of those with its own
+	 *                      file name
+	 */
 	public void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
 		Object effectiveValue = value;
 		String effectiveFileName = fileName;
@@ -1114,7 +1352,13 @@ public class RestRequestProcessor {
 		}
 	}
 
-	/** Also used directly by compile-time-generated code for a {@code @QueryMap} parameter. */
+	/**
+	 * Also used directly by compile-time-generated code for a {@code @QueryMap} parameter.
+	 *
+	 * @param request  the request to add query params to
+	 * @param queryMap the {@code @QueryMap} parameter's argument value; a
+	 *                 {@code null}-valued entry is skipped
+	 */
 	public void applyQueryMap(HttpRequest<?> request, Map<?, ?> queryMap) {
 		queryMap.forEach((name, value) -> {
 			if (value != null) {
@@ -1131,6 +1375,11 @@ public class RestRequestProcessor {
 	 * {@code queryString(String, Collection)} overload that {@code Object}-typed
 	 * dispatch would otherwise never reach. Also used directly by
 	 * compile-time-generated code for a {@code @QueryParam}.
+	 *
+	 * @param request the request to add the query param to
+	 * @param name    the query param's name
+	 * @param value   the query param's value; a {@code Collection} is repeated
+	 *                once per element, any other value once via {@code toString()}
 	 */
 	public static void applyQueryValue(HttpRequest<?> request, String name, Object value) {
 		if (value instanceof Collection) {
@@ -1140,7 +1389,13 @@ public class RestRequestProcessor {
 		}
 	}
 
-	/** Also used directly by compile-time-generated code for a {@code @HeaderMap} parameter. */
+	/**
+	 * Also used directly by compile-time-generated code for a {@code @HeaderMap} parameter.
+	 *
+	 * @param request   the request to add headers to
+	 * @param headerMap the {@code @HeaderMap} parameter's argument value; a
+	 *                  {@code null}-valued entry is skipped
+	 */
 	public void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
 		headerMap.forEach((name, value) -> {
 			if (value != null) {

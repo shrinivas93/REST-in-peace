@@ -93,6 +93,10 @@ import com.shri.restinpeace.constant.HTTPMethod;
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 public class RestClientProcessor extends AbstractProcessor {
 
+	/** Instantiated reflectively by the annotation-processing tool via its {@code META-INF/services} SPI registration. */
+	public RestClientProcessor() {
+	}
+
 	@Override
 	public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
 		for (Element element : roundEnv.getElementsAnnotatedWith(RestClient.class)) {

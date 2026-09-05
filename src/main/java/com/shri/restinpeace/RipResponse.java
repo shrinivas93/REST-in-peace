@@ -30,6 +30,8 @@ public final class RipResponse<T> {
 	private final T body;
 
 	/**
+	 * Wraps a decoded response body with its status code and headers.
+	 *
 	 * @param status  the HTTP response status code
 	 * @param headers the response headers, keyed by name (case-insensitively)
 	 * @param body    the decoded response body
@@ -41,6 +43,8 @@ public final class RipResponse<T> {
 	}
 
 	/**
+	 * Returns the HTTP response status code.
+	 *
 	 * @return the HTTP response status code
 	 */
 	public int getStatus() {
@@ -48,6 +52,8 @@ public final class RipResponse<T> {
 	}
 
 	/**
+	 * Returns the response headers.
+	 *
 	 * @return the response headers, keyed by name (case-insensitively); a
 	 *         name absent from the response maps to no entry, not a
 	 *         {@code null} value
@@ -69,6 +75,8 @@ public final class RipResponse<T> {
 	}
 
 	/**
+	 * Returns the decoded response body.
+	 *
 	 * @return the decoded response body
 	 */
 	public T getBody() {
