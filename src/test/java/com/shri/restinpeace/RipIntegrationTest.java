@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
+import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -66,6 +67,7 @@ import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
+import com.shri.restinpeace.cache.InMemoryCache;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
@@ -205,6 +207,13 @@ class RipIntegrationTest {
 		@FormUrlEncoded
 		String postFormUrlEncodedWithCollectionField(@PathParam("port") int port, @PathParam("id") String id,
 				@Field("tag") List<String> tags);
+
+		@GET("http://localhost:{port}/cacheable/{id}")
+		String getCacheable(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/cacheable/{id}")
+		@NoCache
+		String getCacheableNoCache(@PathParam("port") int port, @PathParam("id") String id);
 
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMultiValueQuery(@PathParam("port") int port, @PathParam("id") String id,
@@ -419,6 +428,8 @@ class RipIntegrationTest {
 	private static final AtomicReference<CapturedRequest> LAST_REQUEST = new AtomicReference<>();
 	private static final AtomicInteger FLAKY_ATTEMPTS = new AtomicInteger();
 	private static final AtomicInteger ALWAYS_FAILING_ATTEMPTS = new AtomicInteger();
+	private static final AtomicInteger CACHEABLE_HITS = new AtomicInteger();
+	private static final InMemoryCache CACHE = new InMemoryCache();
 
 	@BeforeAll
 	static void startServer() throws IOException {
@@ -427,11 +438,13 @@ class RipIntegrationTest {
 		server.setExecutor(null);
 		server.start();
 		port = server.getAddress().getPort();
+		RIP.setCache(CACHE);
 	}
 
 	@AfterAll
 	static void stopServer() {
 		server.stop(0);
+		RIP.setCache(null);
 	}
 
 	@BeforeEach
@@ -439,6 +452,8 @@ class RipIntegrationTest {
 		LAST_REQUEST.set(null);
 		FLAKY_ATTEMPTS.set(0);
 		ALWAYS_FAILING_ATTEMPTS.set(0);
+		CACHEABLE_HITS.set(0);
+		CACHE.clear();
 		RIP.clearInterceptors();
 	}
 
@@ -465,6 +480,14 @@ class RipIntegrationTest {
 			boolean stillFailing = FLAKY_ATTEMPTS.getAndIncrement() < 2;
 			byte[] response = (stillFailing ? "" : "ok").getBytes(StandardCharsets.UTF_8);
 			exchange.sendResponseHeaders(stillFailing ? 503 : 200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/cacheable/")) {
+			CACHEABLE_HITS.incrementAndGet();
+			byte[] response = "cached-value".getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Cache-Control", "max-age=60");
+			exchange.sendResponseHeaders(200, response.length);
 			try (OutputStream os = exchange.getResponseBody()) {
 				os.write(response);
 			}
@@ -1017,6 +1040,28 @@ class RipIntegrationTest {
 		api.postFormUrlEncodedWithCollectionField(port, "abc", Arrays.asList("a", "b"));
 
 		assertEquals("tag=a&tag=b", LAST_REQUEST.get().body);
+	}
+
+	@Test
+	void responseCache_freshEntry_isServedWithoutHittingTheNetworkAgain() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String first = api.getCacheable(port, "42");
+		String second = api.getCacheable(port, "42");
+
+		assertEquals("cached-value", first);
+		assertEquals("cached-value", second);
+		assertEquals(1, CACHEABLE_HITS.get());
+	}
+
+	@Test
+	void responseCache_noCacheAnnotation_alwaysHitsNetwork() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getCacheableNoCache(port, "42");
+		api.getCacheableNoCache(port, "42");
+
+		assertEquals(2, CACHEABLE_HITS.get());
 	}
 
 	@Test

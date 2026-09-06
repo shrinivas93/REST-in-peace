@@ -89,6 +89,22 @@ public final class MockResponse {
 	}
 
 	/**
+	 * A {@code 304 Not Modified} response, for a test simulating a cache
+	 * revalidation hit - RIP's response cache sends {@code If-None-Match}/
+	 * {@code If-Modified-Since} automatically once a cached {@code GET}
+	 * entry goes stale, and expects exactly this status back to keep
+	 * serving the previously-cached body instead of treating the response
+	 * as a fresh one. Combine with {@link #header} for a fresh
+	 * {@code ETag}/{@code Cache-Control} the revalidation should refresh the
+	 * cache entry's freshness window with.
+	 *
+	 * @return the new response
+	 */
+	public static MockResponse notModified() {
+		return status(304, "");
+	}
+
+	/**
 	 * A response with the given status and a raw body, no default headers.
 	 *
 	 * @param status the HTTP status code

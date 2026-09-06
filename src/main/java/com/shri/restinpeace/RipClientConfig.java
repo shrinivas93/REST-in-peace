@@ -1,5 +1,7 @@
 package com.shri.restinpeace;
 
+import com.shri.restinpeace.cache.Cache;
+
 import kong.unirest.ObjectMapper;
 
 /**
@@ -36,6 +38,7 @@ public final class RipClientConfig {
 	private final String proxyUsername;
 	private final String proxyPassword;
 	private final ObjectMapper objectMapper;
+	private final Cache cache;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -46,6 +49,7 @@ public final class RipClientConfig {
 		this.proxyUsername = builder.proxyUsername;
 		this.proxyPassword = builder.proxyPassword;
 		this.objectMapper = builder.objectMapper;
+		this.cache = builder.cache;
 	}
 
 	/**
@@ -135,6 +139,17 @@ public final class RipClientConfig {
 		return objectMapper;
 	}
 
+	/**
+	 * Returns the {@code Cache} for this client.
+	 *
+	 * @return this client's own {@code Cache}, or {@code null} to fall back
+	 *         to the shared default set via {@link RIP#setCache(Cache)} (or
+	 *         no caching at all, if that's never called either)
+	 */
+	public Cache getCache() {
+		return cache;
+	}
+
 	/** Builds a {@link RipClientConfig}. */
 	public static final class Builder {
 
@@ -146,6 +161,7 @@ public final class RipClientConfig {
 		private String proxyUsername;
 		private String proxyPassword;
 		private ObjectMapper objectMapper;
+		private Cache cache;
 
 		private Builder() {
 		}
@@ -228,6 +244,21 @@ public final class RipClientConfig {
 		 */
 		public Builder objectMapper(ObjectMapper objectMapper) {
 			this.objectMapper = objectMapper;
+			return this;
+		}
+
+		/**
+		 * Sets the {@code Cache} for this client, overriding the shared
+		 * default set via {@link RIP#setCache(Cache)} for this client only.
+		 * Only {@code GET} responses are ever cached, and only when the
+		 * response itself carries a {@code Cache-Control max-age}, an
+		 * {@code ETag}, or a {@code Last-Modified} to honor.
+		 *
+		 * @param cache the cache to use for this client
+		 * @return this builder
+		 */
+		public Builder cache(Cache cache) {
+			this.cache = cache;
 			return this;
 		}
 
