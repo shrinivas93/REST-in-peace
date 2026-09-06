@@ -8,6 +8,7 @@ import org.apache.http.impl.nio.client.HttpAsyncClients;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.service.RestRequestProcessor;
+import com.shri.restinpeace.cache.Cache;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
@@ -182,6 +183,22 @@ public class RIP {
 	 */
 	public static void setObjectMapper(ObjectMapper objectMapper) {
 		Unirest.config().setObjectMapper(objectMapper);
+	}
+
+	/**
+	 * Sets the shared default {@link Cache} for response caching, used by
+	 * every client not built with a {@link RipClientConfig} that sets its
+	 * own via {@link RipClientConfig.Builder#cache(Cache)}. Only {@code GET}
+	 * responses are ever cached, and only those the server itself marks
+	 * cacheable via {@code Cache-Control}/{@code ETag}/{@code Last-Modified}
+	 * - no cache configured (the default) means no caching at all, byte-for-
+	 * byte today's behavior.
+	 *
+	 * @param cache the shared default cache, or {@code null} to disable
+	 *              caching for every client without its own {@code Cache}
+	 */
+	public static void setCache(Cache cache) {
+		RestRequestProcessor.setDefaultCache(cache);
 	}
 
 	/**

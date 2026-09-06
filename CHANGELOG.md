@@ -199,6 +199,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `RecordedRequest.getFormFields()` decodes an
   `application/x-www-form-urlencoded` body into its field name/value
   pairs, the `@FormUrlEncoded` counterpart to `getParts()`.
+- Response caching for `GET` requests, honoring the server's own
+  `Cache-Control`/`ETag`/`Last-Modified` instead of hitting the network
+  every time. Attach a `com.shri.restinpeace.cache.Cache` via
+  `RipClientConfig.Builder.cache(Cache)` (one client) or
+  `RIP.setCache(Cache)` (the shared default) - `InMemoryCache` ships as
+  the default implementation. A fresh entry is served with no network
+  call; a stale entry with an `ETag`/`Last-Modified` is revalidated via
+  `If-None-Match`/`If-Modified-Since`, and a `304 Not Modified` refreshes
+  it and returns the cached body. `@NoCache` opts a single method out.
+  Scoped to `String`/POJO `GET` responses for now, not `byte[]`/`File`
+  downloads.
+- `MockResponse.notModified()` - a `304 Not Modified` shorthand, for
+  scripting a mock server's conditional-GET revalidation response.
+- Response caching now honors `Vary` - a cached `GET` response whose
+  `Vary` header names request headers (e.g. `Vary: Accept-Language`) is
+  never served to a request whose current values for those headers
+  differ from the ones in effect when it was stored, so different
+  language/format variants of the same URL no longer clobber each
+  other's cache. `Vary: *` is never cached at all.
 
 ### Changed
 

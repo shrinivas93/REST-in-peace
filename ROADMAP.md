@@ -510,8 +510,70 @@ up.
       `getFormFields()` decoder, the `@FormUrlEncoded` counterpart to
       `getParts()`, so a test can assert on a decoded field value instead of
       substring-matching the raw encoded body.
-- [ ] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
-      instead of hitting the network every time.
+- [x] **Response caching** — honoring `ETag`/`If-None-Match`/`Cache-Control`
+      instead of hitting the network every time. A pluggable `Cache`
+      (`get`/`put`/`evict`/`clear`), attached per-client via
+      `RipClientConfig.Builder.cache(Cache)` or globally via
+      `RIP.setCache(Cache)`, with `InMemoryCache` shipped as the default
+      implementation - zero new dependency. Only ever engages for a `GET`
+      whose response carries a `Cache-Control max-age`, an `ETag`, or a
+      `Last-Modified` to act on; a response with none of those is never
+      stored, matching "honoring what the server says" rather than
+      inventing caching the server never asked for. A fresh entry
+      (`age < max-age`) is served with zero network call; a stale
+      revalidatable entry (has an `ETag`/`Last-Modified`) sends
+      `If-None-Match`/`If-Modified-Since` automatically, and a `304 Not
+      Modified` refreshes the entry's freshness window and returns the
+      previously-cached body without re-decoding anything. `@NoCache` opts
+      a single method out even when its client has a cache configured.
+      Scoped to `String`/POJO `GET` responses only for this slice - not
+      `byte[]`/`File` downloads (`Vary`-aware keying was a known
+      simplification here too, since resolved - see the follow-up entry
+      below). Lives entirely in
+      `RestRequestProcessor` (wrapping the same `Supplier<HttpResponse<B>>`
+      seam `@Retry` already wraps) rather than the `RequestInterceptor`
+      abstraction, since caching needs to skip the network call entirely
+      or splice a cached body into a `304` - strictly more than an
+      interceptor's "add headers or abort" contract allows, by its own
+      javadoc. `@NoCache` is the only piece that touches the compile-time
+      generator at all (one conditional `markNoCache(...)` call emitted
+      right after building the call's `RequestContext`); every other
+      dispatch-path difference is already absorbed by the shared processor.
+      `MockRestServer`'s existing `on(method, path,
+      Predicate<RecordedRequest>, response)` matcher (item 9) turned out to
+      be exactly what's needed to script a conditional-GET-aware fixture
+      server with no new `MockRestServer` feature; `MockResponse` gained
+      one small addition anyway - `notModified()`, a `304` shorthand
+      mirroring `noContent()`'s `204` one - since the new feature
+      specifically produces and expects `304`s often enough to be worth it.
+- [x] **Response caching: `Vary` header support** — a stored `GET` response
+      whose `Vary` header names request headers (e.g.
+      `Vary: Accept-Language`) is never served to a request whose current
+      values for those headers differ from the ones snapshotted when it
+      was stored, so a cache no longer risks serving the wrong
+      language/format variant. `CachedResponse` gained a
+      `varyRequestHeaders` snapshot (a new, backwards-compatible
+      constructor overload - the existing 4-arg one still works, defaulting
+      to "no `Vary`"), captured from the outgoing request's own headers via
+      Unirest's `HttpRequest.getHeaders()` at store time - so this only
+      sees header values the calling code set itself (`@HeaderParam`/
+      `@HeaderMap`/`@Headers`), not ones a lower transport layer might add
+      later (e.g. `Accept-Encoding` for compression negotiation), a
+      documented gap rather than a silent one. `Vary: *` (meaning "varies
+      unpredictably, don't try to cache this via header comparison") is
+      never stored at all, same as `no-store`. One real bug caught during
+      implementation, not just a missing feature: a cache miss for one
+      variant (say, the French version) must never evict a different,
+      still-valid variant already stored (the English one) just because
+      the French response itself turned out to be non-cacheable - fixed by
+      only evicting when the request that just went out was for the
+      *same* variant that was already there. Deliberately still a
+      single-slot-per-URL store (the newest variant replaces the previous
+      one, rather than keeping every variant alive at once) - correctness
+      (never serving the wrong variant) over maximizing hit rate on an
+      alternating-variant workload; true multi-variant storage would need
+      the `Cache` interface itself to hold more than one entry per key,
+      which is a bigger change than this slice needed.
 - [x] **Compile-time proxy generation instead of a JDK dynamic proxy** — an
       annotation processor that generates a real class implementing each
       `@RestClient` interface at build time (like Dagger/MapStruct do)
