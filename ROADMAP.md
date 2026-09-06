@@ -790,10 +790,25 @@ up.
 - [ ] **Circuit breaker / bulkhead per client** — a natural extension of
       `RipClientConfig`: stop hammering a downstream that's clearly down,
       the natural next step after retry and timeout.
-- [ ] **A pre-built `MetricsInterceptor`** — Micrometer-style counters/timers,
-      following the exact pattern `LoggingInterceptor`/`CorrelationIdInterceptor`
-      already established. Cheap to build, immediately useful, zero new
-      dependency if done as a `Consumer`-based sink like `LoggingInterceptor`.
+- [x] **A pre-built `MetricsInterceptor`** — times every request and reports
+      it, once its response comes back, to a small `MetricsSink` interface
+      (`recordCall(httpMethod, url, status, durationMillis)`) - the metrics
+      counterpart of `LoggingInterceptor`, following the exact same
+      "bring your own sink" shape so RIP doesn't depend on Micrometer or any
+      other metrics library. A consumer wires the sink to Micrometer, a
+      homegrown registry, or a `System.out` printer for local debugging.
+      Same start-time-stashed-on-`RequestContext` mechanism
+      `LoggingInterceptor` already uses; same registration-order tradeoff
+      documented on `RequestInterceptor` (register first to measure total
+      call overhead, last to measure only the network call). One documented
+      gap, inherited from the interceptor contract itself rather than
+      introduced here: a call that fails at the transport level (connection
+      refused, timeout with no response at all) never reaches
+      `afterResponse`, so it produces no sample - only a call that actually
+      gets a response is measured. A `@Retry`'d call reports one sample per
+      attempt, since every attempt gets its own `afterResponse` notification
+      - verified with a dedicated test asserting three samples
+      (`503, 503, 200`) for a call that fails twice before succeeding.
 - [ ] **A pagination helper** — an annotation or small utility that follows a
       `next`/cursor field automatically and hands back a lazy
       `Iterator`/`Stream` of pages, using the `@Url` mechanism above under
