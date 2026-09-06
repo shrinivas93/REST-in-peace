@@ -19,6 +19,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
@@ -767,13 +768,16 @@ public class RestRequestProcessor {
 		String key = cacheKey(context);
 		return () -> {
 			CachedResponse cached = cache.get(key);
-			if (cached != null && cached.isFresh()) {
+			boolean sameVariant = cached != null && matchesVary(cached, request);
+			boolean differentVariantCached = cached != null && !sameVariant;
+			if (sameVariant && cached.isFresh()) {
 				return toSyntheticResponse(cached);
 			}
-			if (cached != null) {
+			if (sameVariant) {
 				applyRevalidationHeaders(request, cached);
 			}
-			return reconcileCache(cache, key, cached, call.get());
+			return reconcileCache(cache, key, sameVariant ? cached : null, differentVariantCached, call.get(),
+					request);
 		};
 	}
 
@@ -797,13 +801,17 @@ public class RestRequestProcessor {
 		String key = cacheKey(context);
 		return () -> {
 			CachedResponse cached = cache.get(key);
-			if (cached != null && cached.isFresh()) {
+			boolean sameVariant = cached != null && matchesVary(cached, request);
+			boolean differentVariantCached = cached != null && !sameVariant;
+			if (sameVariant && cached.isFresh()) {
 				return CompletableFuture.completedFuture(toSyntheticResponse(cached));
 			}
-			if (cached != null) {
+			if (sameVariant) {
 				applyRevalidationHeaders(request, cached);
 			}
-			return call.get().thenApply(response -> reconcileCache(cache, key, cached, response));
+			CachedResponse staleEntry = sameVariant ? cached : null;
+			return call.get().thenApply(
+					response -> reconcileCache(cache, key, staleEntry, differentVariantCached, response, request));
 		};
 	}
 
@@ -829,27 +837,32 @@ public class RestRequestProcessor {
 
 	/**
 	 * Reconciles a real network response against {@code staleEntry} (the
-	 * previously-cached entry, if any) once a call has actually gone out -
-	 * either because there was nothing cached, or because a stale entry
-	 * needed revalidating. A {@code 304 Not Modified} against a known stale
-	 * entry refreshes its freshness window and hands back its stored body
-	 * unchanged; any other outcome stores (or evicts) {@code key} per the
+	 * previously-cached entry for this exact request's {@code Vary}
+	 * variant, if any) once a call has actually gone out - either because
+	 * there was nothing cached, a different variant was cached, or a stale
+	 * entry needed revalidating. A {@code 304 Not Modified} against a known
+	 * stale entry refreshes its freshness window and hands back its stored
+	 * body unchanged; any other outcome stores {@code key} per the
 	 * response's own {@code Cache-Control}/{@code ETag}/{@code Last-Modified}
-	 * and is returned as-is.
+	 * (snapshotting this request's values for whatever its {@code Vary}
+	 * header names), or evicts it - unless {@code leaveExistingEntryAlone}
+	 * is set, since evicting then would wrongly discard a still-valid,
+	 * different variant this call has nothing to do with.
 	 */
 	private static HttpResponse<String> reconcileCache(Cache cache, String key, CachedResponse staleEntry,
-			HttpResponse<String> response) {
+			boolean leaveExistingEntryAlone, HttpResponse<String> response, HttpRequest<?> request) {
 		Map<String, List<String>> responseHeaders = toHeaderMap(response.getHeaders());
 		if (response.getStatus() == 304 && staleEntry != null) {
 			CachedResponse refreshed = new CachedResponse(staleEntry.getStatus(), staleEntry.getHeaders(),
-					staleEntry.getBody(), freshUntil(responseHeaders));
+					staleEntry.getBody(), freshUntil(responseHeaders), staleEntry.getVaryRequestHeaders());
 			cache.put(key, refreshed);
 			return toSyntheticResponse(refreshed);
 		}
 		if (isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
+			Map<String, String> varySnapshot = captureVaryValues(request, varyHeaderNames(responseHeaders));
 			cache.put(key, new CachedResponse(response.getStatus(), responseHeaders, response.getBody(),
-					freshUntil(responseHeaders)));
-		} else {
+					freshUntil(responseHeaders), varySnapshot));
+		} else if (!leaveExistingEntryAlone) {
 			cache.evict(key);
 		}
 		return response;
@@ -857,11 +870,68 @@ public class RestRequestProcessor {
 
 	private static boolean isStorable(Map<String, List<String>> headers) {
 		CacheDirectives directives = CacheDirectives.parse(firstHeader(headers, "Cache-Control"));
-		if (directives.noStore) {
+		if (directives.noStore || isWildcardVary(headers)) {
 			return false;
 		}
 		return directives.maxAgeSeconds != null || firstHeader(headers, "ETag") != null
 				|| firstHeader(headers, "Last-Modified") != null;
+	}
+
+	/**
+	 * Whether {@code cached} is usable at all for the current request - its
+	 * response had no {@code Vary} header (matches every request), or this
+	 * request's current values for every header {@code Vary} named are
+	 * identical to the ones snapshotted when {@code cached} was stored.
+	 */
+	private static boolean matchesVary(CachedResponse cached, HttpRequest<?> request) {
+		for (Map.Entry<String, String> varyHeader : cached.getVaryRequestHeaders().entrySet()) {
+			String currentValue = request.getHeaders().getFirst(varyHeader.getKey());
+			if (!Objects.equals(varyHeader.getValue(), currentValue)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * A {@code Vary: *} response varies unpredictably (by definition,
+	 * un-cacheable via header comparison) and must never be stored - the
+	 * one {@code Vary} value that means "don't cache this at all" rather
+	 * than "cache one variant per combination of these header values".
+	 */
+	private static boolean isWildcardVary(Map<String, List<String>> headers) {
+		for (String name : varyHeaderNames(headers)) {
+			if (name.equals("*")) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static List<String> varyHeaderNames(Map<String, List<String>> headers) {
+		String vary = firstHeader(headers, "Vary");
+		if (vary == null) {
+			return Collections.emptyList();
+		}
+		List<String> names = new ArrayList<>();
+		for (String name : vary.split(",")) {
+			String trimmed = name.trim();
+			if (!trimmed.isEmpty()) {
+				names.add(trimmed);
+			}
+		}
+		return names;
+	}
+
+	private static Map<String, String> captureVaryValues(HttpRequest<?> request, List<String> varyHeaderNames) {
+		if (varyHeaderNames.isEmpty()) {
+			return Collections.emptyMap();
+		}
+		Map<String, String> values = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+		for (String name : varyHeaderNames) {
+			values.put(name, request.getHeaders().getFirst(name));
+		}
+		return values;
 	}
 
 	private static long freshUntil(Map<String, List<String>> headers) {

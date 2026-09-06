@@ -212,6 +212,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   downloads.
 - `MockResponse.notModified()` - a `304 Not Modified` shorthand, for
   scripting a mock server's conditional-GET revalidation response.
+- Response caching now honors `Vary` - a cached `GET` response whose
+  `Vary` header names request headers (e.g. `Vary: Accept-Language`) is
+  never served to a request whose current values for those headers
+  differ from the ones in effect when it was stored, so different
+  language/format variants of the same URL no longer clobber each
+  other's cache. `Vary: *` is never cached at all.
 
 ### Changed
 

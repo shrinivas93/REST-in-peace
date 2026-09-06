@@ -125,6 +125,64 @@ class ResponseCachingTest {
 	}
 
 	@Test
+	void vary_sameHeaderValue_isServedFromCache() {
+		server.on(HTTPMethod.GET, "/localized/{id}",
+				MockResponse.ok("{\"lang\":\"en\"}").header("Cache-Control", "max-age=60").header("Vary",
+						"Accept-Language"));
+
+		String first = api.getLocalizedItem("42", "en");
+		String second = api.getLocalizedItem("42", "en");
+
+		assertEquals("{\"lang\":\"en\"}", first);
+		assertEquals("{\"lang\":\"en\"}", second);
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void vary_differentHeaderValue_isNotServedTheOtherVariantsCache() {
+		server.on(HTTPMethod.GET, "/localized/{id}", request -> "en".equals(request.getHeader("Accept-Language")),
+				MockResponse.ok("{\"lang\":\"en\"}").header("Cache-Control", "max-age=60").header("Vary",
+						"Accept-Language"));
+		server.on(HTTPMethod.GET, "/localized/{id}", request -> "fr".equals(request.getHeader("Accept-Language")),
+				MockResponse.ok("{\"lang\":\"fr\"}").header("Cache-Control", "max-age=60").header("Vary",
+						"Accept-Language"));
+
+		String english = api.getLocalizedItem("42", "en");
+		String french = api.getLocalizedItem("42", "fr");
+
+		assertEquals("{\"lang\":\"en\"}", english);
+		assertEquals("{\"lang\":\"fr\"}", french);
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void vary_wildcard_isNeverCached() {
+		server.on(HTTPMethod.GET, "/localized/{id}",
+				MockResponse.ok("{}").header("Cache-Control", "max-age=60").header("Vary", "*"));
+
+		api.getLocalizedItem("42", "en");
+		api.getLocalizedItem("42", "en");
+
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void vary_aDifferentVariantMiss_doesNotEvictAnExistingValidVariant() {
+		server.on(HTTPMethod.GET, "/localized/{id}", request -> "en".equals(request.getHeader("Accept-Language")),
+				MockResponse.ok("{\"lang\":\"en\"}").header("Cache-Control", "max-age=60").header("Vary",
+						"Accept-Language"));
+		server.on(HTTPMethod.GET, "/localized/{id}", request -> "fr".equals(request.getHeader("Accept-Language")),
+				MockResponse.ok("{\"lang\":\"fr\"}")); // no Cache-Control/ETag at all - never storable
+
+		api.getLocalizedItem("42", "en"); // caches the "en" variant
+		api.getLocalizedItem("42", "fr"); // different variant, unstorable response - must not evict "en"
+		String english = api.getLocalizedItem("42", "en"); // still cached - no extra network call
+
+		assertEquals("{\"lang\":\"en\"}", english);
+		assertEquals(2, server.requestCount()); // 1 for "en", 1 for "fr" - the second "en" call was a cache hit
+	}
+
+	@Test
 	void asyncCall_alsoServesAFreshEntryWithoutHittingTheNetworkAgain()
 			throws InterruptedException, ExecutionException, TimeoutException {
 		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=60"));
