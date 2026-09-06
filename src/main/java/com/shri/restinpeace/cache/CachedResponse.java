@@ -1,5 +1,6 @@
 package com.shri.restinpeace.cache;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -14,9 +15,11 @@ public final class CachedResponse {
 	private final Map<String, List<String>> headers;
 	private final String body;
 	private final long freshUntilEpochMillis;
+	private final Map<String, String> varyRequestHeaders;
 
 	/**
-	 * Creates a cached entry.
+	 * Creates a cached entry with no {@code Vary} header - equivalent to
+	 * {@link #CachedResponse(int, Map, String, long, Map)} with an empty map.
 	 *
 	 * @param status                the original response's HTTP status code
 	 * @param headers               the original response's headers, keyed
@@ -32,10 +35,34 @@ public final class CachedResponse {
 	 *                              {@code Last-Modified} but no {@code max-age})
 	 */
 	public CachedResponse(int status, Map<String, List<String>> headers, String body, long freshUntilEpochMillis) {
+		this(status, headers, body, freshUntilEpochMillis, Collections.emptyMap());
+	}
+
+	/**
+	 * Creates a cached entry, snapshotting the request header values its
+	 * response's own {@code Vary} header named - so a later request whose
+	 * values for those same headers differ is never served this entry.
+	 *
+	 * @param status                the original response's HTTP status code
+	 * @param headers               the original response's headers, keyed
+	 *                              case-insensitively
+	 * @param body                  the original response body
+	 * @param freshUntilEpochMillis the epoch millisecond after which this
+	 *                              entry is stale and must be revalidated (or
+	 *                              re-fetched) before being served again
+	 * @param varyRequestHeaders    the request header values named by this
+	 *                              response's own {@code Vary} header, at the
+	 *                              time this entry was stored - empty if the
+	 *                              response had no {@code Vary} header (this
+	 *                              entry then matches any request)
+	 */
+	public CachedResponse(int status, Map<String, List<String>> headers, String body, long freshUntilEpochMillis,
+			Map<String, String> varyRequestHeaders) {
 		this.status = status;
 		this.headers = headers;
 		this.body = body;
 		this.freshUntilEpochMillis = freshUntilEpochMillis;
+		this.varyRequestHeaders = varyRequestHeaders;
 	}
 
 	/**
@@ -93,6 +120,17 @@ public final class CachedResponse {
 	 */
 	public boolean isFresh() {
 		return System.currentTimeMillis() < freshUntilEpochMillis;
+	}
+
+	/**
+	 * Returns the request header values this entry's {@code Vary} header
+	 * named, snapshotted at storage time.
+	 *
+	 * @return the vary snapshot, keyed by header name - empty if the
+	 *         response had no {@code Vary} header
+	 */
+	public Map<String, String> getVaryRequestHeaders() {
+		return varyRequestHeaders;
 	}
 
 }
