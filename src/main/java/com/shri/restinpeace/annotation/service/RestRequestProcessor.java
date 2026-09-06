@@ -17,13 +17,17 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
@@ -34,6 +38,7 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.Body;
@@ -53,6 +58,8 @@ import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
+import com.shri.restinpeace.cache.Cache;
+import com.shri.restinpeace.cache.CachedResponse;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstant;
 import com.shri.restinpeace.download.DownloadProgressListener;
@@ -65,7 +72,10 @@ import com.shri.restinpeace.multipart.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
+import kong.unirest.Cookies;
+import kong.unirest.HttpMethod;
 import kong.unirest.HttpRequest;
+import kong.unirest.HttpRequestSummary;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
@@ -73,6 +83,7 @@ import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
 import kong.unirest.UnirestConfigException;
 import kong.unirest.UnirestInstance;
+import kong.unirest.UnirestParsingException;
 
 /**
  * Builds and executes the actual HTTP request for a {@code @RestClient}
@@ -86,6 +97,9 @@ public class RestRequestProcessor {
 
 	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
 	private static final int[] EMPTY_STATUS_CODES = new int[0];
+	private static final String NO_CACHE_ATTRIBUTE = "__ripNoCache";
+
+	private static volatile Cache DEFAULT_CACHE;
 
 	private static final ScheduledExecutorService RETRY_SCHEDULER = Executors.newSingleThreadScheduledExecutor(runnable -> {
 		Thread thread = new Thread(runnable, "rip-retry-scheduler");
@@ -95,6 +109,7 @@ public class RestRequestProcessor {
 
 	private final String baseUrlOverride;
 	private final UnirestInstance unirestInstance;
+	private final Cache configuredCache;
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RestRequestProcessor() {
@@ -115,6 +130,7 @@ public class RestRequestProcessor {
 	public RestRequestProcessor(String baseUrlOverride) {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
+		this.configuredCache = null;
 	}
 
 	/**
@@ -131,6 +147,7 @@ public class RestRequestProcessor {
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
+		this.configuredCache = config.getCache();
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
@@ -172,6 +189,42 @@ public class RestRequestProcessor {
 	}
 
 	/**
+	 * Sets the shared default cache. See
+	 * {@link com.shri.restinpeace.RIP#setCache(Cache)}.
+	 *
+	 * @param cache the shared default cache, or {@code null} to disable it
+	 */
+	public static void setDefaultCache(Cache cache) {
+		DEFAULT_CACHE = cache;
+	}
+
+	/**
+	 * Returns the cache this instance's calls should use - its own, from a
+	 * {@link RipClientConfig}, if one was set, otherwise the shared default
+	 * (read dynamically, the same way {@link #getObjectMapper()} falls back
+	 * to the shared {@code Unirest} config), so a later
+	 * {@link com.shri.restinpeace.RIP#setCache(Cache)} call still takes
+	 * effect for an already-built client that never set its own.
+	 */
+	private Cache getCache() {
+		return configuredCache != null ? configuredCache : DEFAULT_CACHE;
+	}
+
+	/**
+	 * Marks the current call as never cacheable, regardless of any
+	 * {@link Cache} configured for its client - the generated-code
+	 * counterpart of the reflective path's own {@code @NoCache} check. Also
+	 * used directly by compile-time-generated code for a {@code @NoCache}
+	 * method.
+	 *
+	 * @param context the call's context, as passed to every other
+	 *                {@code finishGenerated*}/{@code applyGenerated*} method
+	 */
+	public void markNoCache(RequestContext context) {
+		context.setAttribute(NO_CACHE_ATTRIBUTE, Boolean.TRUE);
+	}
+
+	/**
 	 * Executes the given {@code @RestClient} method call and returns its result.
 	 *
 	 * @param method     the interface method that was called
@@ -185,6 +238,9 @@ public class RestRequestProcessor {
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
 		String url = resolveUrl(method, httpMethod, args);
 		RequestContext context = new RequestContext(httpMethod, url);
+		if (method.getAnnotation(NoCache.class) != null) {
+			markNoCache(context);
+		}
 
 		HttpRequest<?> request = createRequest(httpMethod, url);
 		applyTimeout(request, method);
@@ -204,7 +260,8 @@ public class RestRequestProcessor {
 				HttpResponse<byte[]> response = executeSyncWithRetry(method, innerType, context, request::asBytes);
 				return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 			}
-			HttpResponse<String> response = executeSyncWithRetry(method, innerType, context, request::asString);
+			HttpResponse<String> response = executeSyncWithRetry(method, innerType, context,
+					wrapWithCache(request, context, request::asString));
 			return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 		}
 		if (returnType == byte[].class) {
@@ -217,7 +274,8 @@ public class RestRequestProcessor {
 			byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
-		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context, request::asString);
+		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context,
+				wrapWithCache(request, context, request::asString));
 		return decodeOrThrow(response, errorType, returnType);
 	}
 
@@ -380,8 +438,9 @@ public class RestRequestProcessor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<String> response = executeSyncWithRetry(errorType, returnType, context, request::asString,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		HttpResponse<String> response = executeSyncWithRetry(errorType, returnType, context,
+				wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
+				retryBackoffMultiplier, retryOnStatus);
 		return decodeOrThrow(response, errorType, returnType);
 	}
 
@@ -468,8 +527,9 @@ public class RestRequestProcessor {
 			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<String> response = executeSyncWithRetry(errorType, innerType, context, request::asString,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+		HttpResponse<String> response = executeSyncWithRetry(errorType, innerType, context,
+				wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
+				retryBackoffMultiplier, retryOnStatus);
 		return (RipResponse<?>) wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 	}
 
@@ -527,7 +587,8 @@ public class RestRequestProcessor {
 			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, returnType, context, interceptedRequest::asStringAsync, hasRetry,
+		return executeAsyncWithRetry(errorType, returnType, context,
+				wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
 				.thenApply(response -> decodeOrThrow(response, errorType, returnType));
 	}
@@ -614,7 +675,8 @@ public class RestRequestProcessor {
 			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
 			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, innerType, context, interceptedRequest::asStringAsync, hasRetry,
+		return executeAsyncWithRetry(errorType, innerType, context,
+				wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
 				.thenApply(response -> (RipResponse<?>) wrapResponse(response,
 						decodeOrThrow(response, errorType, innerType)));
@@ -679,6 +741,309 @@ public class RestRequestProcessor {
 		return request;
 	}
 
+	/**
+	 * Wraps a {@code String}-decoding network call with response caching -
+	 * only ever engaged for a {@code GET} whose client has a {@link Cache}
+	 * configured and isn't {@code @NoCache}, in which case {@code call}
+	 * itself may never run at all (a fresh cache hit). Not applicable to a
+	 * {@code byte[]}/{@code File} response - see {@link Cache}'s javadoc.
+	 *
+	 * @param request the request about to be sent - mutated with
+	 *                {@code If-None-Match}/{@code If-Modified-Since} when a
+	 *                stale, revalidatable entry exists
+	 * @param context this call's context, used for its HTTP method, URL,
+	 *                and {@code @NoCache} marker
+	 * @param call    the real network call
+	 * @return {@code call} unchanged if caching doesn't apply here,
+	 *         otherwise a wrapping supplier that may serve a cached response
+	 *         instead of invoking {@code call} at all
+	 */
+	private Supplier<HttpResponse<String>> wrapWithCache(HttpRequest<?> request, RequestContext context,
+			Supplier<HttpResponse<String>> call) {
+		Cache cache = getCache();
+		if (!isCacheable(cache, context)) {
+			return call;
+		}
+		String key = cacheKey(context);
+		return () -> {
+			CachedResponse cached = cache.get(key);
+			if (cached != null && cached.isFresh()) {
+				return toSyntheticResponse(cached);
+			}
+			if (cached != null) {
+				applyRevalidationHeaders(request, cached);
+			}
+			return reconcileCache(cache, key, cached, call.get());
+		};
+	}
+
+	/**
+	 * The async counterpart of {@link #wrapWithCache}, for a
+	 * {@code CompletableFuture}-returning call.
+	 *
+	 * @param request the request about to be sent
+	 * @param context this call's context
+	 * @param call    the real, asynchronous network call
+	 * @return {@code call} unchanged if caching doesn't apply here,
+	 *         otherwise a wrapping supplier that may complete immediately
+	 *         with a cached response instead of invoking {@code call} at all
+	 */
+	private Supplier<CompletableFuture<HttpResponse<String>>> wrapWithCacheAsync(HttpRequest<?> request,
+			RequestContext context, Supplier<CompletableFuture<HttpResponse<String>>> call) {
+		Cache cache = getCache();
+		if (!isCacheable(cache, context)) {
+			return call;
+		}
+		String key = cacheKey(context);
+		return () -> {
+			CachedResponse cached = cache.get(key);
+			if (cached != null && cached.isFresh()) {
+				return CompletableFuture.completedFuture(toSyntheticResponse(cached));
+			}
+			if (cached != null) {
+				applyRevalidationHeaders(request, cached);
+			}
+			return call.get().thenApply(response -> reconcileCache(cache, key, cached, response));
+		};
+	}
+
+	private static boolean isCacheable(Cache cache, RequestContext context) {
+		return cache != null && context.getHttpMethod() == HTTPMethod.GET
+				&& !Boolean.TRUE.equals(context.getAttribute(NO_CACHE_ATTRIBUTE));
+	}
+
+	private static String cacheKey(RequestContext context) {
+		return context.getHttpMethod() + " " + context.getUrl();
+	}
+
+	private static void applyRevalidationHeaders(HttpRequest<?> request, CachedResponse cached) {
+		String etag = cached.getHeader("ETag");
+		if (etag != null) {
+			request.headerReplace("If-None-Match", etag);
+		}
+		String lastModified = cached.getHeader("Last-Modified");
+		if (lastModified != null) {
+			request.headerReplace("If-Modified-Since", lastModified);
+		}
+	}
+
+	/**
+	 * Reconciles a real network response against {@code staleEntry} (the
+	 * previously-cached entry, if any) once a call has actually gone out -
+	 * either because there was nothing cached, or because a stale entry
+	 * needed revalidating. A {@code 304 Not Modified} against a known stale
+	 * entry refreshes its freshness window and hands back its stored body
+	 * unchanged; any other outcome stores (or evicts) {@code key} per the
+	 * response's own {@code Cache-Control}/{@code ETag}/{@code Last-Modified}
+	 * and is returned as-is.
+	 */
+	private static HttpResponse<String> reconcileCache(Cache cache, String key, CachedResponse staleEntry,
+			HttpResponse<String> response) {
+		Map<String, List<String>> responseHeaders = toHeaderMap(response.getHeaders());
+		if (response.getStatus() == 304 && staleEntry != null) {
+			CachedResponse refreshed = new CachedResponse(staleEntry.getStatus(), staleEntry.getHeaders(),
+					staleEntry.getBody(), freshUntil(responseHeaders));
+			cache.put(key, refreshed);
+			return toSyntheticResponse(refreshed);
+		}
+		if (isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
+			cache.put(key, new CachedResponse(response.getStatus(), responseHeaders, response.getBody(),
+					freshUntil(responseHeaders)));
+		} else {
+			cache.evict(key);
+		}
+		return response;
+	}
+
+	private static boolean isStorable(Map<String, List<String>> headers) {
+		CacheDirectives directives = CacheDirectives.parse(firstHeader(headers, "Cache-Control"));
+		if (directives.noStore) {
+			return false;
+		}
+		return directives.maxAgeSeconds != null || firstHeader(headers, "ETag") != null
+				|| firstHeader(headers, "Last-Modified") != null;
+	}
+
+	private static long freshUntil(Map<String, List<String>> headers) {
+		CacheDirectives directives = CacheDirectives.parse(firstHeader(headers, "Cache-Control"));
+		if (!directives.noCache && directives.maxAgeSeconds != null) {
+			return System.currentTimeMillis() + directives.maxAgeSeconds * 1000L;
+		}
+		return System.currentTimeMillis(); // no (usable) freshness window - always revalidate
+	}
+
+	private static String firstHeader(Map<String, List<String>> headers, String name) {
+		List<String> values = headers.get(name);
+		return values == null || values.isEmpty() ? null : values.get(0);
+	}
+
+	/** Parsed {@code Cache-Control} response directives relevant to caching a {@code GET}. */
+	private static final class CacheDirectives {
+		final boolean noStore;
+		final boolean noCache;
+		final Long maxAgeSeconds;
+
+		private CacheDirectives(boolean noStore, boolean noCache, Long maxAgeSeconds) {
+			this.noStore = noStore;
+			this.noCache = noCache;
+			this.maxAgeSeconds = maxAgeSeconds;
+		}
+
+		static CacheDirectives parse(String headerValue) {
+			if (headerValue == null) {
+				return new CacheDirectives(false, false, null);
+			}
+			boolean noStore = false;
+			boolean noCache = false;
+			Long maxAgeSeconds = null;
+			for (String directive : headerValue.split(",")) {
+				String trimmed = directive.trim().toLowerCase(Locale.ROOT);
+				if (trimmed.equals("no-store")) {
+					noStore = true;
+				} else if (trimmed.equals("no-cache")) {
+					noCache = true;
+				} else if (trimmed.startsWith("max-age=")) {
+					maxAgeSeconds = parseMaxAge(trimmed.substring("max-age=".length()).trim());
+				}
+			}
+			return new CacheDirectives(noStore, noCache, maxAgeSeconds);
+		}
+
+		private static Long parseMaxAge(String value) {
+			try {
+				return Math.max(0L, Long.parseLong(value));
+			} catch (NumberFormatException e) {
+				return null; // malformed - fail open, same as no max-age at all
+			}
+		}
+	}
+
+	private static HttpResponse<String> toSyntheticResponse(CachedResponse cached) {
+		kong.unirest.Headers headers = new kong.unirest.Headers();
+		cached.getHeaders().forEach((name, values) -> values.forEach(value -> headers.add(name, value)));
+		return new CachedHttpResponse<>(cached.getStatus(), headers, cached.getBody());
+	}
+
+	/**
+	 * A {@code kong.unirest.HttpResponse} backed by a {@link CachedResponse}
+	 * instead of an actual network round trip - handed to the same
+	 * {@code decodeOrThrow}/{@code notifyAfterResponse}/{@code wrapResponse}
+	 * machinery a real response would go through, so a cache hit is
+	 * decoded, reported to interceptors, and wrapped in a
+	 * {@code RipResponse} exactly like any other response. Only
+	 * {@link #getStatus()}/{@link #getBody()}/{@link #getHeaders()} are ever
+	 * actually exercised by that machinery; the rest of this interface is
+	 * implemented plainly (a cached entry is never itself a failure status,
+	 * since only a successful response is ever stored).
+	 */
+	private static final class CachedHttpResponse<T> implements HttpResponse<T> {
+		private final int status;
+		private final kong.unirest.Headers headers;
+		private final T body;
+
+		CachedHttpResponse(int status, kong.unirest.Headers headers, T body) {
+			this.status = status;
+			this.headers = headers;
+			this.body = body;
+		}
+
+		@Override
+		public int getStatus() {
+			return status;
+		}
+
+		@Override
+		public String getStatusText() {
+			return "";
+		}
+
+		@Override
+		public kong.unirest.Headers getHeaders() {
+			return headers;
+		}
+
+		@Override
+		public T getBody() {
+			return body;
+		}
+
+		@Override
+		public Optional<UnirestParsingException> getParsingError() {
+			return Optional.empty();
+		}
+
+		@Override
+		public <V> V mapBody(Function<T, V> func) {
+			return func.apply(body);
+		}
+
+		@Override
+		public <V> HttpResponse<V> map(Function<T, V> func) {
+			return new CachedHttpResponse<>(status, headers, func.apply(body));
+		}
+
+		@Override
+		public HttpResponse<T> ifSuccess(Consumer<HttpResponse<T>> consumer) {
+			if (isSuccess()) {
+				consumer.accept(this);
+			}
+			return this;
+		}
+
+		@Override
+		public HttpResponse<T> ifFailure(Consumer<HttpResponse<T>> consumer) {
+			if (!isSuccess()) {
+				consumer.accept(this);
+			}
+			return this;
+		}
+
+		@Override
+		public <E> HttpResponse<T> ifFailure(Class<? extends E> type, Consumer<HttpResponse<E>> consumer) {
+			return this;
+		}
+
+		@Override
+		public boolean isSuccess() {
+			return status >= 200 && status < 300;
+		}
+
+		@Override
+		public <E> E mapError(Class<? extends E> type) {
+			return null;
+		}
+
+		@Override
+		public Cookies getCookies() {
+			return new Cookies();
+		}
+
+		@Override
+		public HttpRequestSummary getRequestSummary() {
+			return new HttpRequestSummary() {
+				@Override
+				public HttpMethod getHttpMethod() {
+					return HttpMethod.GET;
+				}
+
+				@Override
+				public String getUrl() {
+					return "";
+				}
+
+				@Override
+				public String getRawPath() {
+					return "";
+				}
+
+				@Override
+				public String asString() {
+					return "GET";
+				}
+			};
+		}
+	}
+
 	private <B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
 			Class<?> returnType) {
 		if (INTERCEPTORS.isEmpty()) {
@@ -702,7 +1067,8 @@ public class RestRequestProcessor {
 				return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
 						.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
 			}
-			return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
+			return executeAsyncWithRetry(method, innerType, context,
+					wrapWithCacheAsync(request, context, request::asStringAsync))
 					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
 		}
 		Class<?> innerType = requireClass(futureInnerType, method);
@@ -715,7 +1081,8 @@ public class RestRequestProcessor {
 			return executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync).thenApply(
 					response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
 		}
-		return executeAsyncWithRetry(method, innerType, context, request::asStringAsync)
+		return executeAsyncWithRetry(method, innerType, context,
+				wrapWithCacheAsync(request, context, request::asStringAsync))
 				.thenApply(response -> decodeOrThrow(response, errorType, innerType));
 	}
 

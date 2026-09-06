@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import kong.unirest.JsonObjectMapper;
 import kong.unirest.ObjectMapper;
 
+import com.shri.restinpeace.cache.InMemoryCache;
+
 class RipClientConfigTest {
 
 	@Test
@@ -20,14 +22,16 @@ class RipClientConfigTest {
 		assertNull(config.getReadTimeoutMillis());
 		assertNull(config.getProxyHost());
 		assertNull(config.getObjectMapper());
+		assertNull(config.getCache());
 	}
 
 	@Test
 	void build_withAllSettings_returnsThem() {
 		ObjectMapper objectMapper = new JsonObjectMapper();
+		InMemoryCache cache = new InMemoryCache();
 		RipClientConfig config = RipClientConfig.builder().baseUrl("https://api.example.com").connectTimeoutMillis(1_000)
 				.readTimeoutMillis(5_000).proxy("proxy.example.com", 8080, "user", "pass").objectMapper(objectMapper)
-				.build();
+				.cache(cache).build();
 
 		assertEquals("https://api.example.com", config.getBaseUrl());
 		assertEquals(1_000, config.getConnectTimeoutMillis());
@@ -37,6 +41,7 @@ class RipClientConfigTest {
 		assertEquals("user", config.getProxyUsername());
 		assertEquals("pass", config.getProxyPassword());
 		assertEquals(objectMapper, config.getObjectMapper());
+		assertEquals(cache, config.getCache());
 	}
 
 	@Test

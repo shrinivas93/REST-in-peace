@@ -27,6 +27,7 @@ import javax.tools.FileObject;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
 
+import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.error.ErrorType;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -226,10 +227,11 @@ public class RestClientProcessor extends AbstractProcessor {
 		RetryModel retryModel = retryModelOf(methodElement);
 		String[] headerEntries = headerEntriesOf(methodElement);
 		String errorTypeClassName = errorTypeClassNameOf(methodElement);
+		boolean isNoCache = methodElement.getAnnotation(NoCache.class) != null;
 
 		return new MethodModel(methodElement.getSimpleName().toString(), httpMethodAndUrl.httpMethod,
 				httpMethodAndUrl.urlTemplate, returnModel, params, timeoutModel, retryModel, headerEntries,
-				errorTypeClassName, isMultipart, isFormUrlEncoded);
+				errorTypeClassName, isMultipart, isFormUrlEncoded, isNoCache);
 	}
 
 	private TimeoutModel timeoutModelOf(ExecutableElement methodElement) {
@@ -610,6 +612,9 @@ public class RestClientProcessor extends AbstractProcessor {
 		String httpMethodLiteral = "com.shri.restinpeace.constant.HTTPMethod." + method.httpMethod.name();
 		out.append("\t\tcom.shri.restinpeace.interceptor.RequestContext __ripContext = new com.shri.restinpeace.interceptor.RequestContext(")
 				.append(httpMethodLiteral).append(", __ripUrl);\n");
+		if (method.isNoCache) {
+			out.append("\t\tthis.ripProcessor.markNoCache(__ripContext);\n");
+		}
 		out.append("\t\tkong.unirest.HttpRequest<?> __ripRequest = this.ripProcessor.createGeneratedRequest(")
 				.append(httpMethodLiteral).append(", __ripUrl, ").append(method.timeout.connectMillis).append(", ")
 				.append(method.timeout.readMillis).append(");\n");
@@ -908,10 +913,11 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String errorTypeClassName;
 		final boolean isMultipart;
 		final boolean isFormUrlEncoded;
+		final boolean isNoCache;
 
 		MethodModel(String name, HTTPMethod httpMethod, String urlTemplate, ReturnModel returnModel,
 				List<ParamModel> params, TimeoutModel timeout, RetryModel retry, String[] headerEntries,
-				String errorTypeClassName, boolean isMultipart, boolean isFormUrlEncoded) {
+				String errorTypeClassName, boolean isMultipart, boolean isFormUrlEncoded, boolean isNoCache) {
 			this.name = name;
 			this.httpMethod = httpMethod;
 			this.urlTemplate = urlTemplate;
@@ -923,6 +929,7 @@ public class RestClientProcessor extends AbstractProcessor {
 			this.errorTypeClassName = errorTypeClassName;
 			this.isMultipart = isMultipart;
 			this.isFormUrlEncoded = isFormUrlEncoded;
+			this.isNoCache = isNoCache;
 		}
 	}
 
