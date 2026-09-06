@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
@@ -246,6 +247,7 @@ public class RestRequestProcessor {
 		HttpRequest<?> request = createRequest(httpMethod, url);
 		applyTimeout(request, method);
 		applyFixedHeaders(request, method);
+		applyIdempotencyKeyIfNeeded(request, method);
 		request = applyParams(request, method, args);
 		request = applyInterceptors(request, context);
 		applyDownloadMonitor(request, resolveDownloadProgressListener(method, args));
@@ -1556,6 +1558,28 @@ public class RestRequestProcessor {
 			return;
 		}
 		applyHeaderEntries(request, headers.value());
+	}
+
+	private void applyIdempotencyKeyIfNeeded(HttpRequest<?> request, Method method) {
+		Retry retry = method.getAnnotation(Retry.class);
+		applyIdempotencyKeyIfNeeded(request, retry != null && retry.idempotent());
+	}
+
+	/**
+	 * Sends a freshly generated {@code Idempotency-Key} header when
+	 * {@code idempotent} is true - called once per call, before any
+	 * attempt is made, so every retry of that call (which re-sends the
+	 * same {@code request} object) carries the identical value. Also used
+	 * directly by compile-time-generated code for a
+	 * {@code @Retry(idempotent = true)} method.
+	 *
+	 * @param request    the request to add the header to
+	 * @param idempotent {@code @Retry}'s {@code idempotent}
+	 */
+	public void applyIdempotencyKeyIfNeeded(HttpRequest<?> request, boolean idempotent) {
+		if (idempotent) {
+			request.headerReplace("Idempotency-Key", UUID.randomUUID().toString());
+		}
 	}
 
 	private static void applyHeaderEntries(HttpRequest<?> request, String[] entries) {

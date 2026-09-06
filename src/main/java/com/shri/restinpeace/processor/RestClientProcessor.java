@@ -245,10 +245,10 @@ public class RestClientProcessor extends AbstractProcessor {
 	private RetryModel retryModelOf(ExecutableElement methodElement) {
 		Retry retry = methodElement.getAnnotation(Retry.class);
 		if (retry == null) {
-			return new RetryModel(false, 0, 0L, 1.0, new int[0]);
+			return new RetryModel(false, 0, 0L, 1.0, new int[0], false);
 		}
 		return new RetryModel(true, retry.times(), retry.delayMillis(), retry.backoffMultiplier(),
-				retry.retryOnStatus());
+				retry.retryOnStatus(), retry.idempotent());
 	}
 
 	private String[] headerEntriesOf(ExecutableElement methodElement) {
@@ -623,6 +623,9 @@ public class RestClientProcessor extends AbstractProcessor {
 			out.append("\t\tthis.ripProcessor.applyGeneratedHeaders(__ripRequest, ")
 					.append(stringArrayLiteral(method.headerEntries)).append(");\n");
 		}
+		if (method.retry.idempotent) {
+			out.append("\t\tthis.ripProcessor.applyIdempotencyKeyIfNeeded(__ripRequest, true);\n");
+		}
 
 		if (method.isMultipart) {
 			out.append(
@@ -949,13 +952,16 @@ public class RestClientProcessor extends AbstractProcessor {
 		final long delayMillis;
 		final double backoffMultiplier;
 		final int[] retryOnStatus;
+		final boolean idempotent;
 
-		RetryModel(boolean hasRetry, int times, long delayMillis, double backoffMultiplier, int[] retryOnStatus) {
+		RetryModel(boolean hasRetry, int times, long delayMillis, double backoffMultiplier, int[] retryOnStatus,
+				boolean idempotent) {
 			this.hasRetry = hasRetry;
 			this.times = times;
 			this.delayMillis = delayMillis;
 			this.backoffMultiplier = backoffMultiplier;
 			this.retryOnStatus = retryOnStatus;
+			this.idempotent = idempotent;
 		}
 	}
 

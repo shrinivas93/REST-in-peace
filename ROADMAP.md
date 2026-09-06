@@ -766,12 +766,27 @@ up.
       RxJava's `Single`/`Observable`, or Reactor's `Mono`/`Flux` as a
       separate optional module, without RIP itself depending on any of them
       or bloating the core.
-- [ ] **Idempotency-key support baked into `@Retry`** — generate a stable
-      `Idempotency-Key` header once per logical call and keep it constant
-      across all retry attempts (opt-in, e.g. `@Retry(idempotent = true)`).
-      Solves a real distributed-systems hazard (a POST that succeeded
-      server-side but whose response was lost, then gets blindly retried)
-      that most REST clients don't handle at all.
+- [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
+      true)` generates one `Idempotency-Key` header value per logical call
+      and holds it constant across every retry attempt (Stripe/PayPal/Adyen/
+      Square's own convention), solving the real distributed-systems hazard
+      `@Retry`'s own javadoc already called out: a `POST` that succeeded
+      server-side but whose response was lost in transit, then gets blindly
+      retried, risking a duplicate charge/order. Default `false` - zero
+      behavior change for every existing `@Retry` usage. The smallest of the
+      recent additions by far: unlike form-urlencoded/caching, this needed
+      no new package or public type - one boolean field on the existing
+      `Retry` annotation, and it slots into the exact seam
+      `applyFixedHeaders` already occupies (set once, before any attempt,
+      on the same `HttpRequest` object every retry re-sends), so the header
+      stays identical across attempts with no retry-loop-aware logic at
+      all. `@NoCache`-style precedent followed for the codegen side too:
+      `RestClientProcessor` only emits the
+      `applyIdempotencyKeyIfNeeded(...)` call when `idempotent = true`,
+      otherwise the generated code doesn't mention it. No `MockRestServer`
+      changes needed - `RecordedRequest.getHeader("Idempotency-Key")` and
+      `getRecordedRequests()` (both pre-existing) are enough to assert the
+      key is identical across every recorded attempt.
 - [ ] **Circuit breaker / bulkhead per client** — a natural extension of
       `RipClientConfig`: stop hammering a downstream that's clearly down,
       the natural next step after retry and timeout.

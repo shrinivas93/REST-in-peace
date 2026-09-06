@@ -4,6 +4,8 @@ import static java.util.Collections.singletonMap;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,6 +14,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -443,6 +446,62 @@ class MockRestServerTest {
 		assertTrue(secondGap.toMillis() > firstGap.toMillis() * 2, "Expected the second gap (~300ms, backoffMultiplier "
 				+ "= 3.0) to be clearly larger than the first (~100ms) - was " + secondGap.toMillis() + "ms vs "
 				+ firstGap.toMillis() + "ms");
+	}
+
+	@Test
+	void idempotentRetry_sendsAnIdenticalIdempotencyKeyAcrossEveryAttempt() throws Exception {
+		server.onFlaky(HTTPMethod.POST, "/charges", 2, MockResponse.status(503, ""),
+				MockResponse.ok("{\"chargeId\":\"ch_1\"}"));
+
+		String result = api.createCharge("{\"amount\":500}");
+
+		assertEquals("{\"chargeId\":\"ch_1\"}", result);
+		List<RecordedRequest> requests = server.getRecordedRequests();
+		assertEquals(3, requests.size());
+		String key = requests.get(0).getHeader("Idempotency-Key");
+		assertNotNull(key);
+		assertEquals(key, requests.get(1).getHeader("Idempotency-Key"));
+		assertEquals(key, requests.get(2).getHeader("Idempotency-Key"));
+	}
+
+	@Test
+	void nonIdempotentRetry_sendsNoIdempotencyKeyAtAll() {
+		server.onFlaky(HTTPMethod.POST, "/orders", 2, MockResponse.status(503, ""),
+				MockResponse.ok("{\"orderId\":\"new-1\"}"));
+
+		api.createOrderWithBackoff("{\"sku\":\"sku-1\"}");
+
+		for (RecordedRequest request : server.getRecordedRequests()) {
+			assertNull(request.getHeader("Idempotency-Key"));
+		}
+	}
+
+	@Test
+	void idempotentCall_generatesADifferentKeyForEachSeparateCall() {
+		server.on(HTTPMethod.POST, "/charges", MockResponse.ok("{\"chargeId\":\"ch_1\"}"));
+
+		api.createCharge("{\"amount\":500}");
+		api.createCharge("{\"amount\":700}");
+
+		List<RecordedRequest> requests = server.getRecordedRequests();
+		assertEquals(2, requests.size());
+		assertNotEquals(requests.get(0).getHeader("Idempotency-Key"), requests.get(1).getHeader("Idempotency-Key"));
+	}
+
+	@Test
+	void idempotentAsyncRetry_sendsAnIdenticalIdempotencyKeyAcrossEveryAttempt() throws Exception {
+		server.onFlaky(HTTPMethod.POST, "/charges", 2, MockResponse.status(503, ""),
+				MockResponse.ok("{\"chargeId\":\"ch_1\"}"));
+
+		String result = api.createChargeAsync("{\"amount\":500}").get(2, TimeUnit.SECONDS);
+
+		assertEquals("{\"chargeId\":\"ch_1\"}", result);
+		List<RecordedRequest> requests = server.getRecordedRequests();
+		assertEquals(3, requests.size());
+		String key = requests.get(0).getHeader("Idempotency-Key");
+		assertNotNull(key);
+		assertEquals(key, requests.get(1).getHeader("Idempotency-Key"));
+		assertEquals(key, requests.get(2).getHeader("Idempotency-Key"));
 	}
 
 	private static final class OrderStatus {
