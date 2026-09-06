@@ -3,6 +3,7 @@ package com.shri.restinpeace;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -254,6 +256,10 @@ class RipIntegrationTest {
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
 		CompletableFuture<String> getFlakyAsync(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/flaky/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 }, idempotent = true)
+		String getFlakyIdempotent(@PathParam("port") int port, @PathParam("id") String id);
+
 		@GET("http://localhost:{port}/always-503/{id}")
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
 		String getAlwaysFailingWithRetry(@PathParam("port") int port, @PathParam("id") String id);
@@ -430,6 +436,7 @@ class RipIntegrationTest {
 	private static final AtomicInteger ALWAYS_FAILING_ATTEMPTS = new AtomicInteger();
 	private static final AtomicInteger CACHEABLE_HITS = new AtomicInteger();
 	private static final InMemoryCache CACHE = new InMemoryCache();
+	private static final List<String> IDEMPOTENCY_KEYS_SEEN = Collections.synchronizedList(new ArrayList<>());
 
 	@BeforeAll
 	static void startServer() throws IOException {
@@ -454,6 +461,7 @@ class RipIntegrationTest {
 		ALWAYS_FAILING_ATTEMPTS.set(0);
 		CACHEABLE_HITS.set(0);
 		CACHE.clear();
+		IDEMPOTENCY_KEYS_SEEN.clear();
 		RIP.clearInterceptors();
 	}
 
@@ -466,6 +474,7 @@ class RipIntegrationTest {
 		String body = readBody(exchange.getRequestBody());
 		LAST_REQUEST.set(new CapturedRequest(exchange.getRequestMethod(), exchange.getRequestURI().getPath(),
 				exchange.getRequestURI().getRawQuery(), exchange.getRequestHeaders(), body));
+		IDEMPOTENCY_KEYS_SEEN.add(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
 
 		if ("HEAD".equals(exchange.getRequestMethod())) {
 			exchange.sendResponseHeaders(200, -1);
@@ -1551,6 +1560,30 @@ class RipIntegrationTest {
 
 		assertEquals("ok", result);
 		assertEquals(Arrays.asList(503, 503, 200), statuses);
+	}
+
+	@Test
+	void retry_idempotent_sendsAnIdenticalIdempotencyKeyAcrossEveryAttempt() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getFlakyIdempotent(port, "x");
+
+		assertEquals("ok", result);
+		assertEquals(3, IDEMPOTENCY_KEYS_SEEN.size());
+		assertNotNull(IDEMPOTENCY_KEYS_SEEN.get(0));
+		assertEquals(IDEMPOTENCY_KEYS_SEEN.get(0), IDEMPOTENCY_KEYS_SEEN.get(1));
+		assertEquals(IDEMPOTENCY_KEYS_SEEN.get(0), IDEMPOTENCY_KEYS_SEEN.get(2));
+	}
+
+	@Test
+	void retry_notIdempotent_sendsNoIdempotencyKeyAtAll() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.getFlaky(port, "x");
+
+		for (String key : IDEMPOTENCY_KEYS_SEEN) {
+			assertNull(key);
+		}
 	}
 
 	@Test
