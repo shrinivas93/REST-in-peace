@@ -19,6 +19,18 @@ import java.lang.annotation.Target;
  * of blocking the caller. Every attempt, including ones that get retried,
  * is still reported to any registered {@link com.shri.restinpeace.interceptor.RequestInterceptor}'s
  * {@code afterResponse}.
+ *
+ * <p>
+ * Retrying is only safe by default for a method whose HTTP verb is already
+ * idempotent ({@code GET}/{@code PUT}/{@code DELETE}) - retrying a
+ * {@code POST}/{@code PATCH} that actually succeeded server-side but whose
+ * response was lost in transit (a timeout or dropped connection after the
+ * server committed) risks double-executing it (a duplicate charge, a
+ * duplicate order). {@link #idempotent()} closes that gap: it generates one
+ * {@code Idempotency-Key} header value and holds it identical across every
+ * attempt of a given call, so a server that honors idempotency keys (as
+ * Stripe, PayPal, Adyen, and Square all do) can recognize a retried attempt
+ * as the same logical request instead of a new one.
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
@@ -56,5 +68,19 @@ public @interface Retry {
 	 * @return the retryable status codes
 	 */
 	int[] retryOnStatus() default { 429, 502, 503, 504 };
+
+	/**
+	 * If true, sends an {@code Idempotency-Key} header - one randomly
+	 * generated value per call, held identical across every retry attempt
+	 * of that call (never regenerated between attempts, never shared with
+	 * any other call) - the standard way (Stripe, PayPal, Adyen, Square)
+	 * to let a server tell a genuine retry of the same request apart from
+	 * a new one. Most meaningful on {@code POST}/{@code PATCH}, the two
+	 * methods HTTP itself doesn't already guarantee are safe to retry;
+	 * harmless (but redundant) on {@code GET}/{@code PUT}/{@code DELETE}.
+	 *
+	 * @return whether to send a stable {@code Idempotency-Key}
+	 */
+	boolean idempotent() default false;
 
 }

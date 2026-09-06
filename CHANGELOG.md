@@ -218,6 +218,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   differ from the ones in effect when it was stored, so different
   language/format variants of the same URL no longer clobber each
   other's cache. `Vary: *` is never cached at all.
+- `@Retry(idempotent = true)` sends a stable `Idempotency-Key` header - one
+  randomly generated value per call, held identical across every retry
+  attempt - so a server that honors idempotency keys (Stripe, PayPal,
+  Adyen, Square) can recognize a retried `POST`/`PATCH` as the same
+  logical request instead of executing it twice. Default `false`.
 
 ### Changed
 

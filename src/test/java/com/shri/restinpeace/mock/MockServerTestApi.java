@@ -2,6 +2,7 @@ package com.shri.restinpeace.mock;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -65,5 +66,13 @@ public interface MockServerTestApi {
 	@POST("/tags")
 	@FormUrlEncoded
 	String submitTags(@Field("tag") List<String> tags);
+
+	@POST("/charges")
+	@Retry(times = 3, delayMillis = 1, idempotent = true, retryOnStatus = { 503 })
+	String createCharge(@Body String payload);
+
+	@POST("/charges")
+	@Retry(times = 3, delayMillis = 1, idempotent = true, retryOnStatus = { 503 })
+	CompletableFuture<String> createChargeAsync(@Body String payload);
 
 }
