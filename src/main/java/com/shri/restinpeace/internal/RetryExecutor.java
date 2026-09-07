@@ -21,9 +21,8 @@ import kong.unirest.HttpResponse;
  * failure or a matching status code. Extracted out of {@link RequestExecutor}
  * since the retry loop, sync and async, was its own genuinely separate
  * concern (and the largest cluster after caching); reports every attempt,
- * including retried ones, back to {@code owner} for interceptor
- * notification, since that depends on per-client interceptor state that
- * lives on the owning {@link RequestExecutor} instance.
+ * including retried ones, to {@code interceptorDispatcher} for interceptor
+ * notification.
  */
 final class RetryExecutor {
 
@@ -35,15 +34,15 @@ final class RetryExecutor {
 		return thread;
 	});
 
-	private final RequestExecutor owner;
+	private final InterceptorDispatcher interceptorDispatcher;
 
-	RetryExecutor(RequestExecutor owner) {
-		this.owner = owner;
+	RetryExecutor(InterceptorDispatcher interceptorDispatcher) {
+		this.interceptorDispatcher = interceptorDispatcher;
 	}
 
 	<B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call) {
-		Class<?> errorType = RequestExecutor.errorTypeOf(method);
+		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
 		if (retry == null) {
 			return executeSyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
@@ -65,7 +64,7 @@ final class RetryExecutor {
 			int[] retryOnStatus) {
 		if (!hasRetry) {
 			HttpResponse<B> response = call.get();
-			owner.notifyAfterResponse(context, response, errorType, returnType);
+			interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 			return response;
 		}
 		long delay = delayMillis;
@@ -74,7 +73,7 @@ final class RetryExecutor {
 			RuntimeException failure = null;
 			try {
 				response = call.get();
-				owner.notifyAfterResponse(context, response, errorType, returnType);
+				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 			} catch (RuntimeException e) {
 				failure = e;
 			}
@@ -92,7 +91,7 @@ final class RetryExecutor {
 
 	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
-		Class<?> errorType = RequestExecutor.errorTypeOf(method);
+		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
 			return executeAsyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
@@ -112,7 +111,7 @@ final class RetryExecutor {
 			long delayMillis, double backoffMultiplier, int[] retryOnStatus) {
 		if (!hasRetry) {
 			return call.get().thenApply(response -> {
-				owner.notifyAfterResponse(context, response, errorType, returnType);
+				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 				return response;
 			});
 		}
@@ -126,7 +125,7 @@ final class RetryExecutor {
 		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
 		call.get().whenComplete((response, failure) -> {
 			if (response != null) {
-				owner.notifyAfterResponse(context, response, errorType, returnType);
+				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 			}
 			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
 			if (!retryable || attempt >= times) {

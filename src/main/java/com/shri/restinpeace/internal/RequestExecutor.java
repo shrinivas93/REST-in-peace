@@ -1,38 +1,21 @@
 package com.shri.restinpeace.internal;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
 
-import com.shri.restinpeace.annotation.method.DELETE;
-import com.shri.restinpeace.annotation.method.GET;
-import com.shri.restinpeace.annotation.method.HEAD;
-import com.shri.restinpeace.annotation.method.OPTIONS;
-import com.shri.restinpeace.annotation.method.PATCH;
-import com.shri.restinpeace.annotation.method.POST;
-import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.cache.NoCache;
-import com.shri.restinpeace.annotation.error.ErrorType;
-import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.Field;
@@ -44,10 +27,8 @@ import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
-import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
-import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.cache.Cache;
@@ -55,10 +36,8 @@ import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstants;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
-import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
-import com.shri.restinpeace.multipart.PartValue;
 import com.shri.restinpeace.upload.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
@@ -67,9 +46,7 @@ import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
-import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
-import kong.unirest.UnirestConfigException;
 import kong.unirest.UnirestInstance;
 
 /**
@@ -81,11 +58,14 @@ import kong.unirest.UnirestInstance;
  * instead.
  *
  * <p>
- * Three genuinely separate concerns that grew large enough to earn their
- * own class are delegated out to package-private collaborators instead of
+ * Genuinely separate concerns that grew large enough to earn their own
+ * class are delegated out to package-private collaborators instead of
  * living here as private methods: response caching ({@link CacheCoordinator}),
- * {@code @FormUrlEncoded} body building ({@link FormEncoder}), and the
- * {@code @Retry} loop, sync and async ({@link RetryExecutor}). Every method
+ * {@code @FormUrlEncoded} body building ({@link FormEncoder}), the
+ * {@code @Retry} loop ({@link RetryExecutor}), {@code @Multipart} body
+ * building ({@link MultipartEncoder}), URL template resolution
+ * ({@link UrlResolver}), response decoding ({@link ResponseDecoder}), and
+ * interceptor dispatch ({@link InterceptorDispatcher}). Every method
  * generated code calls directly (see
  * {@code com.shri.restinpeace.processor.RestClientProcessor}) stays here
  * regardless, since generated code's field type is fixed as
@@ -94,14 +74,15 @@ import kong.unirest.UnirestInstance;
  */
 public class RequestExecutor {
 
-	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
-
 	private final String baseUrlOverride;
 	private final UnirestInstance unirestInstance;
-	private final List<RequestInterceptor> configuredInterceptors;
 	private final CacheCoordinator cacheCoordinator;
 	private final FormEncoder formEncoder = new FormEncoder();
-	private final RetryExecutor retryExecutor = new RetryExecutor(this);
+	private final MultipartEncoder multipartEncoder = new MultipartEncoder();
+	private final UrlResolver urlResolver;
+	private final ResponseDecoder responseDecoder;
+	private final InterceptorDispatcher interceptorDispatcher;
+	private final RetryExecutor retryExecutor;
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RequestExecutor() {
@@ -123,7 +104,10 @@ public class RequestExecutor {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
 		this.cacheCoordinator = new CacheCoordinator(null);
-		this.configuredInterceptors = Collections.emptyList();
+		this.urlResolver = new UrlResolver(baseUrlOverride);
+		this.responseDecoder = new ResponseDecoder(null);
+		this.interceptorDispatcher = new InterceptorDispatcher(Collections.emptyList(), responseDecoder);
+		this.retryExecutor = new RetryExecutor(interceptorDispatcher);
 	}
 
 	/**
@@ -141,7 +125,10 @@ public class RequestExecutor {
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
 		this.cacheCoordinator = new CacheCoordinator(config.getCache());
-		this.configuredInterceptors = config.getInterceptors();
+		this.urlResolver = new UrlResolver(baseUrlOverride);
+		this.responseDecoder = new ResponseDecoder(unirestInstance);
+		this.interceptorDispatcher = new InterceptorDispatcher(config.getInterceptors(), responseDecoder);
+		this.retryExecutor = new RetryExecutor(interceptorDispatcher);
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
@@ -174,12 +161,12 @@ public class RequestExecutor {
 	 * @param interceptor the interceptor to register
 	 */
 	public static void addInterceptor(RequestInterceptor interceptor) {
-		INTERCEPTORS.add(interceptor);
+		InterceptorDispatcher.addInterceptor(interceptor);
 	}
 
 	/** Removes all registered interceptors. */
 	public static void clearInterceptors() {
-		INTERCEPTORS.clear();
+		InterceptorDispatcher.clearInterceptors();
 	}
 
 	/**
@@ -218,7 +205,7 @@ public class RequestExecutor {
 	 *         {@code void} methods
 	 */
 	public Object processRestRequest(Method method, HTTPMethod httpMethod, Object[] args) {
-		String url = resolveUrl(method, httpMethod, args);
+		String url = urlResolver.resolveUrl(method, httpMethod, args);
 		RequestContext context = new RequestContext(httpMethod, url);
 		if (method.getAnnotation(NoCache.class) != null) {
 			markNoCache(context);
@@ -229,10 +216,10 @@ public class RequestExecutor {
 		applyFixedHeaders(request, method);
 		applyIdempotencyKeyIfNeeded(request, method);
 		request = applyParams(request, method, args);
-		request = applyInterceptors(request, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
 		applyDownloadMonitor(request, resolveDownloadProgressListener(method, args));
 
-		Class<?> errorType = errorTypeOf(method);
+		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Class<?> returnType = method.getReturnType();
 		if (returnType == CompletableFuture.class) {
 			return processAsync(request, method, args, context);
@@ -241,25 +228,25 @@ public class RequestExecutor {
 			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
 			if (innerType == byte[].class) {
 				HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, innerType, context, request::asBytes);
-				return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
+				return ResponseDecoder.wrapResponse(response, responseDecoder.decodeOrThrow(response, errorType, innerType));
 			}
 			HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
 					cacheCoordinator.wrapWithCache(request, context, request::asString));
-			return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
+			return ResponseDecoder.wrapResponse(response, responseDecoder.decodeOrThrow(response, errorType, innerType));
 		}
 		if (returnType == byte[].class) {
 			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, returnType, context, request::asBytes);
-			return decodeOrThrow(response, errorType, returnType);
+			return responseDecoder.decodeOrThrow(response, errorType, returnType);
 		}
 		if (returnType == File.class) {
 			File destination = resolveDestinationFile(method, args);
 			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, byte[].class, context, request::asBytes);
-			byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
+			byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, returnType, context,
 				cacheCoordinator.wrapWithCache(request, context, request::asString));
-		return decodeOrThrow(response, errorType, returnType);
+		return responseDecoder.decodeOrThrow(response, errorType, returnType);
 	}
 
 	// ---------------------------------------------------------------------
@@ -279,7 +266,7 @@ public class RequestExecutor {
 	/**
 	 * Resolves a generated method's request URL from its (possibly relative)
 	 * URL template, substituting {@code @PathParam}s - the generated-code
-	 * counterpart of {@link #resolveUrl}, used when the method has no
+	 * counterpart of {@code UrlResolver}'s own {@code resolveUrl}, used when the method has no
 	 * {@code @Url} parameter (which bypasses this entirely; see
 	 * {@link #requireUrlParam}).
 	 *
@@ -293,8 +280,7 @@ public class RequestExecutor {
 	 */
 	public String resolveGeneratedUrl(String urlTemplate, String interfaceBaseUrl, String[] pathParamNames,
 			Object[] pathParamValues) {
-		return substitutePathParamsLiteral(applyBaseUrlLiteral(urlTemplate, interfaceBaseUrl), pathParamNames,
-				pathParamValues);
+		return urlResolver.resolveGeneratedUrl(urlTemplate, interfaceBaseUrl, pathParamNames, pathParamValues);
 	}
 
 	/**
@@ -302,7 +288,7 @@ public class RequestExecutor {
 	 * {@code value} used verbatim as the request URL, bypassing
 	 * {@link #resolveGeneratedUrl} (and everything it would otherwise
 	 * resolve - {@code @BaseUrl}, a runtime base URL, {@code @PathParam})
-	 * entirely, mirroring {@link #resolveUrlParam}.
+	 * entirely, mirroring {@code UrlResolver}'s own {@code resolveUrlParam}.
 	 *
 	 * @param value             the {@code @Url} parameter's argument value
 	 * @param methodDescription the interface and method name, for the exception
@@ -420,11 +406,11 @@ public class RequestExecutor {
 	public Object finishGeneratedSync(HttpRequest<?> request, RequestContext context, Class<?> returnType,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		request = applyInterceptors(request, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, returnType, context,
 				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
 				retryBackoffMultiplier, retryOnStatus);
-		return decodeOrThrow(response, errorType, returnType);
+		return responseDecoder.decodeOrThrow(response, errorType, returnType);
 	}
 
 	/**
@@ -448,10 +434,10 @@ public class RequestExecutor {
 	public byte[] finishGeneratedSyncBytes(HttpRequest<?> request, RequestContext context, Class<?> errorType,
 			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
 			int[] retryOnStatus) {
-		request = applyInterceptors(request, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
-		return (byte[]) decodeOrThrow(response, errorType, byte[].class);
+		return (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 	}
 
 	/**
@@ -476,10 +462,10 @@ public class RequestExecutor {
 	public File finishGeneratedSyncFile(HttpRequest<?> request, RequestContext context, File destination,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		request = applyInterceptors(request, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
-		byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
+		byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 		return writeToFile(destination, bytes);
 	}
 
@@ -509,11 +495,12 @@ public class RequestExecutor {
 	public RipResponse<?> finishGeneratedSyncRipResponse(HttpRequest<?> request, RequestContext context,
 			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		request = applyInterceptors(request, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, innerType, context,
 				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
 				retryBackoffMultiplier, retryOnStatus);
-		return (RipResponse<?>) wrapResponse(response, decodeOrThrow(response, errorType, innerType));
+		return (RipResponse<?>) ResponseDecoder.wrapResponse(response,
+				responseDecoder.decodeOrThrow(response, errorType, innerType));
 	}
 
 	/**
@@ -537,12 +524,12 @@ public class RequestExecutor {
 	public RipResponse<byte[]> finishGeneratedSyncRipResponseBytes(HttpRequest<?> request, RequestContext context,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		request = applyInterceptors(request, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
 		@SuppressWarnings("unchecked")
-		RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
-				decodeOrThrow(response, errorType, byte[].class));
+		RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
+				responseDecoder.decodeOrThrow(response, errorType, byte[].class));
 		return result;
 	}
 
@@ -569,11 +556,11 @@ public class RequestExecutor {
 	public CompletableFuture<?> finishGeneratedAsync(HttpRequest<?> request, RequestContext context,
 			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, returnType, context,
 				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
-				.thenApply(response -> decodeOrThrow(response, errorType, returnType));
+				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, returnType));
 	}
 
 	/**
@@ -597,10 +584,10 @@ public class RequestExecutor {
 	public CompletableFuture<byte[]> finishGeneratedAsyncBytes(HttpRequest<?> request, RequestContext context,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
-				.thenApply(response -> (byte[]) decodeOrThrow(response, errorType, byte[].class));
+				.thenApply(response -> (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class));
 	}
 
 	/**
@@ -625,10 +612,10 @@ public class RequestExecutor {
 	public CompletableFuture<File> finishGeneratedAsyncFile(HttpRequest<?> request, RequestContext context,
 			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
-				.thenApply(response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
+				.thenApply(response -> writeToFile(destination, (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
 	}
 
 	/**
@@ -657,12 +644,12 @@ public class RequestExecutor {
 	public CompletableFuture<RipResponse<?>> finishGeneratedAsyncRipResponse(HttpRequest<?> request,
 			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
 			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
-		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, innerType, context,
 				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
-				.thenApply(response -> (RipResponse<?>) wrapResponse(response,
-						decodeOrThrow(response, errorType, innerType)));
+				.thenApply(response -> (RipResponse<?>) ResponseDecoder.wrapResponse(response,
+						responseDecoder.decodeOrThrow(response, errorType, innerType)));
 	}
 
 	/**
@@ -686,185 +673,45 @@ public class RequestExecutor {
 	public CompletableFuture<RipResponse<byte[]>> finishGeneratedAsyncRipResponseBytes(HttpRequest<?> request,
 			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
-		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
+		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus).thenApply(response -> {
 					@SuppressWarnings("unchecked")
-					RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
-							decodeOrThrow(response, errorType, byte[].class));
+					RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
+							responseDecoder.decodeOrThrow(response, errorType, byte[].class));
 					return result;
 				});
 	}
 
-	private String applyBaseUrlLiteral(String url, String interfaceBaseUrl) {
-		if (isAbsoluteUrl(url)) {
-			return url;
-		}
-		String base = baseUrlOverride != null ? baseUrlOverride : interfaceBaseUrl;
-		return joinBaseUrl(base, url);
-	}
-
-	private String substitutePathParamsLiteral(String urlTemplate, String[] names, Object[] values) {
-		String url = urlTemplate;
-		for (int i = 0; i < names.length; i++) {
-			if (values[i] == null) {
-				throw new RestInPeaceException(String.format("Missing value for path param '%s'.", names[i]));
-			}
-			url = url.replace("{" + names[i] + "}", encodePathValue(values[i]));
-		}
-		return url;
-	}
-
-	/**
-	 * Every interceptor that applies to this instance's calls - every
-	 * globally registered one, followed by this client's own (from
-	 * {@link RipClientConfig.Builder#interceptors}, if any) - global ones
-	 * bracket everything, including this client's own, the same "onion"
-	 * ordering {@link RequestInterceptor}'s own javadoc describes.
-	 *
-	 * @return the combined, ordered interceptor list; the same {@link #INTERCEPTORS}
-	 *         instance when this client has no interceptors of its own, to
-	 *         avoid an allocation in the common case
-	 */
-	private List<RequestInterceptor> effectiveInterceptors() {
-		if (configuredInterceptors.isEmpty()) {
-			return INTERCEPTORS;
-		}
-		List<RequestInterceptor> combined = new ArrayList<>(INTERCEPTORS);
-		combined.addAll(configuredInterceptors);
-		return combined;
-	}
-
-	private HttpRequest<?> applyInterceptors(HttpRequest<?> request, RequestContext context) {
-		List<RequestInterceptor> interceptors = effectiveInterceptors();
-		if (interceptors.isEmpty()) {
-			return request;
-		}
-		interceptors.forEach(interceptor -> interceptor.beforeRequest(context));
-		context.getHeaders().forEach(request::header);
-		return request;
-	}
-
-	/**
-	 * Notifies every applicable interceptor's {@code afterResponse}, in
-	 * "onion" (LIFO) order. Package-private rather than {@code private}
-	 * since {@link RetryExecutor} calls back into the owning instance for
-	 * this - retry needs to report every attempt, not just the final one,
-	 * and interceptor state (the global list plus this client's own) lives
-	 * here, not on {@code RetryExecutor}.
-	 */
-	<B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
-			Class<?> returnType) {
-		List<RequestInterceptor> interceptors = effectiveInterceptors();
-		if (interceptors.isEmpty()) {
-			return;
-		}
-		Object body = decodeBody(response, errorType, returnType);
-		// LIFO, mirroring beforeRequest: the first interceptor registered wraps every
-		// other one and is notified last, symmetric with it running beforeRequest first.
-		List<RequestInterceptor> reversed = new ArrayList<>(interceptors);
-		Collections.reverse(reversed);
-		reversed.forEach(interceptor -> interceptor.afterResponse(context, response.getStatus(), body));
-	}
-
 	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, Object[] args,
 			RequestContext context) {
-		Class<?> errorType = errorTypeOf(method);
+		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Type futureInnerType = resolveFutureInnerType(method);
 		if (isRipResponseType(futureInnerType)) {
 			Class<?> innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
 				return retryExecutor.executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
-						.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
+						.thenApply(response -> ResponseDecoder.wrapResponse(response,
+								responseDecoder.decodeOrThrow(response, errorType, innerType)));
 			}
 			return retryExecutor.executeAsyncWithRetry(method, innerType, context,
 					cacheCoordinator.wrapWithCacheAsync(request, context, request::asStringAsync))
-					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
+					.thenApply(response -> ResponseDecoder.wrapResponse(response,
+							responseDecoder.decodeOrThrow(response, errorType, innerType)));
 		}
 		Class<?> innerType = requireClass(futureInnerType, method);
 		if (innerType == byte[].class) {
 			return retryExecutor.executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
-					.thenApply(response -> decodeOrThrow(response, errorType, innerType));
+					.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
 		}
 		if (innerType == File.class) {
 			File destination = resolveDestinationFile(method, args);
 			return retryExecutor.executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync).thenApply(
-					response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
+					response -> writeToFile(destination, (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
 		}
 		return retryExecutor.executeAsyncWithRetry(method, innerType, context,
 				cacheCoordinator.wrapWithCacheAsync(request, context, request::asStringAsync))
-				.thenApply(response -> decodeOrThrow(response, errorType, innerType));
-	}
-
-	/**
-	 * Decodes a settled response, throwing {@link RestInPeaceHttpException}
-	 * for a non-2xx status instead of returning a value.
-	 */
-	private Object decodeOrThrow(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
-		if (!isSuccessStatus(response.getStatus())) {
-			throw new RestInPeaceHttpException(response.getStatus(), toRawBodyString(response.getBody()),
-					decodeBody(response, errorType, returnType));
-		}
-		return decodeBody(response, errorType, returnType);
-	}
-
-	/**
-	 * Decodes a response's body for a success status (into {@code returnType},
-	 * the same as {@link #decodeOrThrow}'s success case) or a non-2xx one
-	 * (into {@code errorType}, or left as the raw body if it's {@code null})
-	 * - without throwing either way, for reporting to interceptors mid-retry
-	 * as well as for the final settled response. The reflective path derives
-	 * {@code errorType} from {@code method.getAnnotation(ErrorType.class)};
-	 * a compile-time-generated call passes its {@code @ErrorType}'s value as
-	 * a literal, or {@code null} if it has none.
-	 */
-	private Object decodeBody(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
-		Object rawBody = response.getBody();
-		if (!isSuccessStatus(response.getStatus())) {
-			String rawBodyString = toRawBodyString(rawBody);
-			if (errorType != null && rawBodyString != null && !rawBodyString.isEmpty()) {
-				return getObjectMapper().readValue(rawBodyString, errorType);
-			}
-			return rawBodyString;
-		}
-		if (returnType == byte[].class) {
-			return rawBody;
-		}
-		if (returnType == String.class) {
-			return rawBody;
-		}
-		if (returnType == void.class || returnType == Void.class) {
-			return null;
-		}
-		return getObjectMapper().readValue((String) rawBody, returnType);
-	}
-
-	/**
-	 * Renders a decoded body as a {@code String} for error reporting,
-	 * regardless of whether the wire representation was text or bytes - a
-	 * {@code byte[]}/{@code File} method's error body is still very likely
-	 * to be a text payload (a JSON or plain-text error page) even though its
-	 * success body is binary.
-	 */
-	private static String toRawBodyString(Object rawBody) {
-		if (rawBody instanceof byte[]) {
-			return new String((byte[]) rawBody, StandardCharsets.UTF_8);
-		}
-		return (String) rawBody;
-	}
-
-	/** Package-private so {@link CacheCoordinator} can share this instead of duplicating it. */
-	static boolean isSuccessStatus(int status) {
-		return status >= 200 && status < 300;
-	}
-
-	/** Package-private so {@link RetryExecutor} can share this instead of duplicating it. */
-	static Class<?> errorTypeOf(Method method) {
-		if (method == null) {
-			return null;
-		}
-		ErrorType errorType = method.getAnnotation(ErrorType.class);
-		return errorType == null ? null : errorType.value();
+				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
 	}
 
 	private Type resolveFutureInnerType(Method method) {
@@ -901,91 +748,6 @@ public class RequestExecutor {
 					type));
 		}
 		return (Class<?>) type;
-	}
-
-	private static Object wrapResponse(HttpResponse<?> response, Object decodedBody) {
-		return new RipResponse<>(response.getStatus(), toHeaderMap(response.getHeaders()), decodedBody);
-	}
-
-	/** Package-private so {@link CacheCoordinator} can share this instead of duplicating it. */
-	static Map<String, List<String>> toHeaderMap(kong.unirest.Headers headers) {
-		Map<String, List<String>> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-		headers.all().forEach(header -> result.computeIfAbsent(header.getName(), key -> new ArrayList<>())
-				.add(header.getValue()));
-		result.replaceAll((name, values) -> Collections.unmodifiableList(values));
-		return Collections.unmodifiableMap(result);
-	}
-
-	/**
-	 * Resolves the method's request URL: a {@code @Url} parameter's runtime
-	 * value verbatim if present, bypassing {@code @BaseUrl}/a runtime base
-	 * URL/{@code @PathParam} entirely since there's no template for them to
-	 * apply to - otherwise the usual template resolution.
-	 */
-	private String resolveUrl(Method method, HTTPMethod httpMethod, Object[] args) {
-		String urlParamValue = resolveUrlParam(method, args);
-		if (urlParamValue != null) {
-			return urlParamValue;
-		}
-		return resolvePathParams(applyBaseUrl(method, getUrlTemplate(method, httpMethod)), method, args);
-	}
-
-	private String resolveUrlParam(Method method, Object[] args) {
-		Parameter[] parameters = method.getParameters();
-		for (int i = 0; i < parameters.length; i++) {
-			if (parameters[i].getAnnotation(Url.class) != null) {
-				Object value = args == null ? null : args[i];
-				if (value == null) {
-					throw new RestInPeaceException(String.format("Missing value for @Url parameter in method %s.", method));
-				}
-				return String.valueOf(value);
-			}
-		}
-		return null;
-	}
-
-	private String getUrlTemplate(Method method, HTTPMethod httpMethod) {
-		switch (httpMethod) {
-		case GET:
-			return method.getAnnotation(GET.class).value();
-		case POST:
-			return method.getAnnotation(POST.class).value();
-		case PUT:
-			return method.getAnnotation(PUT.class).value();
-		case DELETE:
-			return method.getAnnotation(DELETE.class).value();
-		case PATCH:
-			return method.getAnnotation(PATCH.class).value();
-		case HEAD:
-			return method.getAnnotation(HEAD.class).value();
-		case OPTIONS:
-			return method.getAnnotation(OPTIONS.class).value();
-		default:
-			throw new RestInPeaceException(String.format("Unknown HTTP method %s.", httpMethod));
-		}
-	}
-
-	private String applyBaseUrl(Method method, String url) {
-		if (isAbsoluteUrl(url)) {
-			return url;
-		}
-		String base = baseUrlOverride != null ? baseUrlOverride
-				: method.getDeclaringClass().getAnnotation(BaseUrl.class).value();
-		return joinBaseUrl(base, url);
-	}
-
-	private static String joinBaseUrl(String base, String url) {
-		if (base.endsWith("/") && url.startsWith("/")) {
-			return base + url.substring(1);
-		}
-		if (!base.endsWith("/") && !url.startsWith("/")) {
-			return base + "/" + url;
-		}
-		return base + url;
-	}
-
-	private static boolean isAbsoluteUrl(String url) {
-		return url.startsWith("http://") || url.startsWith("https://");
 	}
 
 	private HttpRequest<?> createRequest(HTTPMethod httpMethod, String url) {
@@ -1104,19 +866,6 @@ public class RequestExecutor {
 		}
 	}
 
-	private ObjectMapper getObjectMapper() {
-		try {
-			return unirestInstance != null ? unirestInstance.config().getObjectMapper()
-					: Unirest.config().getObjectMapper();
-		} catch (UnirestConfigException e) {
-			throw new RestInPeaceException(
-					"No JSON ObjectMapper is configured. RIP delegates JSON (de)serialization to the underlying "
-							+ "Unirest client's ObjectMapper - call RIP.setObjectMapper(...) (or "
-							+ "RipClientConfig.builder().objectMapper(...) for a per-client one) before making requests.",
-					e);
-		}
-	}
-
 	/**
 	 * Finds the method's {@code @Destination File} parameter's value, for a
 	 * method returning {@code File} (or {@code CompletableFuture<File>}).
@@ -1172,8 +921,7 @@ public class RequestExecutor {
 	 *                      a non-{@code null} listener argument is confirmed)
 	 */
 	public void applyUploadMonitor(MultipartBody multipartBody, UploadProgressListener listener) {
-		multipartBody.uploadMonitor((field, fileName, bytesWritten, totalBytes) -> listener.onProgress(field,
-				bytesWritten == null ? 0L : bytesWritten, totalBytes == null ? -1L : totalBytes));
+		multipartEncoder.applyUploadMonitor(multipartBody, listener);
 	}
 
 	/**
@@ -1185,7 +933,7 @@ public class RequestExecutor {
 	 * @return {@code request}, as a {@code MultipartBody}
 	 */
 	public MultipartBody beginGeneratedMultipart(HttpRequest<?> request) {
-		return ((HttpRequestWithBody) request).multiPartContent();
+		return multipartEncoder.beginMultipart(request);
 	}
 
 	private static File writeToFile(File destination, byte[] bytes) {
@@ -1203,7 +951,7 @@ public class RequestExecutor {
 
 		MultipartBody multipartBody = null;
 		if (method.getAnnotation(Multipart.class) != null) {
-			multipartBody = ((HttpRequestWithBody) request).multiPartContent();
+			multipartBody = multipartEncoder.beginMultipart(request);
 			request = multipartBody;
 		}
 
@@ -1281,14 +1029,6 @@ public class RequestExecutor {
 		return request;
 	}
 
-	private static InputStream openFile(File file) {
-		try {
-			return new FileInputStream(file);
-		} catch (FileNotFoundException e) {
-			throw new RestInPeaceException(String.format("The file '%s' does not exist.", file.getPath()), e);
-		}
-	}
-
 	/**
 	 * Also used directly by compile-time-generated code for a {@code @PartMap} parameter.
 	 *
@@ -1297,11 +1037,7 @@ public class RequestExecutor {
 	 *                      {@code null}-valued entry is skipped
 	 */
 	public void applyPartMap(MultipartBody multipartBody, Map<?, ?> partMap) {
-		partMap.forEach((name, value) -> {
-			if (value != null) {
-				applyPartValue(multipartBody, String.valueOf(name), "", value);
-			}
-		});
+		multipartEncoder.applyPartMap(multipartBody, partMap);
 	}
 
 	/**
@@ -1314,39 +1050,11 @@ public class RequestExecutor {
 	 *                      {@code name} (or, for a {@code File}, its own name)
 	 * @param value         the part's value - a {@code String}, {@code File},
 	 *                      {@code byte[]}, {@code InputStream}, or a
-	 *                      {@link PartValue} wrapping one of those with its own
+	 *                      {@code PartValue} wrapping one of those with its own
 	 *                      file name
 	 */
 	public void applyPartValue(MultipartBody multipartBody, String name, String fileName, Object value) {
-		Object effectiveValue = value;
-		String effectiveFileName = fileName;
-		if (value instanceof PartValue) {
-			effectiveValue = ((PartValue) value).getValue();
-			effectiveFileName = ((PartValue) value).getFileName();
-		}
-		boolean hasFileName = effectiveFileName != null && !effectiveFileName.isEmpty();
-		String resolvedFileName = hasFileName ? effectiveFileName : name;
-		if (effectiveValue instanceof String) {
-			multipartBody.field(name, (String) effectiveValue);
-		} else if (effectiveValue instanceof File) {
-			if (hasFileName) {
-				// MultipartBody's (name, File, String) overload sets the part's content
-				// type, not its file name - there's no direct File+fileName overload, so
-				// the file is streamed instead to reach the (name, InputStream, String)
-				// overload that does set the file name.
-				multipartBody.field(name, openFile((File) effectiveValue), resolvedFileName);
-			} else {
-				multipartBody.field(name, (File) effectiveValue);
-			}
-		} else if (effectiveValue instanceof byte[]) {
-			multipartBody.field(name, (byte[]) effectiveValue, resolvedFileName);
-		} else if (effectiveValue instanceof InputStream) {
-			multipartBody.field(name, (InputStream) effectiveValue, resolvedFileName);
-		} else {
-			throw new RestInPeaceException(String.format(
-					"Unsupported @Part/@PartMap value type %s for part '%s' - only String, File, byte[], and InputStream are supported.",
-					effectiveValue == null ? "null" : effectiveValue.getClass().getName(), name));
-		}
+		multipartEncoder.applyPartValue(multipartBody, name, fileName, value);
 	}
 
 	/**
@@ -1458,41 +1166,6 @@ public class RequestExecutor {
 			return bodyRequest.body((String) value);
 		}
 		return bodyRequest.body(value).contentType("application/json");
-	}
-
-	private String resolvePathParams(String urlTemplate, Method method, Object[] args) {
-		String url = urlTemplate;
-		Parameter[] parameters = method.getParameters();
-
-		for (int i = 0; i < parameters.length; i++) {
-			PathParam pathParam = parameters[i].getAnnotation(PathParam.class);
-			if (pathParam != null) {
-				Object value = args == null ? null : args[i];
-				if (value == null) {
-					throw new RestInPeaceException(
-							String.format("Missing value for path param '%s' in method %s.", pathParam.value(), method));
-				}
-				url = url.replace("{" + pathParam.value() + "}", encodePathValue(value));
-			}
-		}
-		return url;
-	}
-
-	/**
-	 * Percent-encodes a path param value for safe substitution into a URL
-	 * path segment - {@code /}, {@code ?}, {@code #}, and a space all
-	 * otherwise produce a broken or subtly wrong URL (silently routing to a
-	 * different path, or introducing an unintended query string). Mirrors
-	 * Unirest's own path-segment encoding ({@code URLEncoder} then turning
-	 * its {@code +} for space into {@code %20}, since form encoding and
-	 * path/query encoding disagree on that one character).
-	 */
-	private static String encodePathValue(Object value) {
-		try {
-			return URLEncoder.encode(String.valueOf(value), "UTF-8").replace("+", "%20");
-		} catch (UnsupportedEncodingException e) {
-			throw new RestInPeaceException("UTF-8 encoding is not supported by this JVM.", e);
-		}
 	}
 
 }

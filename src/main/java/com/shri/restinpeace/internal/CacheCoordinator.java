@@ -177,14 +177,14 @@ final class CacheCoordinator {
 	 */
 	private static HttpResponse<String> reconcileCache(Cache cache, String key, CachedResponse staleEntry,
 			boolean leaveExistingEntryAlone, HttpResponse<String> response, HttpRequest<?> request) {
-		Map<String, List<String>> responseHeaders = RequestExecutor.toHeaderMap(response.getHeaders());
+		Map<String, List<String>> responseHeaders = ResponseDecoder.toHeaderMap(response.getHeaders());
 		if (response.getStatus() == 304 && staleEntry != null) {
 			CachedResponse refreshed = new CachedResponse(staleEntry.getStatus(), staleEntry.getHeaders(),
 					staleEntry.getBody(), freshUntil(responseHeaders), staleEntry.getVaryRequestHeaders());
 			cache.put(key, refreshed);
 			return toSyntheticResponse(refreshed);
 		}
-		if (RequestExecutor.isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
+		if (ResponseDecoder.isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
 			Map<String, String> varySnapshot = captureVaryValues(request, varyHeaderNames(responseHeaders));
 			cache.put(key, new CachedResponse(response.getStatus(), responseHeaders, response.getBody(),
 					freshUntil(responseHeaders), varySnapshot));
