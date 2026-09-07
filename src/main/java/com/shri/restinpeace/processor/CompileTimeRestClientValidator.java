@@ -49,13 +49,13 @@ import com.shri.restinpeace.constant.HTTPMethod;
 
 /**
  * The compile-time counterpart of
- * {@link com.shri.restinpeace.validator.RestClientValidator} - the same
+ * {@link com.shri.restinpeace.validator.ReflectiveRestClientValidator} - the same
  * semantic rules (an invalid {@code @Retry}, a malformed {@code @Headers}
  * entry, an unmatched path param, ...), reimplemented against
  * {@code javax.lang.model}'s {@code ExecutableElement}/{@code VariableElement}
  * instead of {@code java.lang.reflect}'s {@code Method}/{@code Parameter},
  * so a {@code @RestClient} interface that would fail
- * {@code RestClientValidator.validate(...)} at the first
+ * {@code ReflectiveRestClientValidator.validate(...)} at the first
  * {@code RIP.getClient(...)} call instead fails {@code javac} outright - see
  * {@code docs/design/compile-time-proxy-generation.md} step 4.
  *
@@ -72,7 +72,7 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * proxy and blow up on first use.
  *
  * <p>
- * One deliberate gap: {@code RestClientValidator} requires either
+ * One deliberate gap: {@code ReflectiveRestClientValidator} requires either
  * {@code @BaseUrl} on the interface or a runtime base URL
  * ({@code RIP.getClient(Class, String)}/{@code RipClientConfig}) for a
  * relative method URL - which call overload ends up used is inherently a
@@ -81,14 +81,14 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * unmatched path params) still runs directly against the method's own URL
  * template, since those never depend on the base at all.
  */
-final class CompileTimeValidator {
+final class CompileTimeRestClientValidator {
 
 	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("\\{(.*?)\\}");
 
 	private static final Set<HTTPMethod> BODY_SUPPORTED_METHODS = new HashSet<>(
 			java.util.Arrays.asList(HTTPMethod.POST, HTTPMethod.PUT, HTTPMethod.PATCH, HTTPMethod.DELETE));
 
-	private CompileTimeValidator() {
+	private CompileTimeRestClientValidator() {
 		// static utility class
 	}
 
@@ -450,7 +450,7 @@ final class CompileTimeValidator {
 						+ "supported.", qualifiedName(method), parameter.asType()), parameter);
 			}
 		}
-		if (!urlParams.isEmpty() && !com.shri.restinpeace.constant.RIPConstant.DEFAULT.equals(url)) {
+		if (!urlParams.isEmpty() && !com.shri.restinpeace.constant.RIPConstants.DEFAULT.equals(url)) {
 			reporter.error(String.format("The method %s has both a @Url parameter and a static URL '%s' - remove "
 					+ "one or the other.", qualifiedName(method), url), method);
 		}

@@ -42,7 +42,7 @@ import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.multipart.UploadProgressListener;
 
-class RestClientValidatorTest {
+class ReflectiveRestClientValidatorTest {
 
 	public interface MissingRestClientAnnotation {
 		@GET("http://example.com")
@@ -536,21 +536,21 @@ class RestClientValidatorTest {
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(null));
+				() -> ReflectiveRestClientValidator.validate(null));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("Rest Client cannot be null"));
 	}
 
 	@Test
 	void validate_missingRestClientAnnotation_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MissingRestClientAnnotation.class));
+				() -> ReflectiveRestClientValidator.validate(MissingRestClientAnnotation.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not annotated with @RestClient"));
 	}
 
 	@Test
 	void validate_missingHttpMethodAnnotation_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MissingHttpMethodAnnotation.class));
+				() -> ReflectiveRestClientValidator.validate(MissingHttpMethodAnnotation.class));
 		assertTrue(
 				exception.getValidationResult().getAllErrors().contains("not annotated with any of the HTTP method"));
 	}
@@ -558,21 +558,21 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleHttpMethodAnnotations_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleHttpMethodAnnotations.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleHttpMethodAnnotations.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("more than one HTTP method annotations"));
 	}
 
 	@Test
 	void validate_invalidUrl_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(InvalidUrl.class));
+				() -> ReflectiveRestClientValidator.validate(InvalidUrl.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("invalid URL"));
 	}
 
 	@Test
 	void validate_unmatchedPathParam_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(UnmatchedPathParam.class));
+				() -> ReflectiveRestClientValidator.validate(UnmatchedPathParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("path param 'id' in its URL that is not annotated"));
 	}
@@ -580,7 +580,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_bodyOnGet_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(BodyOnGet.class));
+				() -> ReflectiveRestClientValidator.validate(BodyOnGet.class));
 		assertTrue(
 				exception.getValidationResult().getAllErrors().contains("does not support a request body"));
 	}
@@ -588,147 +588,147 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleBodyParams_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleBodyParams.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleBodyParams.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @Body"));
 	}
 
 	@Test
 	void validate_validInterfaceCoveringAllVerbs_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidAllVerbs.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidAllVerbs.class));
 	}
 
 	@Test
 	void validate_validCompletableFuture_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidAsync.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidAsync.class));
 	}
 
 	@Test
 	void validate_rawCompletableFuture_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(RawCompletableFuture.class));
+				() -> ReflectiveRestClientValidator.validate(RawCompletableFuture.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("raw CompletableFuture"));
 	}
 
 	@Test
 	void validate_unsupportedCompletableFutureTypeParam_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(UnsupportedCompletableFutureTypeParam.class));
+				() -> ReflectiveRestClientValidator.validate(UnsupportedCompletableFutureTypeParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
 	}
 
 	@Test
 	void validate_validRipResponse_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidRipResponse.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidRipResponse.class));
 	}
 
 	@Test
 	void validate_validRipResponseOfCompletableFuture_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidRipResponseOfCompletableFuture.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidRipResponseOfCompletableFuture.class));
 	}
 
 	@Test
 	void validate_rawRipResponse_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(RawRipResponse.class));
+				() -> ReflectiveRestClientValidator.validate(RawRipResponse.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("raw RipResponse"));
 	}
 
 	@Test
 	void validate_unsupportedRipResponseTypeParam_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(UnsupportedRipResponseTypeParam.class));
+				() -> ReflectiveRestClientValidator.validate(UnsupportedRipResponseTypeParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
 	}
 
 	@Test
 	void validate_validRetry_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidRetry.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidRetry.class));
 	}
 
 	@Test
 	void validate_retryWithNonPositiveTimes_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(InvalidRetryTimes.class));
+				() -> ReflectiveRestClientValidator.validate(InvalidRetryTimes.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("times must be at least 1"));
 	}
 
 	@Test
 	void validate_validTimeout_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidTimeout.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidTimeout.class));
 	}
 
 	@Test
 	void validate_timeoutWithInvalidConnectMillis_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(InvalidTimeoutConnectMillis.class));
+				() -> ReflectiveRestClientValidator.validate(InvalidTimeoutConnectMillis.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("connectMillis must be -1"));
 	}
 
 	@Test
 	void validate_timeoutWithInvalidReadMillis_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(InvalidTimeoutReadMillis.class));
+				() -> ReflectiveRestClientValidator.validate(InvalidTimeoutReadMillis.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("readMillis must be -1"));
 	}
 
 	@Test
 	void validate_validHeaders_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidHeaders.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidHeaders.class));
 	}
 
 	@Test
 	void validate_headersEntryMissingColon_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(HeadersEntryMissingColon.class));
+				() -> ReflectiveRestClientValidator.validate(HeadersEntryMissingColon.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("with no ':'"));
 	}
 
 	@Test
 	void validate_headersEntryEmptyName_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(HeadersEntryEmptyName.class));
+				() -> ReflectiveRestClientValidator.validate(HeadersEntryEmptyName.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("empty header name"));
 	}
 
 	@Test
 	void validate_relativeUrlWithoutBaseUrl_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(RelativeUrlWithoutBaseUrl.class));
+				() -> ReflectiveRestClientValidator.validate(RelativeUrlWithoutBaseUrl.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("relative URL '/items/{id}' but the interface is not annotated with @BaseUrl"));
 	}
 
 	@Test
 	void validate_relativeUrlWithBaseUrl_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(RelativeUrlWithBaseUrl.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(RelativeUrlWithBaseUrl.class));
 	}
 
 	@Test
 	void validate_absoluteUrlIgnoresBaseUrl_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(AbsoluteUrlOverridesBaseUrl.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(AbsoluteUrlOverridesBaseUrl.class));
 	}
 
 	@Test
 	void validate_baseUrlWithPlaceholder_matchedAcrossBaseAndPath_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(BaseUrlWithPlaceholder.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(BaseUrlWithPlaceholder.class));
 	}
 
 	@Test
 	void validate_relativeUrlWithRuntimeBaseUrlOverride_passesEvenWithoutBaseUrlAnnotation() {
 		assertDoesNotThrow(
-				() -> RestClientValidator.validate(RelativeUrlWithoutBaseUrl.class, "http://example.com"));
+				() -> ReflectiveRestClientValidator.validate(RelativeUrlWithoutBaseUrl.class, "http://example.com"));
 	}
 
 	@Test
 	void validate_validQueryAndHeaderMap_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidQueryAndHeaderMap.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidQueryAndHeaderMap.class));
 	}
 
 	@Test
 	void validate_multipleQueryMaps_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleQueryMaps.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleQueryMaps.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @QueryMap"));
 	}
@@ -736,7 +736,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleHeaderMaps_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleHeaderMaps.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleHeaderMaps.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @HeaderMap"));
 	}
@@ -744,7 +744,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_queryMapNotAMap_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(QueryMapNotAMap.class));
+				() -> ReflectiveRestClientValidator.validate(QueryMapNotAMap.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("parameter annotated with @QueryMap that is not a Map"));
 	}
@@ -752,20 +752,20 @@ class RestClientValidatorTest {
 	@Test
 	void validate_headerMapNotAMap_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(HeaderMapNotAMap.class));
+				() -> ReflectiveRestClientValidator.validate(HeaderMapNotAMap.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("parameter annotated with @HeaderMap that is not a Map"));
 	}
 
 	@Test
 	void validate_validMultipart_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidMultipart.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidMultipart.class));
 	}
 
 	@Test
 	void validate_multipartOnGet_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipartOnGet.class));
+				() -> ReflectiveRestClientValidator.validate(MultipartOnGet.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@Multipart but HTTP method GET does not support a request body"));
 	}
@@ -773,7 +773,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipartWithoutParts_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipartWithoutParts.class));
+				() -> ReflectiveRestClientValidator.validate(MultipartWithoutParts.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@Multipart but has no @Part or @PartMap parameters"));
 	}
@@ -781,7 +781,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipartAndBody_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipartAndBody.class));
+				() -> ReflectiveRestClientValidator.validate(MultipartAndBody.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@Multipart and also has a @Body parameter"));
 	}
@@ -789,7 +789,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_partWithoutMultipart_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(PartWithoutMultipart.class));
+				() -> ReflectiveRestClientValidator.validate(PartWithoutMultipart.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("has a @Part parameter but is not annotated with @Multipart"));
 	}
@@ -797,25 +797,25 @@ class RestClientValidatorTest {
 	@Test
 	void validate_partWrongType_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(PartWrongType.class));
+				() -> ReflectiveRestClientValidator.validate(PartWrongType.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("only String, File, byte[], and InputStream are supported"));
 	}
 
 	@Test
 	void validate_partBytesAndStream_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidPartBytesAndStream.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidPartBytesAndStream.class));
 	}
 
 	@Test
 	void validate_partMapOnly_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidPartMapOnly.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidPartMapOnly.class));
 	}
 
 	@Test
 	void validate_partMapWithoutMultipart_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(PartMapWithoutMultipart.class));
+				() -> ReflectiveRestClientValidator.validate(PartMapWithoutMultipart.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("has a @PartMap parameter but is not annotated with @Multipart"));
 	}
@@ -823,7 +823,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_partMapNotAMap_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(PartMapNotAMap.class));
+				() -> ReflectiveRestClientValidator.validate(PartMapNotAMap.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("parameter annotated with @PartMap that is not a Map"));
 	}
@@ -831,20 +831,20 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multiplePartMaps_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultiplePartMaps.class));
+				() -> ReflectiveRestClientValidator.validate(MultiplePartMaps.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @PartMap"));
 	}
 
 	@Test
 	void validate_validFormUrlEncoded_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFormUrlEncoded.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidFormUrlEncoded.class));
 	}
 
 	@Test
 	void validate_formUrlEncodedOnGet_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FormUrlEncodedOnGet.class));
+				() -> ReflectiveRestClientValidator.validate(FormUrlEncodedOnGet.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@FormUrlEncoded but HTTP method GET does not support a request body"));
 	}
@@ -852,7 +852,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_formUrlEncodedWithoutFields_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FormUrlEncodedWithoutFields.class));
+				() -> ReflectiveRestClientValidator.validate(FormUrlEncodedWithoutFields.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@FormUrlEncoded but has no @Field or @FieldMap parameters"));
 	}
@@ -860,7 +860,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_formUrlEncodedAndBody_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FormUrlEncodedAndBody.class));
+				() -> ReflectiveRestClientValidator.validate(FormUrlEncodedAndBody.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@FormUrlEncoded and also has a @Body parameter"));
 	}
@@ -868,7 +868,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_formUrlEncodedAndMultipart_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FormUrlEncodedAndMultipart.class));
+				() -> ReflectiveRestClientValidator.validate(FormUrlEncodedAndMultipart.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("annotated with both @Multipart and @FormUrlEncoded"));
 	}
@@ -876,20 +876,20 @@ class RestClientValidatorTest {
 	@Test
 	void validate_fieldWithoutFormUrlEncoded_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FieldWithoutFormUrlEncoded.class));
+				() -> ReflectiveRestClientValidator.validate(FieldWithoutFormUrlEncoded.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("has a @Field parameter but is not annotated with @FormUrlEncoded"));
 	}
 
 	@Test
 	void validate_fieldMapOnly_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFieldMapOnly.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidFieldMapOnly.class));
 	}
 
 	@Test
 	void validate_fieldMapWithoutFormUrlEncoded_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FieldMapWithoutFormUrlEncoded.class));
+				() -> ReflectiveRestClientValidator.validate(FieldMapWithoutFormUrlEncoded.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("has a @FieldMap parameter but is not annotated with @FormUrlEncoded"));
 	}
@@ -897,7 +897,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_fieldMapNotAMap_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FieldMapNotAMap.class));
+				() -> ReflectiveRestClientValidator.validate(FieldMapNotAMap.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("parameter annotated with @FieldMap that is not a Map"));
 	}
@@ -905,40 +905,40 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleFieldMaps_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleFieldMaps.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleFieldMaps.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @FieldMap"));
 	}
 
 	@Test
 	void validate_validByteArrayDownload_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidByteArrayDownload.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidByteArrayDownload.class));
 	}
 
 	@Test
 	void validate_validByteArrayDownloadAsync_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidByteArrayDownloadAsync.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidByteArrayDownloadAsync.class));
 	}
 
 	@Test
 	void validate_validByteArrayDownloadWithRipResponse_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidByteArrayDownloadWithRipResponse.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidByteArrayDownloadWithRipResponse.class));
 	}
 
 	@Test
 	void validate_validFileDownload_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFileDownload.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidFileDownload.class));
 	}
 
 	@Test
 	void validate_validFileDownloadAsync_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidFileDownloadAsync.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidFileDownloadAsync.class));
 	}
 
 	@Test
 	void validate_fileReturnWithoutDestination_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(FileReturnWithoutDestination.class));
+				() -> ReflectiveRestClientValidator.validate(FileReturnWithoutDestination.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("returns File but has no @Destination parameter"));
 	}
@@ -946,7 +946,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_destinationWithoutFileReturn_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(DestinationWithoutFileReturn.class));
+				() -> ReflectiveRestClientValidator.validate(DestinationWithoutFileReturn.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("has a @Destination parameter but does not return File"));
 	}
@@ -954,7 +954,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_destinationWrongParamType_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(DestinationWrongParamType.class));
+				() -> ReflectiveRestClientValidator.validate(DestinationWrongParamType.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@Destination parameter of type java.lang.String - only File is supported"));
 	}
@@ -962,7 +962,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleDestinations_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleDestinations.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleDestinations.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @Destination"));
 	}
@@ -970,19 +970,19 @@ class RestClientValidatorTest {
 	@Test
 	void validate_ripResponseOfFile_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(RipResponseOfFile.class));
+				() -> ReflectiveRestClientValidator.validate(RipResponseOfFile.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("RipResponse<File>"));
 	}
 
 	@Test
 	void validate_validDownloadProgressListener_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidDownloadProgressListener.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidDownloadProgressListener.class));
 	}
 
 	@Test
 	void validate_downloadProgressListenerOnNonBinaryReturn_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(DownloadProgressListenerOnNonBinaryReturn.class));
+				() -> ReflectiveRestClientValidator.validate(DownloadProgressListenerOnNonBinaryReturn.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("DownloadProgressListener parameter but does not return byte[] or File"));
 	}
@@ -990,20 +990,20 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleDownloadProgressListeners_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleDownloadProgressListeners.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleDownloadProgressListeners.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one DownloadProgressListener parameter"));
 	}
 
 	@Test
 	void validate_validUploadProgressListener_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidUploadProgressListener.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidUploadProgressListener.class));
 	}
 
 	@Test
 	void validate_uploadProgressListenerWithoutMultipart_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(UploadProgressListenerWithoutMultipart.class));
+				() -> ReflectiveRestClientValidator.validate(UploadProgressListenerWithoutMultipart.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("UploadProgressListener parameter but is not annotated with @Multipart"));
 	}
@@ -1011,20 +1011,20 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleUploadProgressListeners_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleUploadProgressListeners.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleUploadProgressListeners.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one UploadProgressListener parameter"));
 	}
 
 	@Test
 	void validate_validUrlParam_passes() {
-		assertDoesNotThrow(() -> RestClientValidator.validate(ValidUrlParam.class));
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidUrlParam.class));
 	}
 
 	@Test
 	void validate_urlParamWithStaticUrl_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(UrlParamWithStaticUrl.class));
+				() -> ReflectiveRestClientValidator.validate(UrlParamWithStaticUrl.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("has both a @Url parameter and a static URL"));
 	}
@@ -1032,7 +1032,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_urlParamWrongType_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(UrlParamWrongType.class));
+				() -> ReflectiveRestClientValidator.validate(UrlParamWrongType.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("@Url parameter of type int - only String is supported"));
 	}
@@ -1040,7 +1040,7 @@ class RestClientValidatorTest {
 	@Test
 	void validate_multipleUrlParams_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> RestClientValidator.validate(MultipleUrlParams.class));
+				() -> ReflectiveRestClientValidator.validate(MultipleUrlParams.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one parameter annotated with @Url"));
 	}
