@@ -1,10 +1,10 @@
 package com.shri.restinpeace.exception;
 
-import com.shri.restinpeace.validator.dto.ValidationResult;
+import com.shri.restinpeace.validator.ValidationResult;
 
 /**
  * Checked exception thrown by
- * {@link com.shri.restinpeace.validator.RestClientValidator#validate(Class)}
+ * {@link com.shri.restinpeace.validator.ReflectiveRestClientValidator#validate(Class)}
  * when a {@code @RestClient} interface fails validation. Carries the full
  * {@link ValidationResult} so every problem found can be reported at once
  * instead of failing on the first one.

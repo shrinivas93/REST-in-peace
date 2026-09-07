@@ -86,11 +86,11 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * <p>
  * Before any of that, every {@code @RestClient} interface this processor
  * sees - whether or not it also happens to fall within the shape above - is
- * run through {@link CompileTimeValidator}, the compile-time counterpart of
- * {@link com.shri.restinpeace.validator.RestClientValidator}'s semantic
+ * run through {@link CompileTimeRestClientValidator}, the compile-time counterpart of
+ * {@link com.shri.restinpeace.validator.ReflectiveRestClientValidator}'s semantic
  * rules (an invalid {@code @Retry}, a malformed {@code @Headers} entry, an
  * unmatched path param, ...). A problem there fails compilation outright,
- * with the same message {@code RestClientValidator} would otherwise only
+ * with the same message {@code ReflectiveRestClientValidator} would otherwise only
  * report at the first {@code RIP.getClient(...)} call - step 4 of
  * {@code docs/design/compile-time-proxy-generation.md}.
  */
@@ -122,7 +122,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		// invalid (e.g. @Multipart on a GET) yet still structurally "supported", and
 		// should fail the build either way rather than silently falling back to the
 		// reflective proxy and only failing on the first actual call.
-		if (!CompileTimeValidator.validate(interfaceElement, processingEnv)) {
+		if (!CompileTimeRestClientValidator.validate(interfaceElement, processingEnv)) {
 			return;
 		}
 
@@ -395,7 +395,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		// UploadProgressListener/DownloadProgressListener need no annotation at all -
 		// detected by type alone, same as the reflective path's own
 		// `parameter.getType() == UploadProgressListener.class`/`== DownloadProgressListener.class`.
-		if ("com.shri.restinpeace.multipart.UploadProgressListener".equals(javaTypeName)) {
+		if ("com.shri.restinpeace.upload.UploadProgressListener".equals(javaTypeName)) {
 			return new ParamModel(ParamKind.UPLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
 		}
 		if ("com.shri.restinpeace.download.DownloadProgressListener".equals(javaTypeName)) {
@@ -552,7 +552,7 @@ public class RestClientProcessor extends AbstractProcessor {
 					+ "    \"methods\": [\n" //
 					+ "      {\n" //
 					+ "        \"name\": \"<init>\",\n" //
-					+ "        \"parameterTypes\": [\"com.shri.restinpeace.annotation.service.RestRequestProcessor\"]\n" //
+					+ "        \"parameterTypes\": [\"com.shri.restinpeace.internal.RequestExecutor\"]\n" //
 					+ "      }\n" //
 					+ "    ]\n" //
 					+ "  }\n" //
@@ -570,9 +570,9 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append("// docs/design/compile-time-proxy-generation.md.\n");
 		out.append("public final class ").append(implName).append(" implements ").append(interfaceName)
 				.append(" {\n\n");
-		out.append("\tprivate final com.shri.restinpeace.annotation.service.RestRequestProcessor ripProcessor;\n\n");
+		out.append("\tprivate final com.shri.restinpeace.internal.RequestExecutor ripProcessor;\n\n");
 		out.append("\tpublic ").append(implName)
-				.append("(com.shri.restinpeace.annotation.service.RestRequestProcessor ripProcessor) {\n");
+				.append("(com.shri.restinpeace.internal.RequestExecutor ripProcessor) {\n");
 		out.append("\t\tthis.ripProcessor = ripProcessor;\n");
 		out.append("\t}\n\n");
 
@@ -598,7 +598,7 @@ public class RestClientProcessor extends AbstractProcessor {
 
 		ParamModel urlParam = urlParamOf(method);
 		if (urlParam != null) {
-			out.append("\t\tString __ripUrl = com.shri.restinpeace.annotation.service.RestRequestProcessor.requireUrlParam(")
+			out.append("\t\tString __ripUrl = com.shri.restinpeace.internal.RequestExecutor.requireUrlParam(")
 					.append(urlParam.javaParamName).append(", ")
 					.append(stringLiteral(interfaceName + "." + method.name)).append(");\n");
 		} else {
@@ -742,7 +742,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		case PART:
 			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
 					.append(", ").append(param.required)
-					.append(", com.shri.restinpeace.constant.RIPConstant.DEFAULT, ")
+					.append(", com.shri.restinpeace.constant.RIPConstants.DEFAULT, ")
 					.append(stringLiteral(param.name)).append(");\n");
 			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.applyPartValue(__ripMultipart, ")
 					.append(stringLiteral(param.name)).append(", ").append(stringLiteral(param.fileName))
@@ -761,7 +761,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		case FIELD:
 			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
 					.append(", ").append(param.required)
-					.append(", com.shri.restinpeace.constant.RIPConstant.DEFAULT, ")
+					.append(", com.shri.restinpeace.constant.RIPConstants.DEFAULT, ")
 					.append(stringLiteral(param.name)).append(");\n");
 			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.appendFormField(__ripFormFields, ")
 					.append(stringLiteral(param.name)).append(", __ripValue); }\n\t\t}\n");

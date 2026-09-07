@@ -32,9 +32,9 @@ import org.junit.jupiter.api.io.TempDir;
  * through a real, isolated {@code javac} invocation - not the ambient Maven
  * build - and asserts on the resulting {@link Diagnostic}s, proving two
  * things the rest of the test suite can't: that a semantically invalid
- * interface (the same rules {@code RestClientValidatorTest} already covers
+ * interface (the same rules {@code ReflectiveRestClientValidatorTest} already covers
  * at runtime) fails <b>compilation</b> with a matching error message via
- * {@link CompileTimeValidator}, and that a valid one compiles clean and
+ * {@link CompileTimeRestClientValidator}, and that a valid one compiles clean and
  * produces a real {@code _RipImpl} class.
  *
  * <p>
@@ -90,7 +90,7 @@ class CompileTimeValidationTest {
 				+ "import com.shri.restinpeace.annotation.request.Url;\n" //
 				+ "@RestClient\n" //
 				+ "public interface UrlParamWrongType {\n" //
-				+ "  @GET(com.shri.restinpeace.constant.RIPConstant.DEFAULT)\n" //
+				+ "  @GET(com.shri.restinpeace.constant.RIPConstants.DEFAULT)\n" //
 				+ "  String getItem(@Url int url);\n" //
 				+ "}\n");
 
@@ -330,7 +330,7 @@ class CompileTimeValidationTest {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("UploadListenerWithoutMultipart", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
-				+ "import com.shri.restinpeace.multipart.UploadProgressListener;\n" //
+				+ "import com.shri.restinpeace.upload.UploadProgressListener;\n" //
 				+ "@RestClient\n" //
 				+ "public interface UploadListenerWithoutMultipart {\n" //
 				+ "  @GET(\"http://localhost/items\")\n" //

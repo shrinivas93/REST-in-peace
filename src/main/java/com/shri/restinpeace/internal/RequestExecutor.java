@@ -1,4 +1,4 @@
-package com.shri.restinpeace.annotation.service;
+package com.shri.restinpeace.internal;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -63,14 +63,14 @@ import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.cache.Cache;
 import com.shri.restinpeace.cache.CachedResponse;
 import com.shri.restinpeace.constant.HTTPMethod;
-import com.shri.restinpeace.constant.RIPConstant;
+import com.shri.restinpeace.constant.RIPConstants;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
-import com.shri.restinpeace.multipart.UploadProgressListener;
+import com.shri.restinpeace.upload.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
@@ -95,7 +95,7 @@ import kong.unirest.UnirestParsingException;
  * of the library's public API - use {@link com.shri.restinpeace.RIP}
  * instead.
  */
-public class RestRequestProcessor {
+public class RequestExecutor {
 
 	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
 	private static final int[] EMPTY_STATUS_CODES = new int[0];
@@ -114,7 +114,7 @@ public class RestRequestProcessor {
 	private final Cache configuredCache;
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
-	public RestRequestProcessor() {
+	public RequestExecutor() {
 		this((String) null);
 	}
 
@@ -129,7 +129,7 @@ public class RestRequestProcessor {
 	 * @param baseUrlOverride the runtime base URL, or {@code null} to fall
 	 *                        back to the interface's {@code @BaseUrl}
 	 */
-	public RestRequestProcessor(String baseUrlOverride) {
+	public RequestExecutor(String baseUrlOverride) {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
 		this.configuredCache = null;
@@ -144,7 +144,7 @@ public class RestRequestProcessor {
 	 *
 	 * @param config the per-client settings
 	 */
-	public RestRequestProcessor(RipClientConfig config) {
+	public RequestExecutor(RipClientConfig config) {
 		this.baseUrlOverride = config.getBaseUrl();
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
@@ -390,7 +390,7 @@ public class RestRequestProcessor {
 		if (argValue != null) {
 			return argValue;
 		}
-		if (!RIPConstant.DEFAULT.equals(defaultValue)) {
+		if (!RIPConstants.DEFAULT.equals(defaultValue)) {
 			return defaultValue;
 		}
 		if (required) {
@@ -1731,7 +1731,7 @@ public class RestRequestProcessor {
 
 			Part part = parameter.getAnnotation(Part.class);
 			if (part != null) {
-				Object value = resolveValue(argValue, part.required(), RIPConstant.DEFAULT, part.value());
+				Object value = resolveValue(argValue, part.required(), RIPConstants.DEFAULT, part.value());
 				if (value != null) {
 					applyPartValue(multipartBody, part.value(), part.fileName(), value);
 				}
@@ -1747,7 +1747,7 @@ public class RestRequestProcessor {
 
 			Field field = parameter.getAnnotation(Field.class);
 			if (field != null) {
-				Object value = resolveValue(argValue, field.required(), RIPConstant.DEFAULT, field.value());
+				Object value = resolveValue(argValue, field.required(), RIPConstants.DEFAULT, field.value());
 				if (value != null) {
 					appendFormField(formFields, field.value(), value);
 				}

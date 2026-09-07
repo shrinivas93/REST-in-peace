@@ -9,7 +9,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 /**
  * {@code @Multipart}/{@code @Part} - {@code RestClientProcessor} now
  * genuinely generates for this (step 2), building the multipart body via
- * {@code RestRequestProcessor.beginGeneratedMultipart}/
+ * {@code RequestExecutor.beginGeneratedMultipart}/
  * {@code applyPartValue}. Originally added as regression coverage proving
  * this still fell back to the reflective proxy; kept under this name as a
  * positive test now that {@code @Multipart} is supported.

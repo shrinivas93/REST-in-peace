@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
-import com.shri.restinpeace.annotation.service.RestRequestProcessor;
+import com.shri.restinpeace.internal.RequestExecutor;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.RipClientConfig;
@@ -18,36 +18,36 @@ import com.shri.restinpeace.RipClientConfig;
  * {@link com.shri.restinpeace.RIP#getClient(Class)}. Routes {@code Object}
  * methods ({@code toString}/{@code equals}/{@code hashCode}) to
  * proxy-aware implementations, and every other method call to
- * {@link RestRequestProcessor} based on its HTTP method annotation.
+ * {@link RequestExecutor} based on its HTTP method annotation.
  */
 public class RestClientInvocationHandler implements InvocationHandler {
 
-	private final RestRequestProcessor restRequestProcessor;
+	private final RequestExecutor restRequestProcessor;
 
-	/** Creates a handler backed by a fresh {@link RestRequestProcessor} with no runtime base URL override. */
+	/** Creates a handler backed by a fresh {@link RequestExecutor} with no runtime base URL override. */
 	public RestClientInvocationHandler() {
 		this((String) null);
 	}
 
 	/**
-	 * Creates a handler backed by a fresh {@link RestRequestProcessor} that
+	 * Creates a handler backed by a fresh {@link RequestExecutor} that
 	 * resolves every relative method URL against {@code baseUrlOverride}.
 	 *
 	 * @param baseUrlOverride the runtime base URL, or {@code null} to fall
 	 *                        back to the interface's {@code @BaseUrl}
 	 */
 	public RestClientInvocationHandler(String baseUrlOverride) {
-		this.restRequestProcessor = new RestRequestProcessor(baseUrlOverride);
+		this.restRequestProcessor = new RequestExecutor(baseUrlOverride);
 	}
 
 	/**
-	 * Creates a handler backed by a fresh {@link RestRequestProcessor} built
+	 * Creates a handler backed by a fresh {@link RequestExecutor} built
 	 * from {@code config}.
 	 *
 	 * @param config the per-client settings
 	 */
 	public RestClientInvocationHandler(RipClientConfig config) {
-		this.restRequestProcessor = new RestRequestProcessor(config);
+		this.restRequestProcessor = new RequestExecutor(config);
 	}
 
 	@Override

@@ -8,7 +8,7 @@ import java.lang.annotation.Target;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
 import com.shri.restinpeace.constant.HTTPMethod;
-import com.shri.restinpeace.constant.RIPConstant;
+import com.shri.restinpeace.constant.RIPConstants;
 
 /**
  * Marks a method as issuing an HTTP PUT request to the given URL template.
@@ -27,5 +27,5 @@ public @interface PUT {
 	 *
 	 * @return the URL template
 	 */
-	String value() default RIPConstant.DEFAULT;
+	String value() default RIPConstants.DEFAULT;
 }

@@ -80,7 +80,7 @@ import com.shri.restinpeace.interceptor.MetricsInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
-import com.shri.restinpeace.multipart.UploadProgressListener;
+import com.shri.restinpeace.upload.UploadProgressListener;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
