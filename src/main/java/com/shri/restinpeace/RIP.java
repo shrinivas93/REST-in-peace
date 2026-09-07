@@ -7,13 +7,13 @@ import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
-import com.shri.restinpeace.internal.RestRequestProcessor;
+import com.shri.restinpeace.internal.RequestExecutor;
 import com.shri.restinpeace.cache.Cache;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.proxy.RestClientInvocationHandler;
-import com.shri.restinpeace.validator.RestClientValidator;
+import com.shri.restinpeace.validator.ReflectiveRestClientValidator;
 
 import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
@@ -68,7 +68,7 @@ public class RIP {
 	public static <T> T getClient(Class<T> restClient, String baseUrl) {
 
 		try {
-			RestClientValidator.validate(restClient, baseUrl);
+			ReflectiveRestClientValidator.validate(restClient, baseUrl);
 		} catch (RestInPeaceValidationException e) {
 			throw new RestInPeaceException(String.format("The rest client %s failed during validation with %s errors.",
 					restClient.getName(), e.getValidationResult().getErrors().size()), e);
@@ -78,7 +78,7 @@ public class RIP {
 			throw new RestInPeaceException(String.format("The interface %s is not annotated with %s.",
 					restClient.getName(), RestClient.class.getName()));
 		}
-		T generated = tryGeneratedImpl(restClient, new RestRequestProcessor(baseUrl));
+		T generated = tryGeneratedImpl(restClient, new RequestExecutor(baseUrl));
 		if (generated != null) {
 			return generated;
 		}
@@ -105,7 +105,7 @@ public class RIP {
 	public static <T> T getClient(Class<T> restClient, RipClientConfig config) {
 
 		try {
-			RestClientValidator.validate(restClient, config.getBaseUrl());
+			ReflectiveRestClientValidator.validate(restClient, config.getBaseUrl());
 		} catch (RestInPeaceValidationException e) {
 			throw new RestInPeaceException(String.format("The rest client %s failed during validation with %s errors.",
 					restClient.getName(), e.getValidationResult().getErrors().size()), e);
@@ -115,7 +115,7 @@ public class RIP {
 			throw new RestInPeaceException(String.format("The interface %s is not annotated with %s.",
 					restClient.getName(), RestClient.class.getName()));
 		}
-		T generated = tryGeneratedImpl(restClient, new RestRequestProcessor(config));
+		T generated = tryGeneratedImpl(restClient, new RequestExecutor(config));
 		if (generated != null) {
 			return generated;
 		}
@@ -137,10 +137,10 @@ public class RIP {
 	 *         caller should fall back to the reflective proxy
 	 */
 	@SuppressWarnings("unchecked")
-	private static <T> T tryGeneratedImpl(Class<T> restClient, RestRequestProcessor processor) {
+	private static <T> T tryGeneratedImpl(Class<T> restClient, RequestExecutor processor) {
 		try {
 			Class<?> implClass = Class.forName(restClient.getName() + "_RipImpl");
-			Constructor<?> constructor = implClass.getConstructor(RestRequestProcessor.class);
+			Constructor<?> constructor = implClass.getConstructor(RequestExecutor.class);
 			return (T) constructor.newInstance(processor);
 		} catch (ClassNotFoundException e) {
 			return null;
@@ -198,7 +198,7 @@ public class RIP {
 	 *              caching for every client without its own {@code Cache}
 	 */
 	public static void setCache(Cache cache) {
-		RestRequestProcessor.setDefaultCache(cache);
+		RequestExecutor.setDefaultCache(cache);
 	}
 
 	/**
@@ -208,14 +208,14 @@ public class RIP {
 	 * @param interceptor the interceptor to register
 	 */
 	public static void addInterceptor(RequestInterceptor interceptor) {
-		RestRequestProcessor.addInterceptor(interceptor);
+		RequestExecutor.addInterceptor(interceptor);
 	}
 
 	/**
 	 * Removes all registered interceptors. Mainly useful for tests.
 	 */
 	public static void clearInterceptors() {
-		RestRequestProcessor.clearInterceptors();
+		RequestExecutor.clearInterceptors();
 	}
 
 }

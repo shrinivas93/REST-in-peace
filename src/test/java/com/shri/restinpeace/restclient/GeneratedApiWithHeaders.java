@@ -9,7 +9,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
  * Otherwise-{@link GeneratedApi}-shaped, with a {@code @Headers} method -
  * {@code RestClientProcessor} now genuinely generates for this (step 2),
  * applying the fixed header via
- * {@code RestRequestProcessor.applyGeneratedHeaders}. Originally added as
+ * {@code RequestExecutor.applyGeneratedHeaders}. Originally added as
  * regression coverage for a real bug in step 1, where a method combining the
  * otherwise-supported shape with {@code @Headers} (or {@code @ErrorType})
  * was silently included in the generated implementation despite neither
