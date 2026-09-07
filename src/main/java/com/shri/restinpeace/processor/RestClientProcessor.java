@@ -552,7 +552,7 @@ public class RestClientProcessor extends AbstractProcessor {
 					+ "    \"methods\": [\n" //
 					+ "      {\n" //
 					+ "        \"name\": \"<init>\",\n" //
-					+ "        \"parameterTypes\": [\"com.shri.restinpeace.annotation.service.RestRequestProcessor\"]\n" //
+					+ "        \"parameterTypes\": [\"com.shri.restinpeace.internal.RestRequestProcessor\"]\n" //
 					+ "      }\n" //
 					+ "    ]\n" //
 					+ "  }\n" //
@@ -570,9 +570,9 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append("// docs/design/compile-time-proxy-generation.md.\n");
 		out.append("public final class ").append(implName).append(" implements ").append(interfaceName)
 				.append(" {\n\n");
-		out.append("\tprivate final com.shri.restinpeace.annotation.service.RestRequestProcessor ripProcessor;\n\n");
+		out.append("\tprivate final com.shri.restinpeace.internal.RestRequestProcessor ripProcessor;\n\n");
 		out.append("\tpublic ").append(implName)
-				.append("(com.shri.restinpeace.annotation.service.RestRequestProcessor ripProcessor) {\n");
+				.append("(com.shri.restinpeace.internal.RestRequestProcessor ripProcessor) {\n");
 		out.append("\t\tthis.ripProcessor = ripProcessor;\n");
 		out.append("\t}\n\n");
 
@@ -598,7 +598,7 @@ public class RestClientProcessor extends AbstractProcessor {
 
 		ParamModel urlParam = urlParamOf(method);
 		if (urlParam != null) {
-			out.append("\t\tString __ripUrl = com.shri.restinpeace.annotation.service.RestRequestProcessor.requireUrlParam(")
+			out.append("\t\tString __ripUrl = com.shri.restinpeace.internal.RestRequestProcessor.requireUrlParam(")
 					.append(urlParam.javaParamName).append(", ")
 					.append(stringLiteral(interfaceName + "." + method.name)).append(");\n");
 		} else {
