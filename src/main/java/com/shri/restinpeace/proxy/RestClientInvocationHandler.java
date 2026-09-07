@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
-import com.shri.restinpeace.annotation.service.RestRequestProcessor;
+import com.shri.restinpeace.internal.RestRequestProcessor;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.RipClientConfig;

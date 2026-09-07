@@ -7,7 +7,7 @@ import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 
 import com.shri.restinpeace.annotation.marker.RestClient;
-import com.shri.restinpeace.annotation.service.RestRequestProcessor;
+import com.shri.restinpeace.internal.RestRequestProcessor;
 import com.shri.restinpeace.cache.Cache;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;

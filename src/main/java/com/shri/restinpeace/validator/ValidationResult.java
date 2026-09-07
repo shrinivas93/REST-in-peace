@@ -1,4 +1,4 @@
-package com.shri.restinpeace.validator.dto;
+package com.shri.restinpeace.validator;
 
 import static java.util.stream.Collectors.joining;
 

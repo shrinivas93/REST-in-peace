@@ -1,4 +1,4 @@
-package com.shri.restinpeace.annotation.service;
+package com.shri.restinpeace.internal;
 
 import java.io.File;
 import java.io.FileInputStream;

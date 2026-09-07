@@ -978,7 +978,7 @@ registering exactly the one constructor `tryGeneratedImpl` looks up:
   {
     "name": "com.example.consumer.ItemApi_RipImpl",
     "methods": [
-      { "name": "<init>", "parameterTypes": ["com.shri.restinpeace.annotation.service.RestRequestProcessor"] }
+      { "name": "<init>", "parameterTypes": ["com.shri.restinpeace.internal.RestRequestProcessor"] }
     ]
   }
 ]

@@ -1,6 +1,6 @@
 package com.shri.restinpeace.exception;
 
-import com.shri.restinpeace.validator.dto.ValidationResult;
+import com.shri.restinpeace.validator.ValidationResult;
 
 /**
  * Checked exception thrown by
