@@ -21,10 +21,10 @@ native-image's static analysis can't resolve, so every generated class
 was unusable under native-image until `RestClientProcessor` was taught to
 emit each one's `reflect-config.json` alongside it. Step 4, the
 compile-testing validation suite, landed in §9.10: a new
-`CompileTimeValidator` reimplements `RestClientValidator`'s semantic rules
+`CompileTimeRestClientValidator` reimplements `ReflectiveRestClientValidator`'s semantic rules
 against `javax.lang.model` and fails compilation outright for a
 semantically invalid `@RestClient` interface - the same message
-`RestClientValidator` would otherwise only report at the first
+`ReflectiveRestClientValidator` would otherwise only report at the first
 `RIP.getClient(...)` call - and a hand-rolled `javax.tools.JavaCompiler`
 test suite proves both directions (invalid interfaces fail compilation,
 valid ones compile clean and generate a real impl). Roadmap item:
@@ -45,7 +45,7 @@ return (T) Proxy.newProxyInstance(restClient.getClassLoader(), new Class[] { res
 
 `RestClientInvocationHandler.invoke(...)` re-derives the HTTP method from
 `method.getAnnotations()` on *every call*, then hands off to
-`RestRequestProcessor.processRestRequest(...)`, which itself re-reads
+`RequestExecutor.processRestRequest(...)`, which itself re-reads
 `method.getAnnotation(Timeout.class)`, `method.getAnnotation(Headers.class)`,
 `method.getAnnotation(Retry.class)`, and walks `method.getParameters()`
 checking each one for `@PathParam`/`@QueryParam`/`@HeaderParam`/`@HeaderMap`/
@@ -88,7 +88,7 @@ library:
   processor, or an interface compiled in a module without the processor
   on its `annotationProcessorPath`) keep working exactly as today, via
   the existing reflective proxy. Nobody's code breaks by not opting in.
-- Every validation `RestClientValidator` performs today (missing
+- Every validation `ReflectiveRestClientValidator` performs today (missing
   `@BaseUrl`, unmatched `@PathParam`, malformed `@Headers` entry, wrong
   `@Part` type, ...) becomes a **compile-time** error instead of a
   runtime `RestInPeaceValidationException` thrown the first time
@@ -142,9 +142,9 @@ package com.example.api;
 
 final class UserApi_RipImpl implements UserApi {
 
-    private final RestRequestProcessor ripProcessor;
+    private final RequestExecutor ripProcessor;
 
-    UserApi_RipImpl(RestRequestProcessor ripProcessor) {
+    UserApi_RipImpl(RequestExecutor ripProcessor) {
         this.ripProcessor = ripProcessor;
     }
 
@@ -152,7 +152,7 @@ final class UserApi_RipImpl implements UserApi {
     public User getUser(String id) {
         String url = ripProcessor.resolveUrl("/users/{id}", new Object[] { id },
                 new String[] { "id" });
-        // ... same call into RestRequestProcessor's request-building/execution
+        // ... same call into RequestExecutor's request-building/execution
         // machinery, but with every annotation value passed as a literal
         // constant instead of looked up via reflection.
     }
@@ -160,7 +160,7 @@ final class UserApi_RipImpl implements UserApi {
 ```
 
 The key design decision: **the generated class still calls into
-`RestRequestProcessor`/Unirest for the actual HTTP work** — it does not
+`RequestExecutor`/Unirest for the actual HTTP work** — it does not
 reimplement request building, retry, multipart, or response decoding from
 scratch. What it eliminates is the reflective *lookup* of what to do,
 replacing `method.getAnnotation(Timeout.class)` with a compile-time-known
@@ -169,11 +169,11 @@ replacing `method.getAnnotation(Timeout.class)` with a compile-time-known
 sequence of direct calls. This keeps the processor's code-generation
 surface small (mostly "which literals to bake in and in what order to
 call them") and means every future runtime feature (a new annotation, a
-new return-type shape) only has to be taught to `RestRequestProcessor`
+new return-type shape) only has to be taught to `RequestExecutor`
 once, with the processor's job being "call the same methods, with the
 values known up front" rather than "reimplement the feature."
 
-Concretely, `RestRequestProcessor` needs a handful of new, non-reflective
+Concretely, `RequestExecutor` needs a handful of new, non-reflective
 entry points alongside its existing `Method`-based ones — e.g.
 `resolveUrl(String template, Object[] pathParamValues, String[]
 pathParamNames)` beside today's `resolveUrl(Method, HTTPMethod,
@@ -201,8 +201,8 @@ public static <T> T getClient(Class<T> restClient, String baseUrl) {
 private static <T> T tryGeneratedImpl(Class<T> restClient, String baseUrl) {
     try {
         Class<?> implClass = Class.forName(restClient.getName() + "_RipImpl");
-        Constructor<?> ctor = implClass.getDeclaredConstructor(RestRequestProcessor.class);
-        return (T) ctor.newInstance(new RestRequestProcessor(baseUrl));
+        Constructor<?> ctor = implClass.getDeclaredConstructor(RequestExecutor.class);
+        return (T) ctor.newInstance(new RequestExecutor(baseUrl));
     } catch (ClassNotFoundException e) {
         return null; // no processor ran on this interface - fall back to the proxy
     } catch (ReflectiveOperationException e) {
@@ -221,7 +221,7 @@ results are meant to be held onto, same as today).
 A cleaner alternative avoiding even that: the processor also emits one
 `@RestClientFactory`-annotated static registry class (or a
 `ServiceLoader`-discoverable one) mapping interface `Class` to a factory
-`Function<RestRequestProcessor, T>`, built once at class-load time. This
+`Function<RequestExecutor, T>`, built once at class-load time. This
 removes the per-`getClient`-call `Class.forName`/reflective-constructor
 cost entirely, at the price of one more generated artifact per
 compilation unit. Worth deciding once a working `Class.forName` version
@@ -230,20 +230,20 @@ shape before the simpler version is validated end-to-end.
 
 ### 4.4 Validation moves to compile time
 
-`RestClientValidator`'s checks (`validateUrl`, `validateUrlParam`,
+`ReflectiveRestClientValidator`'s checks (`validateUrl`, `validateUrlParam`,
 `validateBody`, `validateHeaders`, `validateMultipart`, `validateRetry`,
 `validateTimeout`, `validateMapParam`, `validateReturnType`,
 `validateDestination`, `validate*ProgressListener`) are pure functions of
 an interface's `Class`/`Method`/`Parameter` shape — nothing about them
 requires a live JVM at `RIP.getClient(...)` time. The processor runs the
 *same* validation logic during annotation processing (ideally by sharing
-`RestClientValidator` directly, if it can be made to work against
+`ReflectiveRestClientValidator` directly, if it can be made to work against
 `javax.lang.model` types instead of `java.lang.reflect` ones — see the
 open question in §7) and reports failures via `Messager.printMessage
 (Diagnostic.Kind.ERROR, ...)`, which surfaces as a normal `javac`
 compile error with a file/line pointing at the offending method.
 
-`RestClientValidator`'s runtime checks stay exactly as they are today,
+`ReflectiveRestClientValidator`'s runtime checks stay exactly as they are today,
 unchanged — they still run for the reflective fallback path (an
 interface the processor didn't process), and are harmless, cheap
 double-checking for a processed interface, too, so there's no reason to
@@ -254,9 +254,9 @@ special-case "skip validation because the processor already checked."
 Each existing annotation, and how its handling would be reached from
 generated code instead of reflection:
 
-| Annotation | Today (`RestRequestProcessor`) | Generated code |
+| Annotation | Today (`RequestExecutor`) | Generated code |
 |---|---|---|
-| `@GET`/`@POST`/etc. | `getUrlTemplate` switches on `HTTPMethod` looked up via `getHTTPMethod` (reflection) | HTTP verb baked in as which `RestRequestProcessor.createRequest(...)` overload/argument to call |
+| `@GET`/`@POST`/etc. | `getUrlTemplate` switches on `HTTPMethod` looked up via `getHTTPMethod` (reflection) | HTTP verb baked in as which `RequestExecutor.createRequest(...)` overload/argument to call |
 | `@PathParam` | `resolvePathParams` finds params via `parameters[i].getAnnotation(PathParam.class)` | Path param names/positions baked in; still calls the shared `encodePathValue`/substitution logic |
 | `@QueryParam`/`@QueryMap` | `applyParams` loop checks each parameter's annotations | Direct `applyQueryValue(request, "name", arg)` calls per fixed param, one `applyQueryMap(request, mapArg)` call if present |
 | `@HeaderParam`/`@HeaderMap`/`@Headers` | Same loop, plus `applyFixedHeaders` reading `method.getAnnotation(Headers.class)` | Direct `headerReplace`/`applyHeaderMap` calls; `@Headers` entries baked in as a literal `String[]` passed once |
@@ -265,13 +265,13 @@ generated code instead of reflection:
 | `@Retry` | `executeSyncWithRetry`/`executeAsyncWithRetry` read `method.getAnnotation(Retry.class)` per call | `Retry`'s four values passed as literal constructor/method arguments instead of re-reading the annotation |
 | `@Timeout` | `applyTimeout` reads `method.getAnnotation(Timeout.class)` | Literal `connectMillis`/`readMillis` passed directly |
 | `@ErrorType` | `decodeBody` reads `method.getAnnotation(ErrorType.class)` | Literal `Class<?>` passed directly |
-| Return type (`String`/POJO/`byte[]`/`File`/`CompletableFuture<T>`/`RipResponse<T>`) | `processRestRequest` branches on `method.getReturnType()`/`getGenericReturnType()` at runtime | The *generated method's actual return type* already matches — no runtime branching needed; the generated body picks the right `RestRequestProcessor` entry point (`decodeOrThrow`, `processAsync`, `wrapResponse`, ...) directly, decided once by the processor at compile time from the interface's declared return type |
+| Return type (`String`/POJO/`byte[]`/`File`/`CompletableFuture<T>`/`RipResponse<T>`) | `processRestRequest` branches on `method.getReturnType()`/`getGenericReturnType()` at runtime | The *generated method's actual return type* already matches — no runtime branching needed; the generated body picks the right `RequestExecutor` entry point (`decodeOrThrow`, `processAsync`, `wrapResponse`, ...) directly, decided once by the processor at compile time from the interface's declared return type |
 | `@Url` | `resolveUrlParam` scans parameters for `@Url` at runtime | Known at compile time whether the method has a `@Url` parameter; generated code either takes the template path or the verbatim-URL path, no scan needed |
 | `@Destination`/`DownloadProgressListener`/`UploadProgressListener` | Scanned per call | Positions known at compile time, passed directly |
 
 The interceptor chain (`applyInterceptors`, `notifyAfterResponse`) is
 unaffected either way — it's driven by the *runtime* interceptor
-registry (`RestRequestProcessor.INTERCEPTORS`), which has nothing to do
+registry (`RequestExecutor.INTERCEPTORS`), which has nothing to do
 with reflection on the calling method, so generated code calls it
 exactly as today.
 
@@ -290,7 +290,7 @@ exactly as today.
 - A dedicated `compile-testing`-style test (Google's
   `com.google.testing.compile.CompilationSubject`, or a hand-rolled
   `javac` invocation via `javax.tools.JavaCompiler`) verifying that each
-  `RestClientValidatorTest` interface that should fail validation today
+  `ReflectiveRestClientValidatorTest` interface that should fail validation today
   (e.g. `InvalidTimeoutConnectMillis`, `HeadersEntryMissingColon`) also
   fails **compilation** with a matching error message when run through
   the processor, and that every currently-valid interface compiles
@@ -303,7 +303,7 @@ exactly as today.
 
 ## 7. Open questions / risks
 
-- **Can `RestClientValidator`'s logic realistically be shared between
+- **Can `ReflectiveRestClientValidator`'s logic realistically be shared between
   the runtime (`java.lang.reflect.Method`/`Parameter`) and compile-time
   (`javax.lang.model.element.ExecutableElement`/`VariableElement`)
   worlds without a painful abstraction layer?** These are genuinely
@@ -361,7 +361,7 @@ exactly as today.
    with `@PathParam`/`@QueryParam` and a plain `String`/POJO return type
    only, no retry/multipart/async/interceptors — to validate the overall
    mechanism (SPI registration, `RIP.getClient` fallback logic, codegen
-   plumbing into `RestRequestProcessor`) before investing in full
+   plumbing into `RequestExecutor`) before investing in full
    feature parity.
 2. Extend feature-by-feature per §5's table, each landing as its own PR
    with its own `RipIntegrationTest`-mirroring test pass, in roughly the
@@ -447,13 +447,13 @@ falls the whole interface back to the reflective proxy, rather than
 reproducing `resolveValue`'s semantics in codegen. This was a scope
 decision to keep step 1's surface small and unambiguously correct, not a
 technical obstacle - `resolveValue` is a small, already-`private` static
-method on `RestRequestProcessor` and a natural candidate to become another
+method on `RequestExecutor` and a natural candidate to become another
 literal-parameter call from generated code (alongside
 `processGeneratedRequest`) in a follow-up step.
 
 ### 9.3 What's now real and testable
 
-- `RestRequestProcessor.processGeneratedRequest(...)`: the new
+- `RequestExecutor.processGeneratedRequest(...)`: the new
   non-reflective entry point, reusing (not reimplementing)
   `createRequest`, `applyQueryValue`, `applyInterceptors`,
   `executeSyncWithRetry`, and `decodeOrThrow` - each of those needed only a
@@ -469,7 +469,7 @@ literal-parameter call from generated code (alongside
   `Filer.createSourceFile`.
 - `RIP.getClient`'s three overloads all now try
   `Class.forName(interfaceName + "_RipImpl")` (with a public constructor
-  taking a `RestRequestProcessor`) before falling back to
+  taking a `RequestExecutor`) before falling back to
   `Proxy.newProxyInstance`, exactly as §4.3 sketched, module-adjustment
   aside.
 - `GeneratedApi`/`GeneratedApiTest`: a new top-level (not nested, per §7's
@@ -480,7 +480,7 @@ literal-parameter call from generated code (alongside
   silently falling back) and that a real call through it produces the
   expected request/response over a local `HttpServer`.
 - Verified: the full pre-existing `RipIntegrationTest`/
-  `RestClientValidatorTest` suite (177 tests, all still exercising nested
+  `ReflectiveRestClientValidatorTest` suite (177 tests, all still exercising nested
   test interfaces the processor correctly skips) stays green and
   unaffected, on both the default and a real JDK 8 toolchain, with a clean
   `javadoc:javadoc`.
@@ -521,7 +521,7 @@ method model instead of ignoring them, when present. `GeneratedApiWithHeaders`
 is new regression coverage: a `GeneratedApi`-shaped method with `@Headers`
 added, asserting no `_RipImpl` is generated for it.
 
-Mechanically, this is exactly what §4.2/§5 sketched - `RestRequestProcessor`
+Mechanically, this is exactly what §4.2/§5 sketched - `RequestExecutor`
 gained non-reflective, literal-argument counterparts of its existing
 `Method`-based logic rather than any new machinery:
 
@@ -576,7 +576,7 @@ Adding just `@Timeout`/`@Retry` in the first slice already grew
 also cover headers, query/header maps, a body, and a `@Url` override would
 have pushed it well past 25 - unreadable, and error-prone to keep each
 generated call's argument *position* correct against the method's growing
-signature. Instead, `RestRequestProcessor` now exposes a small set of
+signature. Instead, `RequestExecutor` now exposes a small set of
 non-reflective, `public` primitives - `resolveGeneratedUrl`,
 `requireUrlParam`, `createGeneratedRequest`, `applyGeneratedHeaders`,
 `resolveValue`, `applyQueryValue`, `applyQueryMap`, `applyHeaderMap`,
@@ -587,7 +587,7 @@ non-reflective entry points... called directly") more closely than step 1's
 single mega-call did. Each of these is `public` only because generated code
 lives in an arbitrary consumer package - not part of RIP's
 application-facing API, documented as such at the top of the new methods'
-section in `RestRequestProcessor`.
+section in `RequestExecutor`.
 
 A header param value (`@HeaderParam`) doesn't get its own RIP method at
 all - generated code calls `resolveValue` then, if non-`null`, Unirest's own
@@ -624,7 +624,7 @@ this, used in `errorTypeClassNameOf`.
 name for a `@Url` parameter to have - broke compilation of its own generated
 class: `RestClientProcessor` always declared a local named `url` to hold the
 resolved URL, and Java doesn't allow redeclaring a variable of the same name
-in the same scope, so `String url = RestRequestProcessor.requireUrlParam(url, ...)`
+in the same scope, so `String url = RequestExecutor.requireUrlParam(url, ...)`
 failed with "variable url is already defined". The same risk existed for
 every other synthetic local the generator introduces (`request`, `context`,
 `result`, a per-parameter scratch variable for `resolveValue`'s result) and
@@ -737,7 +737,7 @@ documentation describes.
 The first slice to change *what a generated method returns*, not just what
 it can accept as input. Every prior slice kept `finishGeneratedSync` as the
 single terminal call, differing only in what gets built up before it; this
-one adds four sibling terminal methods to `RestRequestProcessor` -
+one adds four sibling terminal methods to `RequestExecutor` -
 `finishGeneratedSyncBytes`, `finishGeneratedSyncFile`,
 `finishGeneratedSyncRipResponse`, `finishGeneratedSyncRipResponseBytes` -
 mirroring `processRestRequest`'s own return-type branches, each reusing
@@ -807,13 +807,13 @@ a new one to the list: `CompletableFuture<T>` isn't a sibling of
 `PLAIN`/`BYTES`/`FILE`/`RIP_RESPONSE`, it's each of them wrapped - a
 method can return a plain `String` synchronously or asynchronously, and
 the same is true of `byte[]`, `File`, and `RipResponse<T>`. That meant
-doubling `RestRequestProcessor`'s terminal-call surface (one async sibling
+doubling `RequestExecutor`'s terminal-call surface (one async sibling
 per existing sync terminal method) rather than adding a fifth `ReturnKind`
 case to `RestClientProcessor`'s dispatch switch.
 
 #### 9.8.1 Five new async terminal methods, mirroring the five sync ones
 
-`RestRequestProcessor` gained `finishGeneratedAsync`,
+`RequestExecutor` gained `finishGeneratedAsync`,
 `finishGeneratedAsyncBytes`, `finishGeneratedAsyncFile`,
 `finishGeneratedAsyncRipResponse`, and
 `finishGeneratedAsyncRipResponseBytes` - each the direct async counterpart
@@ -978,7 +978,7 @@ registering exactly the one constructor `tryGeneratedImpl` looks up:
   {
     "name": "com.example.consumer.ItemApi_RipImpl",
     "methods": [
-      { "name": "<init>", "parameterTypes": ["com.shri.restinpeace.internal.RestRequestProcessor"] }
+      { "name": "<init>", "parameterTypes": ["com.shri.restinpeace.internal.RequestExecutor"] }
     ]
   }
 ]
@@ -1022,7 +1022,7 @@ here on.
 ### 9.10 Step 4: the compile-testing validation suite
 
 The exit criterion for the whole roadmap item (§8 step 4): every semantic
-rule `RestClientValidator` enforces reflectively at the first
+rule `ReflectiveRestClientValidator` enforces reflectively at the first
 `RIP.getClient(...)` call now also fails **compilation** outright, with
 the same message, when a `@RestClient` interface is processed by
 `RestClientProcessor` - closing the gap this design's own §7 open
@@ -1031,15 +1031,15 @@ compile-time side is actually attempted, not before").
 
 #### 9.10.1 A second, independent validator - not a shared abstraction
 
-`CompileTimeValidator` is a new, self-contained class, deliberately *not*
-sharing an abstraction with `RestClientValidator` - §7's open question
+`CompileTimeRestClientValidator` is a new, self-contained class, deliberately *not*
+sharing an abstraction with `ReflectiveRestClientValidator` - §7's open question
 predicted this might be the pragmatic outcome, and it was: the two APIs
 (`java.lang.reflect.Method`/`Parameter` vs.
 `javax.lang.model.element.ExecutableElement`/`VariableElement`) differ
 enough - resolving a `Class<?>`-valued annotation attribute, walking a
 generic type's actual type arguments, checking a subtype relationship -
 that forcing a shared abstraction would have cost more than it saved.
-Every one of `RestClientValidator`'s ~15 rule groups (HTTP-method-count,
+Every one of `ReflectiveRestClientValidator`'s ~15 rule groups (HTTP-method-count,
 `@Body`, `@Retry`, `@Timeout`, `@Headers`, `@Multipart`,
 `@QueryMap`/`@HeaderMap`/`@PartMap`, `@Destination`, `@Url`,
 upload/download listeners, `CompletableFuture<T>`/`RipResponse<T>`
@@ -1048,12 +1048,12 @@ return-type shape) is reimplemented method-for-method against
 `Messager` instead of accumulating into a `ValidationResult` - which is
 what actually fails `javac`, unlike a list of strings.
 
-`RestClientProcessor.processRestClient` runs `CompileTimeValidator.validate(...)`
+`RestClientProcessor.processRestClient` runs `CompileTimeRestClientValidator.validate(...)`
 first, on *every* `@RestClient` interface it sees - not only ones that
 also happen to fall within the codegen-supported shape from steps 1-2.
 An interface can be semantically invalid yet still structurally
 "supported" (e.g. `@Multipart` on a `GET` method is a shape the generator
-knows how to emit code for, and a validation error `RestClientValidator`
+knows how to emit code for, and a validation error `ReflectiveRestClientValidator`
 catches) - before this slice, that combination would silently generate a
 working-looking `_RipImpl` and only blow up at the first real call. Now
 it fails the build. If validation finds any error, codegen is skipped
@@ -1062,7 +1062,7 @@ invalid interface should never be reachable through either path).
 
 #### 9.10.2 The one deliberate gap: relative URLs and `@BaseUrl`
 
-`RestClientValidator` requires either `@BaseUrl` on the interface or a
+`ReflectiveRestClientValidator` requires either `@BaseUrl` on the interface or a
 runtime base URL (`RIP.getClient(Class, String)`/`RipClientConfig`) for
 a method with a relative URL - and which of those ends up used is
 inherently a runtime fact the processor cannot know at compile time (the
@@ -1078,18 +1078,18 @@ string.
 
 #### 9.10.3 A real regression this slice's own test suite caught
 
-Running the full test suite after wiring `CompileTimeValidator` in broke
+Running the full test suite after wiring `CompileTimeRestClientValidator` in broke
 an existing fixture: `SampleApi` (a top-level interface backing the
 long-dormant `RestInPeaceTest.main()` smoke check) declared two methods,
 `bar` and `foobar`, purely to hold a missing and a duplicated HTTP-method
 annotation - and neither was ever actually invoked by anything. Before
 this slice, that was harmless: the interface still compiled fine, since
 nothing checked annotation *semantics* at compile time. With
-`CompileTimeValidator` in place, `RestClientProcessor` now runs on every
+`CompileTimeRestClientValidator` in place, `RestClientProcessor` now runs on every
 top-level `@RestClient` interface on the compilation classpath, `bar`/
 `foobar` included, and correctly fails the build for exactly the
 annotation misuse they were written to represent.
-`RestClientValidatorTest` already has its own dedicated *nested*
+`ReflectiveRestClientValidatorTest` already has its own dedicated *nested*
 interfaces for both scenarios (`MissingHttpMethodAnnotation`,
 `MultipleHttpMethodAnnotations` - nested interfaces are excluded from
 `RestClientProcessor` entirely, per §7's still-open nested/private
@@ -1117,7 +1117,7 @@ Hand-rolled against `javax.tools.JavaCompiler` rather than Google's
 hand-rolled route needs no new dependency, keeping this project at one
 runtime dependency (Unirest) exactly as before. One test per rule group
 (14 invalid cases, one representative violation of each `validate*`
-method in `CompileTimeValidator`, plus one valid interface asserting both
+method in `CompileTimeRestClientValidator`, plus one valid interface asserting both
 a clean compile and a real generated `_RipImpl.class` on disk) - not
 exhaustive over every sub-condition of every rule, since the production
 validator's own correctness for the full rule set is already

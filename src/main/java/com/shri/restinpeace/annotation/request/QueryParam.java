@@ -8,7 +8,7 @@ import java.lang.annotation.Target;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPRequestParamMarker;
 import com.shri.restinpeace.constant.HTTPRequestParam;
-import com.shri.restinpeace.constant.RIPConstant;
+import com.shri.restinpeace.constant.RIPConstants;
 
 /**
  * Appends a query string parameter to the request from the annotated
@@ -40,5 +40,5 @@ public @interface QueryParam {
 	 *
 	 * @return the default value
 	 */
-	String defaultValue() default RIPConstant.DEFAULT;
+	String defaultValue() default RIPConstants.DEFAULT;
 }

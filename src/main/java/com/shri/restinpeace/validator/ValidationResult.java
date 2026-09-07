@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Accumulates validation errors found while checking a {@code @RestClient}
- * interface, so {@link com.shri.restinpeace.validator.RestClientValidator}
+ * interface, so {@link com.shri.restinpeace.validator.ReflectiveRestClientValidator}
  * can report every problem at once instead of failing on the first one.
  */
 public class ValidationResult implements Serializable {

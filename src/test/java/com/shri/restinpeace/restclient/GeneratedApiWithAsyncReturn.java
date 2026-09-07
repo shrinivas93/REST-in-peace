@@ -12,7 +12,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
  * this (step 2's final slice), applying the same
  * {@code executeAsyncWithRetry}/{@code decodeOrThrow} machinery the
  * reflective path's own {@code processAsync} uses via
- * {@code RestRequestProcessor.finishGeneratedAsync}. Originally added as
+ * {@code RequestExecutor.finishGeneratedAsync}. Originally added as
  * regression coverage proving this still fell back to the reflective
  * proxy; kept under this name as a positive test now that
  * {@code CompletableFuture} is supported - the last item in the design

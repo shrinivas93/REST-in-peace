@@ -48,7 +48,7 @@ import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.constant.HTTPMethod;
-import com.shri.restinpeace.constant.RIPConstant;
+import com.shri.restinpeace.constant.RIPConstants;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
@@ -60,14 +60,14 @@ import com.shri.restinpeace.upload.UploadProgressListener;
  * it, so a misconfigured interface fails fast with a complete list of
  * problems instead of failing later on the first call.
  */
-public class RestClientValidator {
+public class ReflectiveRestClientValidator {
 
 	private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("\\{(.*?)\\}");
 
 	private static final Set<HTTPMethod> BODY_SUPPORTED_METHODS = EnumSet.of(HTTPMethod.POST, HTTPMethod.PUT,
 			HTTPMethod.PATCH, HTTPMethod.DELETE);
 
-	private RestClientValidator() {
+	private ReflectiveRestClientValidator() {
 		// private constructor to hide the implicit public one
 	}
 
@@ -422,7 +422,7 @@ public class RestClientValidator {
 						"The method %s.%s has a @Url parameter of type %s - only String is supported.",
 						method.getDeclaringClass().getName(), method.getName(), parameter.getType().getName())));
 
-		if (!urlParams.isEmpty() && !RIPConstant.DEFAULT.equals(url)) {
+		if (!urlParams.isEmpty() && !RIPConstants.DEFAULT.equals(url)) {
 			validationResult.addError(String.format(
 					"The method %s.%s has both a @Url parameter and a static URL '%s' - remove one or the other.",
 					method.getDeclaringClass().getName(), method.getName(), url));
