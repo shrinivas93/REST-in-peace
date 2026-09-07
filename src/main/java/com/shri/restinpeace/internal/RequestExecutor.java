@@ -112,6 +112,7 @@ public class RequestExecutor {
 	private final String baseUrlOverride;
 	private final UnirestInstance unirestInstance;
 	private final Cache configuredCache;
+	private final List<RequestInterceptor> configuredInterceptors;
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RequestExecutor() {
@@ -133,6 +134,7 @@ public class RequestExecutor {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
 		this.configuredCache = null;
+		this.configuredInterceptors = Collections.emptyList();
 	}
 
 	/**
@@ -150,6 +152,7 @@ public class RequestExecutor {
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
 		this.configuredCache = config.getCache();
+		this.configuredInterceptors = config.getInterceptors();
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
@@ -735,11 +738,32 @@ public class RequestExecutor {
 		return url;
 	}
 
+	/**
+	 * Every interceptor that applies to this instance's calls - every
+	 * globally registered one, followed by this client's own (from
+	 * {@link RipClientConfig.Builder#interceptors}, if any) - global ones
+	 * bracket everything, including this client's own, the same "onion"
+	 * ordering {@link RequestInterceptor}'s own javadoc describes.
+	 *
+	 * @return the combined, ordered interceptor list; the same {@link #INTERCEPTORS}
+	 *         instance when this client has no interceptors of its own, to
+	 *         avoid an allocation in the common case
+	 */
+	private List<RequestInterceptor> effectiveInterceptors() {
+		if (configuredInterceptors.isEmpty()) {
+			return INTERCEPTORS;
+		}
+		List<RequestInterceptor> combined = new ArrayList<>(INTERCEPTORS);
+		combined.addAll(configuredInterceptors);
+		return combined;
+	}
+
 	private HttpRequest<?> applyInterceptors(HttpRequest<?> request, RequestContext context) {
-		if (INTERCEPTORS.isEmpty()) {
+		List<RequestInterceptor> interceptors = effectiveInterceptors();
+		if (interceptors.isEmpty()) {
 			return request;
 		}
-		INTERCEPTORS.forEach(interceptor -> interceptor.beforeRequest(context));
+		interceptors.forEach(interceptor -> interceptor.beforeRequest(context));
 		context.getHeaders().forEach(request::header);
 		return request;
 	}
@@ -1118,13 +1142,14 @@ public class RequestExecutor {
 
 	private <B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
 			Class<?> returnType) {
-		if (INTERCEPTORS.isEmpty()) {
+		List<RequestInterceptor> interceptors = effectiveInterceptors();
+		if (interceptors.isEmpty()) {
 			return;
 		}
 		Object body = decodeBody(response, errorType, returnType);
 		// LIFO, mirroring beforeRequest: the first interceptor registered wraps every
 		// other one and is notified last, symmetric with it running beforeRequest first.
-		List<RequestInterceptor> reversed = new ArrayList<>(INTERCEPTORS);
+		List<RequestInterceptor> reversed = new ArrayList<>(interceptors);
 		Collections.reverse(reversed);
 		reversed.forEach(interceptor -> interceptor.afterResponse(context, response.getStatus(), body));
 	}

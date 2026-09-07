@@ -1,13 +1,18 @@
 package com.shri.restinpeace;
 
+import java.util.Collections;
+import java.util.List;
+
 import com.shri.restinpeace.cache.Cache;
+import com.shri.restinpeace.interceptor.RequestInterceptor;
 
 import kong.unirest.ObjectMapper;
 
 /**
  * Per-client settings for {@link RIP#getClient(Class, RipClientConfig)} -
- * base URL, connect/read timeout, proxy, and JSON {@code ObjectMapper} - for
- * a {@code @RestClient} whose environment differs from every other client's,
+ * base URL, connect/read timeout, proxy, JSON {@code ObjectMapper}, cache,
+ * and interceptors - for a {@code @RestClient} whose environment differs
+ * from every other client's,
  * since {@code kong.unirest.Unirest}'s own global config is shared by every
  * RIP client that doesn't ask for its own. A method's {@link
  * com.shri.restinpeace.annotation.timeout.Timeout @Timeout} overrides this
@@ -39,6 +44,7 @@ public final class RipClientConfig {
 	private final String proxyPassword;
 	private final ObjectMapper objectMapper;
 	private final Cache cache;
+	private final List<RequestInterceptor> interceptors;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -50,6 +56,7 @@ public final class RipClientConfig {
 		this.proxyPassword = builder.proxyPassword;
 		this.objectMapper = builder.objectMapper;
 		this.cache = builder.cache;
+		this.interceptors = builder.interceptors;
 	}
 
 	/**
@@ -150,6 +157,17 @@ public final class RipClientConfig {
 		return cache;
 	}
 
+	/**
+	 * Returns this client's own interceptors.
+	 *
+	 * @return this client's own interceptors, run in addition to (not instead
+	 *         of) every globally registered {@link RIP#addInterceptor
+	 *         interceptor} - empty if none were set
+	 */
+	public List<RequestInterceptor> getInterceptors() {
+		return interceptors;
+	}
+
 	/** Builds a {@link RipClientConfig}. */
 	public static final class Builder {
 
@@ -162,6 +180,7 @@ public final class RipClientConfig {
 		private String proxyPassword;
 		private ObjectMapper objectMapper;
 		private Cache cache;
+		private List<RequestInterceptor> interceptors = Collections.emptyList();
 
 		private Builder() {
 		}
@@ -259,6 +278,25 @@ public final class RipClientConfig {
 		 */
 		public Builder cache(Cache cache) {
 			this.cache = cache;
+			return this;
+		}
+
+		/**
+		 * Sets this client's own interceptors, run in addition to (not
+		 * instead of) every globally registered {@link RIP#addInterceptor
+		 * interceptor} - for a concern specific to this one client (e.g. this
+		 * service's own auth scheme) instead of every call RIP ever makes.
+		 * Global interceptors run first in {@code beforeRequest} (bracketing
+		 * everything, including this client's own) and last in
+		 * {@code afterResponse}, the same "onion" ordering
+		 * {@link com.shri.restinpeace.interceptor.RequestInterceptor}'s own
+		 * javadoc describes for interceptors registered globally.
+		 *
+		 * @param interceptors this client's own interceptors
+		 * @return this builder
+		 */
+		public Builder interceptors(List<RequestInterceptor> interceptors) {
+			this.interceptors = interceptors == null ? Collections.emptyList() : interceptors;
 			return this;
 		}
 
