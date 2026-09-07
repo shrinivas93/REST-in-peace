@@ -17,21 +17,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
-import java.util.stream.IntStream;
 
 import com.shri.restinpeace.annotation.method.DELETE;
 import com.shri.restinpeace.annotation.method.GET;
@@ -61,7 +51,6 @@ import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.cache.Cache;
-import com.shri.restinpeace.cache.CachedResponse;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.constant.RIPConstants;
 import com.shri.restinpeace.download.DownloadProgressListener;
@@ -74,10 +63,7 @@ import com.shri.restinpeace.upload.UploadProgressListener;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.RipResponse;
 
-import kong.unirest.Cookies;
-import kong.unirest.HttpMethod;
 import kong.unirest.HttpRequest;
-import kong.unirest.HttpRequestSummary;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
@@ -85,7 +71,6 @@ import kong.unirest.ObjectMapper;
 import kong.unirest.Unirest;
 import kong.unirest.UnirestConfigException;
 import kong.unirest.UnirestInstance;
-import kong.unirest.UnirestParsingException;
 
 /**
  * Builds and executes the actual HTTP request for a {@code @RestClient}
@@ -94,25 +79,29 @@ import kong.unirest.UnirestParsingException;
  * {@link com.shri.restinpeace.proxy.RestClientInvocationHandler}; not part
  * of the library's public API - use {@link com.shri.restinpeace.RIP}
  * instead.
+ *
+ * <p>
+ * Three genuinely separate concerns that grew large enough to earn their
+ * own class are delegated out to package-private collaborators instead of
+ * living here as private methods: response caching ({@link CacheCoordinator}),
+ * {@code @FormUrlEncoded} body building ({@link FormEncoder}), and the
+ * {@code @Retry} loop, sync and async ({@link RetryExecutor}). Every method
+ * generated code calls directly (see
+ * {@code com.shri.restinpeace.processor.RestClientProcessor}) stays here
+ * regardless, since generated code's field type is fixed as
+ * {@code RequestExecutor} - those methods are thin delegates to the
+ * collaborator that actually does the work.
  */
 public class RequestExecutor {
 
 	private static final List<RequestInterceptor> INTERCEPTORS = new CopyOnWriteArrayList<>();
-	private static final int[] EMPTY_STATUS_CODES = new int[0];
-	private static final String NO_CACHE_ATTRIBUTE = "__ripNoCache";
-
-	private static volatile Cache DEFAULT_CACHE;
-
-	private static final ScheduledExecutorService RETRY_SCHEDULER = Executors.newSingleThreadScheduledExecutor(runnable -> {
-		Thread thread = new Thread(runnable, "rip-retry-scheduler");
-		thread.setDaemon(true);
-		return thread;
-	});
 
 	private final String baseUrlOverride;
 	private final UnirestInstance unirestInstance;
-	private final Cache configuredCache;
 	private final List<RequestInterceptor> configuredInterceptors;
+	private final CacheCoordinator cacheCoordinator;
+	private final FormEncoder formEncoder = new FormEncoder();
+	private final RetryExecutor retryExecutor = new RetryExecutor(this);
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RequestExecutor() {
@@ -133,7 +122,7 @@ public class RequestExecutor {
 	public RequestExecutor(String baseUrlOverride) {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
-		this.configuredCache = null;
+		this.cacheCoordinator = new CacheCoordinator(null);
 		this.configuredInterceptors = Collections.emptyList();
 	}
 
@@ -151,7 +140,7 @@ public class RequestExecutor {
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
-		this.configuredCache = config.getCache();
+		this.cacheCoordinator = new CacheCoordinator(config.getCache());
 		this.configuredInterceptors = config.getInterceptors();
 	}
 
@@ -200,19 +189,7 @@ public class RequestExecutor {
 	 * @param cache the shared default cache, or {@code null} to disable it
 	 */
 	public static void setDefaultCache(Cache cache) {
-		DEFAULT_CACHE = cache;
-	}
-
-	/**
-	 * Returns the cache this instance's calls should use - its own, from a
-	 * {@link RipClientConfig}, if one was set, otherwise the shared default
-	 * (read dynamically, the same way {@link #getObjectMapper()} falls back
-	 * to the shared {@code Unirest} config), so a later
-	 * {@link com.shri.restinpeace.RIP#setCache(Cache)} call still takes
-	 * effect for an already-built client that never set its own.
-	 */
-	private Cache getCache() {
-		return configuredCache != null ? configuredCache : DEFAULT_CACHE;
+		CacheCoordinator.setDefaultCache(cache);
 	}
 
 	/**
@@ -226,7 +203,7 @@ public class RequestExecutor {
 	 *                {@code finishGenerated*}/{@code applyGenerated*} method
 	 */
 	public void markNoCache(RequestContext context) {
-		context.setAttribute(NO_CACHE_ATTRIBUTE, Boolean.TRUE);
+		context.setAttribute(CacheCoordinator.NO_CACHE_ATTRIBUTE, Boolean.TRUE);
 	}
 
 	/**
@@ -263,25 +240,25 @@ public class RequestExecutor {
 		if (returnType == RipResponse.class) {
 			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
 			if (innerType == byte[].class) {
-				HttpResponse<byte[]> response = executeSyncWithRetry(method, innerType, context, request::asBytes);
+				HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, innerType, context, request::asBytes);
 				return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 			}
-			HttpResponse<String> response = executeSyncWithRetry(method, innerType, context,
-					wrapWithCache(request, context, request::asString));
+			HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
+					cacheCoordinator.wrapWithCache(request, context, request::asString));
 			return wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 		}
 		if (returnType == byte[].class) {
-			HttpResponse<byte[]> response = executeSyncWithRetry(method, returnType, context, request::asBytes);
+			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, returnType, context, request::asBytes);
 			return decodeOrThrow(response, errorType, returnType);
 		}
 		if (returnType == File.class) {
 			File destination = resolveDestinationFile(method, args);
-			HttpResponse<byte[]> response = executeSyncWithRetry(method, byte[].class, context, request::asBytes);
+			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, byte[].class, context, request::asBytes);
 			byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
-		HttpResponse<String> response = executeSyncWithRetry(method, returnType, context,
-				wrapWithCache(request, context, request::asString));
+		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, returnType, context,
+				cacheCoordinator.wrapWithCache(request, context, request::asString));
 		return decodeOrThrow(response, errorType, returnType);
 	}
 
@@ -444,8 +421,8 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<String> response = executeSyncWithRetry(errorType, returnType, context,
-				wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
+		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, returnType, context,
+				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
 				retryBackoffMultiplier, retryOnStatus);
 		return decodeOrThrow(response, errorType, returnType);
 	}
@@ -472,7 +449,7 @@ public class RequestExecutor {
 			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
 			int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
 		return (byte[]) decodeOrThrow(response, errorType, byte[].class);
 	}
@@ -500,7 +477,7 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
 		byte[] bytes = (byte[]) decodeOrThrow(response, errorType, byte[].class);
 		return writeToFile(destination, bytes);
@@ -533,8 +510,8 @@ public class RequestExecutor {
 			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<String> response = executeSyncWithRetry(errorType, innerType, context,
-				wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
+		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, innerType, context,
+				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
 				retryBackoffMultiplier, retryOnStatus);
 		return (RipResponse<?>) wrapResponse(response, decodeOrThrow(response, errorType, innerType));
 	}
@@ -561,7 +538,7 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		request = applyInterceptors(request, context);
-		HttpResponse<byte[]> response = executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
+		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
 		@SuppressWarnings("unchecked")
 		RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
@@ -593,8 +570,8 @@ public class RequestExecutor {
 			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, returnType, context,
-				wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
+		return retryExecutor.executeAsyncWithRetry(errorType, returnType, context,
+				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
 				.thenApply(response -> decodeOrThrow(response, errorType, returnType));
 	}
@@ -621,7 +598,7 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
 				.thenApply(response -> (byte[]) decodeOrThrow(response, errorType, byte[].class));
 	}
@@ -649,7 +626,7 @@ public class RequestExecutor {
 			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
 				.thenApply(response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
 	}
@@ -681,8 +658,8 @@ public class RequestExecutor {
 			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
 			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, innerType, context,
-				wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
+		return retryExecutor.executeAsyncWithRetry(errorType, innerType, context,
+				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
 				.thenApply(response -> (RipResponse<?>) wrapResponse(response,
 						decodeOrThrow(response, errorType, innerType)));
@@ -710,7 +687,7 @@ public class RequestExecutor {
 			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = applyInterceptors(request, context);
-		return executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
+		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
 				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus).thenApply(response -> {
 					@SuppressWarnings("unchecked")
 					RipResponse<byte[]> result = (RipResponse<byte[]>) wrapResponse(response,
@@ -769,378 +746,14 @@ public class RequestExecutor {
 	}
 
 	/**
-	 * Wraps a {@code String}-decoding network call with response caching -
-	 * only ever engaged for a {@code GET} whose client has a {@link Cache}
-	 * configured and isn't {@code @NoCache}, in which case {@code call}
-	 * itself may never run at all (a fresh cache hit). Not applicable to a
-	 * {@code byte[]}/{@code File} response - see {@link Cache}'s javadoc.
-	 *
-	 * @param request the request about to be sent - mutated with
-	 *                {@code If-None-Match}/{@code If-Modified-Since} when a
-	 *                stale, revalidatable entry exists
-	 * @param context this call's context, used for its HTTP method, URL,
-	 *                and {@code @NoCache} marker
-	 * @param call    the real network call
-	 * @return {@code call} unchanged if caching doesn't apply here,
-	 *         otherwise a wrapping supplier that may serve a cached response
-	 *         instead of invoking {@code call} at all
+	 * Notifies every applicable interceptor's {@code afterResponse}, in
+	 * "onion" (LIFO) order. Package-private rather than {@code private}
+	 * since {@link RetryExecutor} calls back into the owning instance for
+	 * this - retry needs to report every attempt, not just the final one,
+	 * and interceptor state (the global list plus this client's own) lives
+	 * here, not on {@code RetryExecutor}.
 	 */
-	private Supplier<HttpResponse<String>> wrapWithCache(HttpRequest<?> request, RequestContext context,
-			Supplier<HttpResponse<String>> call) {
-		Cache cache = getCache();
-		if (!isCacheable(cache, context)) {
-			return call;
-		}
-		String key = cacheKey(context);
-		return () -> {
-			CachedResponse cached = cache.get(key);
-			boolean sameVariant = cached != null && matchesVary(cached, request);
-			boolean differentVariantCached = cached != null && !sameVariant;
-			if (sameVariant && cached.isFresh()) {
-				return toSyntheticResponse(cached);
-			}
-			if (sameVariant) {
-				applyRevalidationHeaders(request, cached);
-			}
-			return reconcileCache(cache, key, sameVariant ? cached : null, differentVariantCached, call.get(),
-					request);
-		};
-	}
-
-	/**
-	 * The async counterpart of {@link #wrapWithCache}, for a
-	 * {@code CompletableFuture}-returning call.
-	 *
-	 * @param request the request about to be sent
-	 * @param context this call's context
-	 * @param call    the real, asynchronous network call
-	 * @return {@code call} unchanged if caching doesn't apply here,
-	 *         otherwise a wrapping supplier that may complete immediately
-	 *         with a cached response instead of invoking {@code call} at all
-	 */
-	private Supplier<CompletableFuture<HttpResponse<String>>> wrapWithCacheAsync(HttpRequest<?> request,
-			RequestContext context, Supplier<CompletableFuture<HttpResponse<String>>> call) {
-		Cache cache = getCache();
-		if (!isCacheable(cache, context)) {
-			return call;
-		}
-		String key = cacheKey(context);
-		return () -> {
-			CachedResponse cached = cache.get(key);
-			boolean sameVariant = cached != null && matchesVary(cached, request);
-			boolean differentVariantCached = cached != null && !sameVariant;
-			if (sameVariant && cached.isFresh()) {
-				return CompletableFuture.completedFuture(toSyntheticResponse(cached));
-			}
-			if (sameVariant) {
-				applyRevalidationHeaders(request, cached);
-			}
-			CachedResponse staleEntry = sameVariant ? cached : null;
-			return call.get().thenApply(
-					response -> reconcileCache(cache, key, staleEntry, differentVariantCached, response, request));
-		};
-	}
-
-	private static boolean isCacheable(Cache cache, RequestContext context) {
-		return cache != null && context.getHttpMethod() == HTTPMethod.GET
-				&& !Boolean.TRUE.equals(context.getAttribute(NO_CACHE_ATTRIBUTE));
-	}
-
-	private static String cacheKey(RequestContext context) {
-		return context.getHttpMethod() + " " + context.getUrl();
-	}
-
-	private static void applyRevalidationHeaders(HttpRequest<?> request, CachedResponse cached) {
-		String etag = cached.getHeader("ETag");
-		if (etag != null) {
-			request.headerReplace("If-None-Match", etag);
-		}
-		String lastModified = cached.getHeader("Last-Modified");
-		if (lastModified != null) {
-			request.headerReplace("If-Modified-Since", lastModified);
-		}
-	}
-
-	/**
-	 * Reconciles a real network response against {@code staleEntry} (the
-	 * previously-cached entry for this exact request's {@code Vary}
-	 * variant, if any) once a call has actually gone out - either because
-	 * there was nothing cached, a different variant was cached, or a stale
-	 * entry needed revalidating. A {@code 304 Not Modified} against a known
-	 * stale entry refreshes its freshness window and hands back its stored
-	 * body unchanged; any other outcome stores {@code key} per the
-	 * response's own {@code Cache-Control}/{@code ETag}/{@code Last-Modified}
-	 * (snapshotting this request's values for whatever its {@code Vary}
-	 * header names), or evicts it - unless {@code leaveExistingEntryAlone}
-	 * is set, since evicting then would wrongly discard a still-valid,
-	 * different variant this call has nothing to do with.
-	 */
-	private static HttpResponse<String> reconcileCache(Cache cache, String key, CachedResponse staleEntry,
-			boolean leaveExistingEntryAlone, HttpResponse<String> response, HttpRequest<?> request) {
-		Map<String, List<String>> responseHeaders = toHeaderMap(response.getHeaders());
-		if (response.getStatus() == 304 && staleEntry != null) {
-			CachedResponse refreshed = new CachedResponse(staleEntry.getStatus(), staleEntry.getHeaders(),
-					staleEntry.getBody(), freshUntil(responseHeaders), staleEntry.getVaryRequestHeaders());
-			cache.put(key, refreshed);
-			return toSyntheticResponse(refreshed);
-		}
-		if (isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
-			Map<String, String> varySnapshot = captureVaryValues(request, varyHeaderNames(responseHeaders));
-			cache.put(key, new CachedResponse(response.getStatus(), responseHeaders, response.getBody(),
-					freshUntil(responseHeaders), varySnapshot));
-		} else if (!leaveExistingEntryAlone) {
-			cache.evict(key);
-		}
-		return response;
-	}
-
-	private static boolean isStorable(Map<String, List<String>> headers) {
-		CacheDirectives directives = CacheDirectives.parse(firstHeader(headers, "Cache-Control"));
-		if (directives.noStore || isWildcardVary(headers)) {
-			return false;
-		}
-		return directives.maxAgeSeconds != null || firstHeader(headers, "ETag") != null
-				|| firstHeader(headers, "Last-Modified") != null;
-	}
-
-	/**
-	 * Whether {@code cached} is usable at all for the current request - its
-	 * response had no {@code Vary} header (matches every request), or this
-	 * request's current values for every header {@code Vary} named are
-	 * identical to the ones snapshotted when {@code cached} was stored.
-	 */
-	private static boolean matchesVary(CachedResponse cached, HttpRequest<?> request) {
-		for (Map.Entry<String, String> varyHeader : cached.getVaryRequestHeaders().entrySet()) {
-			String currentValue = request.getHeaders().getFirst(varyHeader.getKey());
-			if (!Objects.equals(varyHeader.getValue(), currentValue)) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	/**
-	 * A {@code Vary: *} response varies unpredictably (by definition,
-	 * un-cacheable via header comparison) and must never be stored - the
-	 * one {@code Vary} value that means "don't cache this at all" rather
-	 * than "cache one variant per combination of these header values".
-	 */
-	private static boolean isWildcardVary(Map<String, List<String>> headers) {
-		for (String name : varyHeaderNames(headers)) {
-			if (name.equals("*")) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	private static List<String> varyHeaderNames(Map<String, List<String>> headers) {
-		String vary = firstHeader(headers, "Vary");
-		if (vary == null) {
-			return Collections.emptyList();
-		}
-		List<String> names = new ArrayList<>();
-		for (String name : vary.split(",")) {
-			String trimmed = name.trim();
-			if (!trimmed.isEmpty()) {
-				names.add(trimmed);
-			}
-		}
-		return names;
-	}
-
-	private static Map<String, String> captureVaryValues(HttpRequest<?> request, List<String> varyHeaderNames) {
-		if (varyHeaderNames.isEmpty()) {
-			return Collections.emptyMap();
-		}
-		Map<String, String> values = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-		for (String name : varyHeaderNames) {
-			values.put(name, request.getHeaders().getFirst(name));
-		}
-		return values;
-	}
-
-	private static long freshUntil(Map<String, List<String>> headers) {
-		CacheDirectives directives = CacheDirectives.parse(firstHeader(headers, "Cache-Control"));
-		if (!directives.noCache && directives.maxAgeSeconds != null) {
-			return System.currentTimeMillis() + directives.maxAgeSeconds * 1000L;
-		}
-		return System.currentTimeMillis(); // no (usable) freshness window - always revalidate
-	}
-
-	private static String firstHeader(Map<String, List<String>> headers, String name) {
-		List<String> values = headers.get(name);
-		return values == null || values.isEmpty() ? null : values.get(0);
-	}
-
-	/** Parsed {@code Cache-Control} response directives relevant to caching a {@code GET}. */
-	private static final class CacheDirectives {
-		final boolean noStore;
-		final boolean noCache;
-		final Long maxAgeSeconds;
-
-		private CacheDirectives(boolean noStore, boolean noCache, Long maxAgeSeconds) {
-			this.noStore = noStore;
-			this.noCache = noCache;
-			this.maxAgeSeconds = maxAgeSeconds;
-		}
-
-		static CacheDirectives parse(String headerValue) {
-			if (headerValue == null) {
-				return new CacheDirectives(false, false, null);
-			}
-			boolean noStore = false;
-			boolean noCache = false;
-			Long maxAgeSeconds = null;
-			for (String directive : headerValue.split(",")) {
-				String trimmed = directive.trim().toLowerCase(Locale.ROOT);
-				if (trimmed.equals("no-store")) {
-					noStore = true;
-				} else if (trimmed.equals("no-cache")) {
-					noCache = true;
-				} else if (trimmed.startsWith("max-age=")) {
-					maxAgeSeconds = parseMaxAge(trimmed.substring("max-age=".length()).trim());
-				}
-			}
-			return new CacheDirectives(noStore, noCache, maxAgeSeconds);
-		}
-
-		private static Long parseMaxAge(String value) {
-			try {
-				return Math.max(0L, Long.parseLong(value));
-			} catch (NumberFormatException e) {
-				return null; // malformed - fail open, same as no max-age at all
-			}
-		}
-	}
-
-	private static HttpResponse<String> toSyntheticResponse(CachedResponse cached) {
-		kong.unirest.Headers headers = new kong.unirest.Headers();
-		cached.getHeaders().forEach((name, values) -> values.forEach(value -> headers.add(name, value)));
-		return new CachedHttpResponse<>(cached.getStatus(), headers, cached.getBody());
-	}
-
-	/**
-	 * A {@code kong.unirest.HttpResponse} backed by a {@link CachedResponse}
-	 * instead of an actual network round trip - handed to the same
-	 * {@code decodeOrThrow}/{@code notifyAfterResponse}/{@code wrapResponse}
-	 * machinery a real response would go through, so a cache hit is
-	 * decoded, reported to interceptors, and wrapped in a
-	 * {@code RipResponse} exactly like any other response. Only
-	 * {@link #getStatus()}/{@link #getBody()}/{@link #getHeaders()} are ever
-	 * actually exercised by that machinery; the rest of this interface is
-	 * implemented plainly (a cached entry is never itself a failure status,
-	 * since only a successful response is ever stored).
-	 */
-	private static final class CachedHttpResponse<T> implements HttpResponse<T> {
-		private final int status;
-		private final kong.unirest.Headers headers;
-		private final T body;
-
-		CachedHttpResponse(int status, kong.unirest.Headers headers, T body) {
-			this.status = status;
-			this.headers = headers;
-			this.body = body;
-		}
-
-		@Override
-		public int getStatus() {
-			return status;
-		}
-
-		@Override
-		public String getStatusText() {
-			return "";
-		}
-
-		@Override
-		public kong.unirest.Headers getHeaders() {
-			return headers;
-		}
-
-		@Override
-		public T getBody() {
-			return body;
-		}
-
-		@Override
-		public Optional<UnirestParsingException> getParsingError() {
-			return Optional.empty();
-		}
-
-		@Override
-		public <V> V mapBody(Function<T, V> func) {
-			return func.apply(body);
-		}
-
-		@Override
-		public <V> HttpResponse<V> map(Function<T, V> func) {
-			return new CachedHttpResponse<>(status, headers, func.apply(body));
-		}
-
-		@Override
-		public HttpResponse<T> ifSuccess(Consumer<HttpResponse<T>> consumer) {
-			if (isSuccess()) {
-				consumer.accept(this);
-			}
-			return this;
-		}
-
-		@Override
-		public HttpResponse<T> ifFailure(Consumer<HttpResponse<T>> consumer) {
-			if (!isSuccess()) {
-				consumer.accept(this);
-			}
-			return this;
-		}
-
-		@Override
-		public <E> HttpResponse<T> ifFailure(Class<? extends E> type, Consumer<HttpResponse<E>> consumer) {
-			return this;
-		}
-
-		@Override
-		public boolean isSuccess() {
-			return status >= 200 && status < 300;
-		}
-
-		@Override
-		public <E> E mapError(Class<? extends E> type) {
-			return null;
-		}
-
-		@Override
-		public Cookies getCookies() {
-			return new Cookies();
-		}
-
-		@Override
-		public HttpRequestSummary getRequestSummary() {
-			return new HttpRequestSummary() {
-				@Override
-				public HttpMethod getHttpMethod() {
-					return HttpMethod.GET;
-				}
-
-				@Override
-				public String getUrl() {
-					return "";
-				}
-
-				@Override
-				public String getRawPath() {
-					return "";
-				}
-
-				@Override
-				public String asString() {
-					return "GET";
-				}
-			};
-		}
-	}
-
-	private <B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
+	<B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
 			Class<?> returnType) {
 		List<RequestInterceptor> interceptors = effectiveInterceptors();
 		if (interceptors.isEmpty()) {
@@ -1161,25 +774,25 @@ public class RequestExecutor {
 		if (isRipResponseType(futureInnerType)) {
 			Class<?> innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
-				return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
+				return retryExecutor.executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
 						.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
 			}
-			return executeAsyncWithRetry(method, innerType, context,
-					wrapWithCacheAsync(request, context, request::asStringAsync))
+			return retryExecutor.executeAsyncWithRetry(method, innerType, context,
+					cacheCoordinator.wrapWithCacheAsync(request, context, request::asStringAsync))
 					.thenApply(response -> wrapResponse(response, decodeOrThrow(response, errorType, innerType)));
 		}
 		Class<?> innerType = requireClass(futureInnerType, method);
 		if (innerType == byte[].class) {
-			return executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
+			return retryExecutor.executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
 					.thenApply(response -> decodeOrThrow(response, errorType, innerType));
 		}
 		if (innerType == File.class) {
 			File destination = resolveDestinationFile(method, args);
-			return executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync).thenApply(
+			return retryExecutor.executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync).thenApply(
 					response -> writeToFile(destination, (byte[]) decodeOrThrow(response, errorType, byte[].class)));
 		}
-		return executeAsyncWithRetry(method, innerType, context,
-				wrapWithCacheAsync(request, context, request::asStringAsync))
+		return retryExecutor.executeAsyncWithRetry(method, innerType, context,
+				cacheCoordinator.wrapWithCacheAsync(request, context, request::asStringAsync))
 				.thenApply(response -> decodeOrThrow(response, errorType, innerType));
 	}
 
@@ -1240,144 +853,18 @@ public class RequestExecutor {
 		return (String) rawBody;
 	}
 
-	private static boolean isSuccessStatus(int status) {
+	/** Package-private so {@link CacheCoordinator} can share this instead of duplicating it. */
+	static boolean isSuccessStatus(int status) {
 		return status >= 200 && status < 300;
 	}
 
-	private <B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
-			Supplier<HttpResponse<B>> call) {
-		Class<?> errorType = errorTypeOf(method);
-		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
-		if (retry == null) {
-			return executeSyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
-		}
-		return executeSyncWithRetry(errorType, returnType, context, call, true, retry.times(), retry.delayMillis(),
-				retry.backoffMultiplier(), retry.retryOnStatus());
-	}
-
-	private static Class<?> errorTypeOf(Method method) {
+	/** Package-private so {@link RetryExecutor} can share this instead of duplicating it. */
+	static Class<?> errorTypeOf(Method method) {
 		if (method == null) {
 			return null;
 		}
 		ErrorType errorType = method.getAnnotation(ErrorType.class);
 		return errorType == null ? null : errorType.value();
-	}
-
-	/**
-	 * Non-reflective counterpart taking {@code @Retry}'s values and
-	 * {@code @ErrorType}'s value as literal arguments instead of annotation
-	 * lookups, shared by the reflective path above (which derives both from
-	 * {@code method}) and every {@code processGenerated*} entry point used
-	 * by compile-time-generated code, which has both as compile-time
-	 * literals (or {@code null}/{@code false} if the method has neither).
-	 */
-	private <B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Class<?> returnType, RequestContext context,
-			Supplier<HttpResponse<B>> call, boolean hasRetry, int times, long delayMillis, double backoffMultiplier,
-			int[] retryOnStatus) {
-		if (!hasRetry) {
-			HttpResponse<B> response = call.get();
-			notifyAfterResponse(context, response, errorType, returnType);
-			return response;
-		}
-		long delay = delayMillis;
-		for (int attempt = 1;; attempt++) {
-			HttpResponse<B> response = null;
-			RuntimeException failure = null;
-			try {
-				response = call.get();
-				notifyAfterResponse(context, response, errorType, returnType);
-			} catch (RuntimeException e) {
-				failure = e;
-			}
-			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
-			if (!retryable || attempt >= times) {
-				if (failure != null) {
-					throw failure;
-				}
-				return response;
-			}
-			sleep(delay);
-			delay = nextDelay(delay, backoffMultiplier);
-		}
-	}
-
-	private <B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
-			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
-		Class<?> errorType = errorTypeOf(method);
-		Retry retry = method.getAnnotation(Retry.class);
-		if (retry == null) {
-			return executeAsyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, EMPTY_STATUS_CODES);
-		}
-		return executeAsyncWithRetry(errorType, returnType, context, call, true, retry.times(), retry.delayMillis(),
-				retry.backoffMultiplier(), retry.retryOnStatus());
-	}
-
-	/**
-	 * Non-reflective counterpart taking {@code @Retry}'s values and
-	 * {@code @ErrorType}'s value as literal arguments, mirroring
-	 * {@link #executeSyncWithRetry(Class, Class, RequestContext, Supplier, boolean, int, long, double, int[])}
-	 * for the async path.
-	 */
-	private <B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Class<?> returnType,
-			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call, boolean hasRetry, int times,
-			long delayMillis, double backoffMultiplier, int[] retryOnStatus) {
-		if (!hasRetry) {
-			return call.get().thenApply(response -> {
-				notifyAfterResponse(context, response, errorType, returnType);
-				return response;
-			});
-		}
-		return attemptAsync(call, errorType, returnType, context, times, backoffMultiplier, retryOnStatus, 1,
-				delayMillis);
-	}
-
-	private <B> CompletableFuture<HttpResponse<B>> attemptAsync(Supplier<CompletableFuture<HttpResponse<B>>> call,
-			Class<?> errorType, Class<?> returnType, RequestContext context, int times, double backoffMultiplier,
-			int[] retryOnStatus, int attempt, long delay) {
-		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
-		call.get().whenComplete((response, failure) -> {
-			if (response != null) {
-				notifyAfterResponse(context, response, errorType, returnType);
-			}
-			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
-			if (!retryable || attempt >= times) {
-				if (failure != null) {
-					result.completeExceptionally(failure);
-				} else {
-					result.complete(response);
-				}
-				return;
-			}
-			RETRY_SCHEDULER.schedule(
-					() -> attemptAsync(call, errorType, returnType, context, times, backoffMultiplier, retryOnStatus,
-							attempt + 1, nextDelay(delay, backoffMultiplier))
-							.whenComplete((r, t) -> {
-								if (t != null) {
-									result.completeExceptionally(t);
-								} else {
-									result.complete(r);
-								}
-							}),
-					delay, TimeUnit.MILLISECONDS);
-		});
-		return result;
-	}
-
-	private static boolean isRetryableStatus(int status, int[] retryOnStatus) {
-		return IntStream.of(retryOnStatus).anyMatch(code -> code == status);
-	}
-
-	private static long nextDelay(long delay, double backoffMultiplier) {
-		return (long) (delay * backoffMultiplier);
-	}
-
-	private static void sleep(long millis) {
-		try {
-			Thread.sleep(millis);
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-			throw new RestInPeaceException("Interrupted while waiting to retry.", e);
-		}
 	}
 
 	private Type resolveFutureInnerType(Method method) {
@@ -1420,7 +907,8 @@ public class RequestExecutor {
 		return new RipResponse<>(response.getStatus(), toHeaderMap(response.getHeaders()), decodedBody);
 	}
 
-	private static Map<String, List<String>> toHeaderMap(kong.unirest.Headers headers) {
+	/** Package-private so {@link CacheCoordinator} can share this instead of duplicating it. */
+	static Map<String, List<String>> toHeaderMap(kong.unirest.Headers headers) {
 		Map<String, List<String>> result = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 		headers.all().forEach(header -> result.computeIfAbsent(header.getName(), key -> new ArrayList<>())
 				.add(header.getValue()));
@@ -1555,7 +1043,7 @@ public class RequestExecutor {
 
 	/**
 	 * Non-reflective counterpart of {@link #applyTimeout(HttpRequest, Method)}
-	 * for a compile-time-generated call (see {@link #processGeneratedRequest}) -
+	 * for a compile-time-generated call (see {@link #createGeneratedRequest}) -
 	 * {@code connectMillis}/{@code readMillis} are the generated method's
 	 * {@code @Timeout} values baked in as literals, or {@code -1} (matching
 	 * {@link Timeout}'s own "unset" default) for a method with no
@@ -1870,22 +1358,13 @@ public class RequestExecutor {
 	 *                   {@code null}-valued entry is skipped
 	 */
 	public void appendFormFieldMap(List<String> formFields, Map<?, ?> fieldMap) {
-		fieldMap.forEach((name, value) -> {
-			if (value != null) {
-				appendFormField(formFields, String.valueOf(name), value);
-			}
-		});
+		formEncoder.appendFormFieldMap(formFields, fieldMap);
 	}
 
 	/**
 	 * Appends one {@code @Field}/{@code @FieldMap} entry to a
-	 * {@code @FormUrlEncoded} method's accumulated body, repeating {@code name}
-	 * once per element - instead of once with a single mangled
-	 * {@code toString()} value - when {@code value} is a {@code Collection}
-	 * (e.g. a {@code List<String>} of tags producing {@code tag=a&tag=b}),
-	 * the same convention {@link #applyQueryValue} uses for
-	 * {@code @QueryParam}. Also used directly by compile-time-generated code
-	 * for a {@code @Field} parameter.
+	 * {@code @FormUrlEncoded} method's accumulated body. Also used directly
+	 * by compile-time-generated code for a {@code @Field} parameter.
 	 *
 	 * @param formFields the accumulator to append encoded {@code name=value}
 	 *                   pairs to
@@ -1895,49 +1374,21 @@ public class RequestExecutor {
 	 *                   once via {@code String.valueOf(...)}
 	 */
 	public void appendFormField(List<String> formFields, String name, Object value) {
-		if (value instanceof Collection) {
-			for (Object element : (Collection<?>) value) {
-				if (element != null) {
-					formFields.add(encodeFormPair(name, element));
-				}
-			}
-		} else {
-			formFields.add(encodeFormPair(name, value));
-		}
+		formEncoder.appendFormField(formFields, name, value);
 	}
 
 	/**
 	 * Finalizes a {@code @FormUrlEncoded} method's accumulated
-	 * {@code name=value} pairs into the request's body, joined with
-	 * {@code &} and sent as {@code application/x-www-form-urlencoded} - the
-	 * generated-code counterpart of the reflective path's own finalization in
-	 * {@link #applyParams}. Unlike {@code @Multipart}, Unirest has no
-	 * dedicated url-encoded body builder to accumulate into directly, so the
-	 * encoded string is built here instead and applied as a plain body.
+	 * {@code name=value} pairs into the request's body - the generated-code
+	 * counterpart of the reflective path's own finalization in
+	 * {@link #applyParams}.
 	 *
 	 * @param request    the request to apply the encoded body to
 	 * @param formFields the accumulated encoded {@code name=value} pairs
 	 * @return {@code request}, with the encoded body applied
 	 */
 	public HttpRequest<?> applyFormUrlEncodedBody(HttpRequest<?> request, List<String> formFields) {
-		if (!(request instanceof HttpRequestWithBody)) {
-			throw new RestInPeaceException(
-					"A @FormUrlEncoded request was attempted on an HTTP method that does not support a request body.");
-		}
-		String body = String.join("&", formFields);
-		return ((HttpRequestWithBody) request).body(body).contentType("application/x-www-form-urlencoded");
-	}
-
-	private static String encodeFormPair(String name, Object value) {
-		return encodeFormValue(name) + "=" + encodeFormValue(value);
-	}
-
-	private static String encodeFormValue(Object value) {
-		try {
-			return URLEncoder.encode(String.valueOf(value), "UTF-8");
-		} catch (UnsupportedEncodingException e) {
-			throw new RestInPeaceException("UTF-8 encoding is not supported by this JVM.", e);
-		}
+		return formEncoder.applyFormUrlEncodedBody(request, formFields);
 	}
 
 	/**
