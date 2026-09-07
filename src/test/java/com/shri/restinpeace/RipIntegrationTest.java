@@ -1398,6 +1398,34 @@ class RipIntegrationTest {
 				order);
 	}
 
+	@Test
+	void getClient_withRipClientConfigInterceptor_runsForThatClientOnly() {
+		List<String> order = new ArrayList<>();
+		LocalApi customApi = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().interceptors(Collections.singletonList(namedInterceptor("custom", order)))
+						.build());
+		LocalApi defaultApi = RIP.getClient(LocalApi.class);
+
+		defaultApi.get(port, "abc", 7, "custom-value");
+		assertEquals(Collections.emptyList(), order);
+
+		customApi.get(port, "abc", 7, "custom-value");
+		assertEquals(Arrays.asList("custom-before", "custom-after"), order);
+	}
+
+	@Test
+	void getClient_withGlobalAndRipClientConfigInterceptors_globalBracketsClientSpecific() {
+		List<String> order = new ArrayList<>();
+		RIP.addInterceptor(namedInterceptor("global", order));
+		LocalApi customApi = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().interceptors(Collections.singletonList(namedInterceptor("custom", order)))
+						.build());
+
+		customApi.get(port, "abc", 7, "custom-value");
+
+		assertEquals(Arrays.asList("global-before", "custom-before", "custom-after", "global-after"), order);
+	}
+
 	private static RequestInterceptor namedInterceptor(String name, List<String> order) {
 		return new RequestInterceptor() {
 			@Override

@@ -228,6 +228,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   status, durationMillis)`) - the metrics counterpart of
   `LoggingInterceptor`, for wiring RIP's calls into Micrometer or any other
   metrics registry without RIP depending on one itself.
+- `RipClientConfig.Builder.interceptors(List<RequestInterceptor>)` sets
+  interceptors for one client only, for a concern specific to that client
+  (e.g. one service's own auth scheme) instead of every call RIP makes.
+  Previously `RIP.addInterceptor(...)` was the only registration path, and
+  it applied globally with no way to scope it to a single client. Runs in
+  addition to, not instead of, every globally registered interceptor -
+  global interceptors bracket everything, including a client's own, the
+  same "onion" ordering already documented for global interceptors.
 
 ### Changed
 

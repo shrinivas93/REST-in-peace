@@ -3,6 +3,9 @@ package com.shri.restinpeace;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.Collections;
 
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +13,7 @@ import kong.unirest.JsonObjectMapper;
 import kong.unirest.ObjectMapper;
 
 import com.shri.restinpeace.cache.InMemoryCache;
+import com.shri.restinpeace.interceptor.RequestInterceptor;
 
 class RipClientConfigTest {
 
@@ -23,15 +27,18 @@ class RipClientConfigTest {
 		assertNull(config.getProxyHost());
 		assertNull(config.getObjectMapper());
 		assertNull(config.getCache());
+		assertTrue(config.getInterceptors().isEmpty());
 	}
 
 	@Test
 	void build_withAllSettings_returnsThem() {
 		ObjectMapper objectMapper = new JsonObjectMapper();
 		InMemoryCache cache = new InMemoryCache();
+		RequestInterceptor interceptor = new RequestInterceptor() {
+		};
 		RipClientConfig config = RipClientConfig.builder().baseUrl("https://api.example.com").connectTimeoutMillis(1_000)
 				.readTimeoutMillis(5_000).proxy("proxy.example.com", 8080, "user", "pass").objectMapper(objectMapper)
-				.cache(cache).build();
+				.cache(cache).interceptors(Collections.singletonList(interceptor)).build();
 
 		assertEquals("https://api.example.com", config.getBaseUrl());
 		assertEquals(1_000, config.getConnectTimeoutMillis());
@@ -42,6 +49,14 @@ class RipClientConfigTest {
 		assertEquals("pass", config.getProxyPassword());
 		assertEquals(objectMapper, config.getObjectMapper());
 		assertEquals(cache, config.getCache());
+		assertEquals(Collections.singletonList(interceptor), config.getInterceptors());
+	}
+
+	@Test
+	void interceptors_null_normalizesToEmptyList() {
+		RipClientConfig config = RipClientConfig.builder().interceptors(null).build();
+
+		assertTrue(config.getInterceptors().isEmpty());
 	}
 
 	@Test
