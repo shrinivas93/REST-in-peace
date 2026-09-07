@@ -809,10 +809,22 @@ up.
       attempt, since every attempt gets its own `afterResponse` notification
       - verified with a dedicated test asserting three samples
       (`503, 503, 200`) for a call that fails twice before succeeding.
-- [ ] **A pagination helper** — an annotation or small utility that follows a
-      `next`/cursor field automatically and hands back a lazy
+- [ ] **Parked: a pagination helper** — an annotation or small utility that
+      follows a `next`/cursor field automatically and hands back a lazy
       `Iterator`/`Stream` of pages, using the `@Url` mechanism above under
-      the hood.
+      the hood. Parked rather than started: a first design sketch (a fixed
+      `Page<T>` interface with `getItems()`/`getNextUrl()`) turned out not
+      to be generic enough - real APIs disagree on both the item-list field
+      name (`results`/`data`/`orders`) and the next-page pointer's shape
+      (a full URL vs. a bare cursor needing re-injection as a query param
+      vs. a `Link` response header, GitHub-style). A revised sketch
+      (`@Paginated(itemsField, nextUrlField | nextCursorField,
+      cursorQueryParam)`, decoding `Page<T>` generically the same way
+      `RipResponse<T>` already resolves `T`) covers the first two but still
+      leaves the header-based case as a structurally different annotation
+      shape, and nested field paths unaddressed - enough open surface area
+      to park until real usage narrows which shape(s) actually matter,
+      rather than building against a guess.
 - [ ] **Spring/Micronaut integration module** — auto-register every
       `@RestClient` interface found on the classpath as a bean, the way
       OpenFeign integrates with Spring Cloud. This is what actually gets a
