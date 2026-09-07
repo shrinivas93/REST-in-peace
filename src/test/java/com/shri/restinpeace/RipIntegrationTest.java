@@ -76,6 +76,7 @@ import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.interceptor.CorrelationIdInterceptor;
 import com.shri.restinpeace.interceptor.HeaderInterceptor;
 import com.shri.restinpeace.interceptor.LoggingInterceptor;
+import com.shri.restinpeace.interceptor.MetricsInterceptor;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
 import com.shri.restinpeace.multipart.PartValue;
@@ -1543,6 +1544,38 @@ class RipIntegrationTest {
 
 		String headerId = LAST_REQUEST.get().header(CorrelationIdInterceptor.DEFAULT_HEADER_NAME);
 		assertEquals(headerId, idSeenByOtherInterceptor.get());
+	}
+
+	@Test
+	void metricsInterceptor_reportsMethodUrlStatusAndDuration() {
+		List<String> methods = new ArrayList<>();
+		List<Integer> statuses = new ArrayList<>();
+		List<Long> durations = new ArrayList<>();
+		RIP.addInterceptor(new MetricsInterceptor((httpMethod, url, status, durationMillis) -> {
+			methods.add(httpMethod);
+			statuses.add(status);
+			durations.add(durationMillis);
+		}));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals(Collections.singletonList("GET"), methods);
+		assertEquals(Collections.singletonList(200), statuses);
+		assertEquals(1, durations.size());
+		assertTrue(durations.get(0) >= 0);
+	}
+
+	@Test
+	void metricsInterceptor_retriedCall_reportsOneSampleForEveryAttempt() {
+		List<Integer> statuses = new ArrayList<>();
+		RIP.addInterceptor(new MetricsInterceptor((httpMethod, url, status, durationMillis) -> statuses.add(status)));
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getFlaky(port, "x");
+
+		assertEquals("ok", result);
+		assertEquals(Arrays.asList(503, 503, 200), statuses);
 	}
 
 	@Test

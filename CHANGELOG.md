@@ -223,6 +223,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   attempt - so a server that honors idempotency keys (Stripe, PayPal,
   Adyen, Square) can recognize a retried `POST`/`PATCH` as the same
   logical request instead of executing it twice. Default `false`.
+- `MetricsInterceptor` times every request and reports it, once its
+  response comes back, to a `MetricsSink` (`recordCall(httpMethod, url,
+  status, durationMillis)`) - the metrics counterpart of
+  `LoggingInterceptor`, for wiring RIP's calls into Micrometer or any other
+  metrics registry without RIP depending on one itself.
 
 ### Changed
 

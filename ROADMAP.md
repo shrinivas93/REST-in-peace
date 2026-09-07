@@ -759,13 +759,30 @@ up.
             and a valid one compiles clean and produces a real generated
             class. See the design doc's §9.10. **All four steps are now
             complete - this roadmap item is done.**
-- [ ] **A pluggable `CallAdapter`-style return-type system** — return types
-      are currently hardcoded in `RestRequestProcessor` (String/void/POJO/
-      `CompletableFuture`/`RipResponse`). Extracting that into a small
-      adapter interface would let someone add Kotlin `suspend fun` support,
-      RxJava's `Single`/`Observable`, or Reactor's `Mono`/`Flux` as a
-      separate optional module, without RIP itself depending on any of them
-      or bloating the core.
+- [ ] **Parked: a pluggable `CallAdapter`-style return-type system** — return
+      types are currently hardcoded in `RestRequestProcessor` (String/void/
+      POJO/`CompletableFuture`/`RipResponse`). Extracting that into a small
+      adapter interface would let someone add RxJava's `Single`/`Observable`
+      or Reactor's `Mono`/`Flux` as a separate optional module, without RIP
+      itself depending on any of them or bloating the core. Parked rather
+      than started: a design pass surfaced two open questions worth
+      resolving before writing code, not during. First, RIP's two dispatch
+      paths pull in different directions here - the reflective proxy can
+      resolve a `CallAdapter` at runtime via a registry
+      (`RIP.addCallAdapter(...)`), but the compile-time generator needs to
+      know a method's return shape during annotation processing, before any
+      such registration has run - so an adapter-produced return type would
+      need to be one more entry in the existing "disqualify compile-time
+      generation, fall back to the reflective proxy" list, the same way a
+      generic `List<T>` return already is. Workable, but a real scope
+      boundary to commit to up front. Second, a Kotlin `suspend fun` isn't
+      actually `CallAdapter`-shaped at all - the Kotlin compiler rewrites it
+      to take a `Continuation<T>` parameter and return `Object`, closer to
+      its own compiler-plugin-shaped roadmap item than an adapter
+      implementation - so it needs to be scoped out of this item explicitly
+      rather than promised implicitly. Revisit once there's a concrete
+      RxJava/Reactor consumer motivating it, with the reflective-path-only
+      scope boundary decided up front.
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/
@@ -790,14 +807,41 @@ up.
 - [ ] **Circuit breaker / bulkhead per client** — a natural extension of
       `RipClientConfig`: stop hammering a downstream that's clearly down,
       the natural next step after retry and timeout.
-- [ ] **A pre-built `MetricsInterceptor`** — Micrometer-style counters/timers,
-      following the exact pattern `LoggingInterceptor`/`CorrelationIdInterceptor`
-      already established. Cheap to build, immediately useful, zero new
-      dependency if done as a `Consumer`-based sink like `LoggingInterceptor`.
-- [ ] **A pagination helper** — an annotation or small utility that follows a
-      `next`/cursor field automatically and hands back a lazy
+- [x] **A pre-built `MetricsInterceptor`** — times every request and reports
+      it, once its response comes back, to a small `MetricsSink` interface
+      (`recordCall(httpMethod, url, status, durationMillis)`) - the metrics
+      counterpart of `LoggingInterceptor`, following the exact same
+      "bring your own sink" shape so RIP doesn't depend on Micrometer or any
+      other metrics library. A consumer wires the sink to Micrometer, a
+      homegrown registry, or a `System.out` printer for local debugging.
+      Same start-time-stashed-on-`RequestContext` mechanism
+      `LoggingInterceptor` already uses; same registration-order tradeoff
+      documented on `RequestInterceptor` (register first to measure total
+      call overhead, last to measure only the network call). One documented
+      gap, inherited from the interceptor contract itself rather than
+      introduced here: a call that fails at the transport level (connection
+      refused, timeout with no response at all) never reaches
+      `afterResponse`, so it produces no sample - only a call that actually
+      gets a response is measured. A `@Retry`'d call reports one sample per
+      attempt, since every attempt gets its own `afterResponse` notification
+      - verified with a dedicated test asserting three samples
+      (`503, 503, 200`) for a call that fails twice before succeeding.
+- [ ] **Parked: a pagination helper** — an annotation or small utility that
+      follows a `next`/cursor field automatically and hands back a lazy
       `Iterator`/`Stream` of pages, using the `@Url` mechanism above under
-      the hood.
+      the hood. Parked rather than started: a first design sketch (a fixed
+      `Page<T>` interface with `getItems()`/`getNextUrl()`) turned out not
+      to be generic enough - real APIs disagree on both the item-list field
+      name (`results`/`data`/`orders`) and the next-page pointer's shape
+      (a full URL vs. a bare cursor needing re-injection as a query param
+      vs. a `Link` response header, GitHub-style). A revised sketch
+      (`@Paginated(itemsField, nextUrlField | nextCursorField,
+      cursorQueryParam)`, decoding `Page<T>` generically the same way
+      `RipResponse<T>` already resolves `T`) covers the first two but still
+      leaves the header-based case as a structurally different annotation
+      shape, and nested field paths unaddressed - enough open surface area
+      to park until real usage narrows which shape(s) actually matter,
+      rather than building against a guess.
 - [ ] **Spring/Micronaut integration module** — auto-register every
       `@RestClient` interface found on the classpath as a bean, the way
       OpenFeign integrates with Spring Cloud. This is what actually gets a
