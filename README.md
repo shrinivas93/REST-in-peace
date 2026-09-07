@@ -48,7 +48,10 @@ methods like any other Java call.
   `RIP.setObjectMapper(...)` sets a custom mapper (Jackson, a configured
   Gson, ...) for the shared client
 - Global interceptors for cross-cutting concerns (auth headers, logging)
-  without touching individual `@RestClient` interfaces
+  without touching individual `@RestClient` interfaces;
+  `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
+  client only (e.g. that service's own auth scheme), running in addition to
+  every global one, not instead of them
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -705,6 +708,26 @@ the response. Register an interceptor first if it needs to bracket everything
 else's work (e.g. a timer measuring total call overhead); register it last if
 it needs to sit closest to the actual network call (e.g. a timer measuring
 only network latency).
+
+### Per-client interceptors
+
+`RIP.addInterceptor(...)` registers a *global* interceptor, applied to every
+client. For a concern specific to one client instead — that service's own
+auth scheme, say, when another `@RestClient` interface talks to a different
+service entirely — use `RipClientConfig.Builder.interceptors(...)`:
+
+```java
+StripeApi stripe = RIP.getClient(StripeApi.class, RipClientConfig.builder()
+        .baseUrl("https://api.stripe.com")
+        .interceptors(Collections.singletonList(
+                new HeaderInterceptor("Authorization", () -> "Bearer " + stripeKey)))
+        .build());
+```
+
+A client's own interceptors run *in addition to*, not instead of, every
+globally registered one — global interceptors bracket everything, including
+a client's own, the same "onion" ordering described above (global
+`beforeRequest` first, global `afterResponse` last).
 
 ### Pre-built interceptors
 
