@@ -529,7 +529,7 @@ final class CompileTimeValidator {
 	private static void validateUploadProgressListener(ExecutableElement method, Reporter reporter) {
 		List<VariableElement> listeners = new ArrayList<>();
 		for (VariableElement parameter : method.getParameters()) {
-			if ("com.shri.restinpeace.multipart.UploadProgressListener".equals(parameter.asType().toString())) {
+			if ("com.shri.restinpeace.upload.UploadProgressListener".equals(parameter.asType().toString())) {
 				listeners.add(parameter);
 			}
 		}

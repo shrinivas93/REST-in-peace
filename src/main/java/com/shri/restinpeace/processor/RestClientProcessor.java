@@ -395,7 +395,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		// UploadProgressListener/DownloadProgressListener need no annotation at all -
 		// detected by type alone, same as the reflective path's own
 		// `parameter.getType() == UploadProgressListener.class`/`== DownloadProgressListener.class`.
-		if ("com.shri.restinpeace.multipart.UploadProgressListener".equals(javaTypeName)) {
+		if ("com.shri.restinpeace.upload.UploadProgressListener".equals(javaTypeName)) {
 			return new ParamModel(ParamKind.UPLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
 		}
 		if ("com.shri.restinpeace.download.DownloadProgressListener".equals(javaTypeName)) {

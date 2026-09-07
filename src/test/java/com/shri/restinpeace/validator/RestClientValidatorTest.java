@@ -40,7 +40,7 @@ import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
-import com.shri.restinpeace.multipart.UploadProgressListener;
+import com.shri.restinpeace.upload.UploadProgressListener;
 
 class RestClientValidatorTest {
 
