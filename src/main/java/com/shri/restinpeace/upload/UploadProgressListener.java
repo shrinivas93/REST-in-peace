@@ -1,4 +1,4 @@
-package com.shri.restinpeace.multipart;
+package com.shri.restinpeace.upload;
 
 /**
  * Notified as a {@code @Multipart} method's {@code File}/{@code InputStream}

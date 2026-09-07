@@ -234,6 +234,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A non-2xx response now always throws `RestInPeaceHttpException` (status +
   raw body), whatever the method's return type - previously the response
   flowed through as a normal return value with no error signal.
+- **Breaking:** `UploadProgressListener` moved from
+  `com.shri.restinpeace.multipart` to `com.shri.restinpeace.upload` -
+  update the import in any `@RestClient` interface method that declares
+  this parameter. Done for consistency with `DownloadProgressListener`,
+  which already has its own top-level `com.shri.restinpeace.download`
+  package; `UploadProgressListener` was previously the odd one out, nested
+  under `multipart` instead. The class itself, its behavior, and its
+  method signature are all unchanged - only the package.
 
 ### Fixed
 

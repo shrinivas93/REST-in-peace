@@ -330,7 +330,7 @@ class CompileTimeValidationTest {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("UploadListenerWithoutMultipart", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
-				+ "import com.shri.restinpeace.multipart.UploadProgressListener;\n" //
+				+ "import com.shri.restinpeace.upload.UploadProgressListener;\n" //
 				+ "@RestClient\n" //
 				+ "public interface UploadListenerWithoutMultipart {\n" //
 				+ "  @GET(\"http://localhost/items\")\n" //

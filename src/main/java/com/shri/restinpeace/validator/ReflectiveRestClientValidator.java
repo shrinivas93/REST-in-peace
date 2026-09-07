@@ -52,7 +52,7 @@ import com.shri.restinpeace.constant.RIPConstants;
 import com.shri.restinpeace.download.DownloadProgressListener;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceValidationException;
-import com.shri.restinpeace.multipart.UploadProgressListener;
+import com.shri.restinpeace.upload.UploadProgressListener;
 
 /**
  * Validates a {@code @RestClient} interface before
