@@ -11,9 +11,13 @@ package com.shri.restinpeace.cache;
  *
  * <p>
  * Keyed by {@code "<HTTP method> <resolved absolute URL>"} (e.g.
- * {@code "GET https://api.example.com/items/42"}) - a response whose
- * freshness genuinely varies by request header (per a {@code Vary} response
- * header) isn't distinguished by this key, a known simplification for now.
+ * {@code "GET https://api.example.com/items/42"}) - a single slot per key,
+ * the newest variant replacing the previous one, rather than storing every
+ * {@code Vary}-distinguished variant at once. A response naming a
+ * {@code Vary} header is still never served to a request whose current
+ * value for that header differs from the one snapshotted when it was
+ * stored (see {@link CachedResponse#getVaryRequestHeaders()}) - this
+ * affects only how many variants stay cached at once, not correctness.
  *
  * <p>
  * Implementations must be safe for concurrent use - a shared {@code Cache}

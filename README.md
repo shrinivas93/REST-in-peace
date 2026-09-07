@@ -27,6 +27,9 @@ methods like any other Java call.
   fields, `File`/`byte[]`/`InputStream` file parts, a dynamic set of parts
   not known until runtime, and an `UploadProgressListener` for progress
   reporting on a large file part)
+- `@FormUrlEncoded`/`@Field`/`@FieldMap` sends an
+  `application/x-www-form-urlencoded` body instead of JSON - for OAuth
+  token endpoints and classic HTML-form-style POSTs
 - Optional params with `required` and `defaultValue`
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
@@ -41,17 +44,30 @@ methods like any other Java call.
   `@ErrorType` to deserialize the error body into a class
 - `CompletableFuture<T>` return types fire requests asynchronously
 - `@Retry` re-issues a failed request with configurable backoff, for both
-  synchronous and async methods
+  synchronous and async methods; `idempotent = true` sends a stable
+  `Idempotency-Key` header held identical across every attempt, so a
+  server that honors idempotency keys (Stripe, PayPal, Adyen, Square) can
+  treat a retried `POST`/`PATCH` as the same logical request instead of
+  executing it twice
 - `@Timeout` overrides the connect/read timeout for one method;
-  `RipClientConfig` overrides base URL, timeout, proxy, and JSON
-  `ObjectMapper` for one client (e.g. one per deployment environment).
-  `RIP.setObjectMapper(...)` sets a custom mapper (Jackson, a configured
-  Gson, ...) for the shared client
-- Global interceptors for cross-cutting concerns (auth headers, logging)
-  without touching individual `@RestClient` interfaces;
+  `RipClientConfig` overrides base URL, timeout, proxy, cache, JSON
+  `ObjectMapper`, and interceptors for one client (e.g. one per deployment
+  environment). `RIP.setObjectMapper(...)` sets a custom mapper (Jackson, a
+  configured Gson, ...) for the shared client
+- Response caching honors the server's own `Cache-Control`/`ETag`/
+  `Last-Modified` headers for `GET` requests — a fresh entry is served with
+  zero network call, a stale revalidatable one sends
+  `If-None-Match`/`If-Modified-Since` automatically. `Vary`-aware, with
+  `@NoCache` to opt a single method out even when its client has a cache
+  configured
+- Global interceptors for cross-cutting concerns (auth headers, logging,
+  metrics) without touching individual `@RestClient` interfaces;
   `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
   client only (e.g. that service's own auth scheme), running in addition to
   every global one, not instead of them
+- `MockRestServer` — a real, local HTTP server for unit-testing
+  `@RestClient` code without a real network dependency, with a JUnit 5
+  extension for zero-boilerplate setup
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -404,6 +420,40 @@ part's name (its `@Part`/`@PartMap` key), needed to tell parts apart since
 calls for different parts interleave rather than running one at a time.
 Pass `null` for a call that doesn't need progress reporting.
 
+### `@FormUrlEncoded` / `@Field` / `@FieldMap`
+
+Sends an `application/x-www-form-urlencoded` body instead of `@Body`'s
+JSON/raw-string one — for OAuth token endpoints and classic HTML forms:
+
+```java
+@POST("https://api.example.com/oauth/token")
+@FormUrlEncoded
+String getToken(@Field("grant_type") String grantType, @Field("client_id") String clientId);
+```
+
+`@FormUrlEncoded` goes on the method (same HTTP methods `@Body` supports);
+`@Field` goes on each parameter, encoding it as one `name=value` pair, with
+the same `required` semantics as `@QueryParam`/`@Part` (`false` by default,
+silently skipping a `null` argument; `true` throws at call time instead). A
+`Collection` value repeats the key once per element (`tag=a&tag=b`), the
+same convention `@QueryParam` uses. A method can't combine `@FormUrlEncoded`
+with `@Body` or `@Multipart` — a method has exactly one body-encoding
+strategy, if any.
+
+For a set of fields not known until runtime, `@FieldMap` on a
+`Map<String, ?>` parameter adds one field per entry — the
+`@FormUrlEncoded` counterpart to `@QueryMap`/`@PartMap`:
+
+```java
+@POST("https://api.example.com/search")
+@FormUrlEncoded
+String search(@FieldMap Map<String, Object> filters);
+```
+
+`@FieldMap` combines with fixed `@Field` parameters on the same method, a
+`null` map or a `null` entry value is skipped rather than an error, and at
+most one `@FieldMap` parameter per method is allowed.
+
 ## Return types
 
 A method's declared return type controls what you get back:
@@ -598,6 +648,27 @@ get retried, is still reported to any registered interceptor's
 `afterResponse`, so a `LoggingInterceptor` or similar sees each individual
 attempt, not just the final outcome.
 
+### Idempotency keys
+
+Retrying is only safe by default for a method whose HTTP verb is already
+idempotent (`GET`/`PUT`/`DELETE`) — retrying a `POST`/`PATCH` that actually
+succeeded server-side but whose response was lost in transit (a timeout or
+dropped connection after the server committed) risks double-executing it (a
+duplicate charge, a duplicate order). `idempotent = true` closes that gap:
+
+```java
+@POST("https://api.example.com/charges")
+@Retry(times = 3, delayMillis = 200, idempotent = true)
+String createCharge(@Body Charge charge);
+```
+
+It generates one `Idempotency-Key` header value per logical call and holds
+it identical across every attempt, so a server that honors idempotency keys
+(as Stripe, PayPal, Adyen, and Square all do) can recognize a retried
+attempt as the same logical request instead of a new one. Default `false` —
+harmless (but redundant) to set on `GET`/`PUT`/`DELETE`, most meaningful on
+`POST`/`PATCH`.
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for
@@ -670,6 +741,58 @@ connection pooling, cookies, compression, and everything else
 `kong.unirest.Config` exposes — configure `kong.unirest.Unirest`'s shared
 client directly (it's a hard dependency, always on the classpath) before
 making any calls.
+
+## Response caching
+
+Honor the server's own `Cache-Control`/`ETag`/`Last-Modified` headers
+instead of hitting the network on every call. Attach a `Cache` per client,
+or as a shared default for every client without its own:
+
+```java
+RIP.setCache(new InMemoryCache());   // shared default for every client
+
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())  // or one client's own, instead
+        .build());
+```
+
+Only a `GET` whose response carries a `Cache-Control max-age`, an `ETag`, or
+a `Last-Modified` is ever stored — a response with none of those is never
+cached, matching "honor what the server says" rather than inventing caching
+the server never asked for:
+
+- A **fresh** entry (`age < max-age`) is served straight from the cache,
+  with zero network call.
+- A **stale but revalidatable** entry (has an `ETag`/`Last-Modified`) sends
+  `If-None-Match`/`If-Modified-Since` automatically; a `304 Not Modified`
+  response refreshes the entry's freshness window and returns the
+  previously-cached body without hitting your code with anything different.
+- A response naming a `Vary` header (e.g. `Vary: Accept-Language`) is never
+  served to a later request whose current value for that header differs
+  from the one in force when it was stored, so a cache never serves the
+  wrong language/format variant. `Vary: *` is never cached at all, same as
+  `no-store`.
+
+`InMemoryCache` (a `ConcurrentHashMap`-backed, process-local store) ships as
+the default `Cache` implementation — zero new dependency. Implement `Cache`
+yourself (`get`/`put`/`evict`/`clear`) to back it with Redis, Caffeine, or
+anything else.
+
+### `@NoCache`
+
+Opts a single method out of caching even when its client has one
+configured — for an endpoint that's cacheable in principle but needs to be
+observed live at one particular call site (a live price feed on an
+otherwise-cacheable catalog client):
+
+```java
+@GET("https://api.example.com/prices/{symbol}")
+@NoCache
+Price getLivePrice(@PathParam("symbol") String symbol);
+```
+
+Response caching is scoped to `String`/POJO `GET` responses for now — not
+`byte[]`/`File` downloads.
 
 ## Interceptors
 
@@ -770,13 +893,88 @@ RIP.addInterceptor(new CorrelationIdInterceptor());
 
 // Or use a custom header name and/or ID generator.
 RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGenerator.next()));
+
+// Time every request and report method/url/status/duration to a sink -
+// wire it to Micrometer, a homegrown registry, or just print it.
+RIP.addInterceptor(new MetricsInterceptor((httpMethod, url, status, durationMillis) ->
+        System.out.printf("%s %s -> %d (%dms)%n", httpMethod, url, status, durationMillis)));
 ```
 
 `CorrelationIdInterceptor` also stashes the generated ID on the
 `RequestContext` under `CorrelationIdInterceptor.ID_ATTRIBUTE`, so another
-interceptor registered alongside it (e.g. your own logging or metrics
-interceptor) can read it back via `context.getAttribute(...)` to correlate
-its own output with the same call.
+interceptor registered alongside it (e.g. `MetricsInterceptor`, or your own)
+can read it back via `context.getAttribute(...)` to correlate its own
+output with the same call.
+
+`MetricsInterceptor` only reports a call that actually receives a
+response — a transport failure (no response at all) never reaches
+`afterResponse`, so it produces no sample. A `@Retry`'d call reports one
+sample per attempt, not just the final one, since every attempt gets its
+own `afterResponse` notification.
+
+## Testing with `MockRestServer`
+
+Unit-test code that calls a `@RestClient` interface without a real network
+dependency — `MockRestServer` is a real, local HTTP server (not a fake
+transport swapped in underneath Unirest), so `@Retry`, `@Timeout`, and every
+registered interceptor all run completely unmodified against it:
+
+```java
+MockRestServer server = MockRestServer.start();
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+
+OrderApi api = RIP.getClient(OrderApi.class, server.baseUrl());
+Order order = api.getOrder("42");
+
+assertEquals("shipped", order.status);
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}"));
+server.close();
+```
+
+`on(...)` registers a sticky response for a method+path, with `{name}`
+placeholder matching the same as a real `@GET`/`@PathParam` template; an
+unmatched request fails loudly (a `500` with a clear message) instead of
+silently succeeding for the wrong reason. `MockResponse.ok(body)`,
+`.json(object)`, `.status(code, body)`, `.noContent()`, and `.notModified()`
+cover the common status shapes.
+
+For scripting a sequence of responses — proving `@Retry` actually
+recovers — `enqueueFor(...)` scripts a one-time response ahead of a route's
+sticky one, and `onFlaky(...)` is sugar for the common "fail N times then
+succeed" shape:
+
+```java
+server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2,
+        MockResponse.status(503, ""), MockResponse.json(new Order("42", "shipped")));
+
+Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt
+```
+
+`RecordedRequest` (via `server.getRecordedRequests()`/`takeRequest()`)
+exposes exactly what was actually sent — path, query params, headers, body
+(`getBody()`, `getParts()` for a decoded `@Multipart` body,
+`getFormFields()` for a decoded `@FormUrlEncoded` one) — for asserting on
+what your code actually sent, not just what came back.
+
+### JUnit 5 extension
+
+`MockRestServerExtension` removes the `start()`/`close()` and
+per-test-class `reset()` boilerplate — one server per test class, reset
+before each test:
+
+```java
+@ExtendWith(MockRestServerExtension.class)
+class OrderApiTest {
+
+    @Test
+    void getOrder_returnsDecodedBody(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+        OrderApi api = RIP.getClient(OrderApi.class, server.baseUrl());
+
+        assertEquals("shipped", api.getOrder("42").status);
+    }
+}
+```
 
 ## Building from source
 
