@@ -1,11 +1,140 @@
 # REST-in-peace
 
-A Simple, Declarative and Peaceful REST Client
+**A Simple, Declarative and Peaceful REST Client for Java**
 
 REST-in-peace lets you declare a REST API as a plain Java interface and get a
 working HTTP client for it at runtime — no hand-written request-building
 boilerplate. Annotate an interface, call `RIP.getClient(...)`, and invoke its
 methods like any other Java call.
+
+[![CI](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml)
+[![Sample Consumer Test](https://github.com/shrinivas93/REST-in-peace/actions/workflows/sample-consumer-test.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/sample-consumer-test.yml)
+[![Latest Release](https://img.shields.io/github/v/release/shrinivas93/REST-in-peace?label=release)](https://github.com/shrinivas93/REST-in-peace/releases/latest)
+[![Javadoc](https://img.shields.io/badge/javadoc-latest-blue)](https://shrinivas93.github.io/REST-in-peace/)
+[![Java 8+](https://img.shields.io/badge/Java-8%2B-orange)](#requirements)
+[![License: MIT](https://img.shields.io/github/license/shrinivas93/REST-in-peace)](LICENSE)
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface UserApi {
+
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+```
+
+```java
+UserApi userApi = RIP.getClient(UserApi.class);
+User user = userApi.getUser("42");
+```
+
+That's it — no `HttpClient` boilerplate, no manual JSON (de)serialization, no
+hand-rolled retry loop. Everything below is what's available once you need
+more than the basics: path/query/header params, file uploads, response
+caching, retries with backoff, interceptors, async calls, and a real local
+test server for unit tests.
+
+---
+
+## Table of contents
+
+- [Why REST-in-peace?](#why-rest-in-peace)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+  - [Maven](#maven)
+  - [Gradle](#gradle)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+  - [Request lifecycle](#request-lifecycle)
+  - [Compile-time vs. reflective proxies](#compile-time-vs-reflective-proxies)
+- [Annotations reference](#annotations-reference)
+  - [`@RestClient`](#restclient)
+  - [`@BaseUrl`](#baseurl)
+  - [HTTP method annotations](#http-method-annotations)
+  - [`@PathParam`](#pathparam)
+  - [`@Url`](#url)
+  - [`@QueryParam`](#queryparam)
+  - [`@HeaderParam`](#headerparam)
+  - [`@QueryMap` / `@HeaderMap`](#querymap--headermap)
+  - [`@Headers`](#headers)
+  - [`@Body`](#body)
+  - [`@Multipart` / `@Part` / `@PartMap`](#multipart--part--partmap)
+  - [`@FormUrlEncoded` / `@Field` / `@FieldMap`](#formurlencoded--field--fieldmap)
+- [Return types](#return-types)
+  - [Binary downloads: `byte[]` and `File`](#binary-downloads-byte-and-file)
+  - [Response headers and status: `RipResponse<T>`](#response-headers-and-status-ripresponset)
+- [Error handling](#error-handling)
+- [Async](#async)
+- [Retries](#retries)
+  - [Idempotency keys](#idempotency-keys)
+- [Timeouts](#timeouts)
+- [Per-client configuration: timeout and proxy](#per-client-configuration-timeout-and-proxy)
+  - [JSON `ObjectMapper`](#json-objectmapper)
+- [Response caching](#response-caching)
+  - [`@NoCache`](#nocache)
+- [Interceptors](#interceptors)
+  - [Per-client interceptors](#per-client-interceptors)
+  - [Pre-built interceptors](#pre-built-interceptors)
+- [Compile-time proxy generation](#compile-time-proxy-generation)
+- [Testing with `MockRestServer`](#testing-with-mockrestserver)
+  - [JUnit 5 extension](#junit-5-extension)
+- [Integrating with your project](#integrating-with-your-project)
+  - [Spring / Spring Boot](#spring--spring-boot)
+  - [Plain Java, CLI tools, and scripts](#plain-java-cli-tools-and-scripts)
+  - [Kotlin, Scala, and other JVM languages](#kotlin-scala-and-other-jvm-languages)
+- [Samples](#samples)
+- [Project structure](#project-structure)
+- [Development](#development)
+  - [Building and testing](#building-and-testing)
+  - [Code style](#code-style)
+  - [Running the sample consumer locally](#running-the-sample-consumer-locally)
+- [Contributing](#contributing)
+- [Versioning and releases](#versioning-and-releases)
+- [Roadmap](#roadmap)
+- [FAQ / Troubleshooting](#faq--troubleshooting)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
+
+---
+
+## Why REST-in-peace?
+
+Calling a REST API from Java usually means either pulling in a heavyweight
+client generator, or hand-writing the same boilerplate for every endpoint:
+build the URL, set headers, serialize the body, execute, check the status
+code, deserialize the response, and do it all again for the next endpoint.
+
+```java
+// Without REST-in-peace
+HttpResponse<String> response = Unirest.get("https://api.example.com/users/{id}")
+        .routeParam("id", id)
+        .queryString("verbose", verbose)
+        .header("Authorization", "Bearer " + token)
+        .asString();
+if (response.getStatus() < 200 || response.getStatus() >= 300) {
+    throw new RuntimeException("Request failed: " + response.getStatus());
+}
+User user = objectMapper.readValue(response.getBody(), User.class);
+```
+
+```java
+// With REST-in-peace
+@RestClient
+interface UserApi {
+    @GET("https://api.example.com/users/{id}")
+    User getUser(@PathParam("id") String id, @QueryParam("verbose") Boolean verbose);
+}
+
+User user = userApi.getUser("42", true);
+```
+
+The declaration *is* the client. A non-2xx response, retries, caching, and
+cross-cutting concerns like auth headers and logging are all handled by the
+library instead of being re-implemented per call site — see
+[Features](#features) below for the full list, and [How it works](#how-it-works)
+for what actually happens under `getUser(...)`.
 
 ## Features
 
@@ -65,23 +194,42 @@ methods like any other Java call.
   `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
   client only (e.g. that service's own auth scheme), running in addition to
   every global one, not instead of them
+- Optional **compile-time proxy generation** — an annotation processor
+  emits a real, reflection-free implementation for a supported
+  `@RestClient` interface at build time, with zero configuration and a
+  transparent fallback to a reflective JDK dynamic proxy for anything it
+  doesn't yet cover; see [Compile-time proxy generation](#compile-time-proxy-generation)
 - `MockRestServer` — a real, local HTTP server for unit-testing
   `@RestClient` code without a real network dependency, with a JUnit 5
   extension for zero-boilerplate setup
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
-  annotated interface backed by a JDK dynamic proxy
+  annotated interface backed by a JDK dynamic proxy (or a generated class)
 
 ## Requirements
 
 - Java 8 or newer
-- Maven (or any build tool that resolves Maven coordinates)
+- Maven (or any build tool that resolves Maven coordinates — see
+  [Gradle](#gradle) for an equivalent Gradle setup)
 
 ## Installation
 
-Published to GitHub Packages. Add the repository and dependency to your
-`pom.xml`:
+Published to GitHub Packages under `com.shri:rest-in-peace`. GitHub Packages
+requires authentication even for public read access — see
+[GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
+(Maven) or
+[GitHub's Gradle registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-gradle-registry)
+(Gradle) for configuring credentials.
+
+Browse available versions on the
+[Packages page](https://github.com/shrinivas93?tab=packages&repo_name=REST-in-peace)
+or the [Releases page](https://github.com/shrinivas93/REST-in-peace/releases) —
+replace `1.0.0.0-SNAPSHOT` below with the version you want (see
+[Versioning and releases](#versioning-and-releases) for what the version
+number means).
+
+### Maven
 
 ```xml
 <repositories>
@@ -98,9 +246,23 @@ Published to GitHub Packages. Add the repository and dependency to your
 </dependency>
 ```
 
-GitHub Packages requires authentication even for public read access — see
-[GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
-for configuring credentials in your `settings.xml`.
+### Gradle
+
+```groovy
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/shrinivas93/REST-in-peace")
+        credentials {
+            username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+            password = project.findProperty("gpr.token") ?: System.getenv("GITHUB_TOKEN")
+        }
+    }
+}
+
+dependencies {
+    implementation("com.shri:rest-in-peace:1.0.0.0-SNAPSHOT")
+}
+```
 
 Full API documentation is browsable at
 [shrinivas93.github.io/REST-in-peace](https://shrinivas93.github.io/REST-in-peace/),
@@ -141,7 +303,93 @@ anything is misconfigured — a method with no HTTP verb, an invalid URL, a
 `RestInPeaceException` immediately, with the full list of problems, instead
 of failing later on the first call.
 
-## Annotations
+`getClient(...)` re-validates and re-resolves the interface every time it's
+called — it doesn't cache the result — so call it once per
+`@RestClient` interface and hold on to (or inject) the returned instance,
+rather than calling `getClient(...)` again on every request; see
+[Integrating with your project](#integrating-with-your-project) for how
+this looks with a DI framework.
+
+## How it works
+
+### Request lifecycle
+
+Every call — whatever the return type, whether it goes through the
+reflective proxy or a compile-time-generated one — funnels through the same
+pipeline, built as a small set of single-purpose collaborators rather than
+one large class:
+
+```mermaid
+flowchart TD
+    A["@RestClient interface"] --> B["RIP.getClient(...)"]
+    B --> C{"Compile-time generated\n&lt;Interface&gt;_RipImpl exists?"}
+    C -- "yes" --> D["Generated *_RipImpl\n(zero reflection at call time)"]
+    C -- "no (fallback)" --> E["Reflective JDK dynamic proxy\nRestClientInvocationHandler"]
+    D --> F["RequestExecutor\n(thin orchestrator)"]
+    E --> F
+    F --> G["UrlResolver\n@BaseUrl / @PathParam / @Url"]
+    F --> H["InterceptorDispatcher\nbeforeRequest / afterResponse"]
+    F --> I["CacheCoordinator\nCache-Control / ETag / Vary"]
+    F --> J["RetryExecutor\n@Retry backoff loop"]
+    F --> K["FormEncoder / MultipartEncoder\n@FormUrlEncoded / @Multipart"]
+    F --> L["ResponseDecoder\nJSON body / RestInPeaceHttpException"]
+    J --> M["Unirest HTTP client"]
+    I --> M
+    M --> N[("Your API")]
+```
+
+A single call weaves through interceptors, an optional cache short-circuit,
+and the retry loop in a fixed order:
+
+```mermaid
+sequenceDiagram
+    participant App as Your code
+    participant Proxy as Generated / reflective proxy
+    participant RE as RequestExecutor
+    participant IC as InterceptorDispatcher
+    participant Cache as CacheCoordinator
+    participant Retry as RetryExecutor
+    participant HTTP as Unirest / Your API
+
+    App->>Proxy: userApi.getUser("42")
+    Proxy->>RE: processRestRequest(...)
+    RE->>IC: beforeRequest(context)
+    RE->>Cache: fresh entry cached for this GET?
+    alt cache hit
+        Cache-->>RE: cached response, no network call
+    else cache miss or non-GET
+        RE->>Retry: execute (honoring @Retry, if any)
+        loop each attempt
+            Retry->>HTTP: issue request
+            HTTP-->>Retry: response or transport error
+            Retry->>IC: afterResponse(status, body)
+        end
+        Retry-->>RE: settled response
+        RE->>Cache: store per Cache-Control / ETag / Vary
+    end
+    RE-->>Proxy: decoded return value (or thrown RestInPeaceHttpException)
+    Proxy-->>App: User
+```
+
+Each collaborator owns exactly one concern: `UrlResolver` never touches
+caching, `CacheCoordinator` never touches retries, and so on —
+`RequestExecutor` itself just sequences them. See
+[Project structure](#project-structure) for where each one lives.
+
+### Compile-time vs. reflective proxies
+
+`RIP.getClient(...)` always tries a compile-time-generated implementation
+first (`Class.forName(restClient.getName() + "_RipImpl")`), and transparently
+falls back to a reflective JDK dynamic proxy (`java.lang.reflect.Proxy`) if
+none exists — either because the annotation processor never ran, or because
+the interface uses a shape the processor doesn't yet cover. Both paths are
+functionally identical from your code's point of view and share the exact
+same `RequestExecutor` pipeline described above; the generated path just
+skips reflection entirely at call time. See
+[Compile-time proxy generation](#compile-time-proxy-generation) for what
+that buys you and how to opt in.
+
+## Annotations reference
 
 ### `@RestClient`
 
@@ -912,6 +1160,44 @@ response — a transport failure (no response at all) never reaches
 sample per attempt, not just the final one, since every attempt gets its
 own `afterResponse` notification.
 
+## Compile-time proxy generation
+
+Every `@RestClient` interface works out of the box via a reflective JDK
+dynamic proxy — no build-time step required. For a supported subset of
+method shapes, an annotation processor (`RestClientProcessor`, bundled in
+the main artifact — no extra dependency) additionally generates a real,
+reflection-free `<Interface>_RipImpl` class at compile time, which
+`RIP.getClient(...)` picks up automatically (see
+[Compile-time vs. reflective proxies](#compile-time-vs-reflective-proxies)).
+
+You don't opt in to anything — if your build already runs annotation
+processing (the Maven/Gradle default for a dependency that ships one), the
+generated class exists on your classpath and is used automatically; there's
+nothing to configure and nothing changes about how you call the client. If
+a method's shape isn't yet covered by the processor, that one interface
+transparently falls back to the reflective proxy — same behavior, just
+without the compile-time class.
+
+This matters most for:
+
+- **Cold-start-sensitive environments** (serverless, CLI tools) — no
+  reflective proxy construction cost.
+- **GraalVM native-image** — a reflective `java.lang.reflect.Proxy` needs
+  explicit reflection configuration to survive native-image's closed-world
+  analysis; the generated implementation is an ordinary class needing none.
+  `RestClientProcessor` also emits a `reflect-config.json` alongside each
+  generated class for the one reflective lookup `RIP.getClient(...)` itself
+  still does (`Class.forName(...)`), so a native-image build needs zero
+  hand-written reflection config for a fully-covered interface.
+
+See [`docs/design/compile-time-proxy-generation.md`](docs/design/compile-time-proxy-generation.md)
+for the full design write-up (goals, what's generated, and the running log
+of what each rollout step actually landed as), and
+[`samples/compile-time-proxy-consumer`](samples/compile-time-proxy-consumer)
+for a standalone project showing exactly what a downstream consumer sees —
+including a GraalVM native-image build and run, exercised by CI's
+`native-image-smoke-test` job on every push.
+
 ## Testing with `MockRestServer`
 
 Unit-test code that calls a `@RestClient` interface without a real network
@@ -976,20 +1262,270 @@ class OrderApiTest {
 }
 ```
 
-## Building from source
+## Integrating with your project
 
-```bash
-mvn clean test
+`RIP.getClient(...)` re-validates and re-resolves its interface every call
+(see [Quick start](#quick-start)), so the general rule for any framework is:
+**construct each client once and reuse it**, whether that's a manually held
+`static final` field, a DI-managed singleton bean, or a value cached in
+whatever container your app already uses.
+
+### Spring / Spring Boot
+
+Expose each `@RestClient` interface as a singleton bean, resolving
+environment-specific settings (base URL, timeout) from Spring's own
+configuration:
+
+```java
+@Configuration
+public class RipClientsConfig {
+
+    @Bean
+    public UserApi userApi(@Value("${user-api.base-url}") String baseUrl) {
+        return RIP.getClient(UserApi.class, baseUrl);
+    }
+
+    @Bean
+    public StripeApi stripeApi(@Value("${stripe.api-key}") String apiKey) {
+        return RIP.getClient(StripeApi.class, RipClientConfig.builder()
+                .baseUrl("https://api.stripe.com")
+                .connectTimeoutMillis(2_000)
+                .interceptors(Collections.singletonList(
+                        new HeaderInterceptor("Authorization", () -> "Bearer " + apiKey)))
+                .build());
+    }
+}
+```
+
+Then inject `UserApi`/`StripeApi` like any other Spring bean — constructor
+injection into a `@Service` works exactly the same as it would for a
+hand-written client. Global interceptors (`RIP.addInterceptor(...)`) are a
+natural fit for an `ApplicationRunner`/`@PostConstruct` hook that runs once
+at startup, before any client is used.
+
+### Plain Java, CLI tools, and scripts
+
+No framework required — hold the client in a `static final` field (or pass
+it around explicitly) and call it directly:
+
+```java
+public final class Clients {
+    public static final UserApi USER_API = RIP.getClient(UserApi.class);
+
+    private Clients() {}
+}
+```
+
+For a short-lived program that only ever makes synchronous calls, there's
+nothing else to configure. If it makes any async (`CompletableFuture<T>`)
+call, see the JVM-doesn't-exit note under [Async](#async).
+
+### Kotlin, Scala, and other JVM languages
+
+RIP has no Java-specific runtime magic beyond an annotated interface backed
+by a JDK dynamic proxy (or a generated class) — it works from any JVM
+language that can declare and implement a Java interface. In Kotlin:
+
+```kotlin
+@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    fun getUser(@PathParam("id") id: String): User
+}
+
+val userApi = RIP.getClient(UserApi::class.java)
+val user = userApi.getUser("42")
 ```
 
 ## Samples
 
 [`samples/compile-time-proxy-consumer`](samples/compile-time-proxy-consumer)
 is a standalone project showing what a real downstream consumer sees from
-the [compile-time proxy generation](docs/design/compile-time-proxy-generation.md)
+the [compile-time proxy generation](#compile-time-proxy-generation)
 feature - add the library as an ordinary dependency, write a plain
 `@RestClient` interface, and get back a real generated implementation with
-zero extra configuration. See its own README for how to build and run it.
+zero extra configuration, including a working GraalVM native-image build.
+See its own [README](samples/compile-time-proxy-consumer/README.md) for how
+to build and run it.
+
+## Project structure
+
+```text
+REST-in-peace/
+├── src/main/java/com/shri/restinpeace/
+│   ├── RIP.java                  # entry point: RIP.getClient(...)
+│   ├── RipClientConfig.java      # per-client base URL/timeout/proxy/cache/interceptors
+│   ├── RipResponse.java          # T + status + headers wrapper
+│   ├── annotation/               # every @RestClient-facing annotation
+│   │   ├── marker/                 #   @RestClient, @BaseUrl
+│   │   ├── method/                 #   @GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS
+│   │   ├── request/                #   @PathParam, @QueryParam, @Body, @Multipart, ...
+│   │   ├── retry/                  #   @Retry
+│   │   ├── timeout/                #   @Timeout
+│   │   ├── cache/                  #   @NoCache
+│   │   └── error/                  #   @ErrorType
+│   ├── internal/                 # RequestExecutor + its 7 single-purpose collaborators
+│   │   ├── RequestExecutor.java    #   orchestrator; also generated code's entry points
+│   │   ├── UrlResolver.java        #   @BaseUrl / @PathParam / @Url resolution
+│   │   ├── InterceptorDispatcher.java
+│   │   ├── CacheCoordinator.java
+│   │   ├── RetryExecutor.java
+│   │   ├── FormEncoder.java        #   @FormUrlEncoded
+│   │   ├── MultipartEncoder.java   #   @Multipart
+│   │   └── ResponseDecoder.java
+│   ├── proxy/                    # RestClientInvocationHandler (reflective JDK proxy)
+│   ├── processor/                # RestClientProcessor (compile-time codegen) + validator
+│   ├── validator/                # ReflectiveRestClientValidator - fail-fast validation
+│   ├── interceptor/               # RequestInterceptor + pre-built interceptors
+│   ├── cache/                     # Cache, InMemoryCache, CachedResponse
+│   ├── mock/                      # MockRestServer test double
+│   ├── download/ upload/ multipart/  # progress listeners, PartValue
+│   └── exception/                 # RestInPeaceException, RestInPeaceHttpException
+├── src/test/java/com/shri/restinpeace/
+│   ├── AbstractRipIntegrationTest.java   # shared local-server fixture
+│   └── Rip*IntegrationTest.java          # one class per feature area
+├── samples/compile-time-proxy-consumer/  # standalone downstream-consumer sample
+├── docs/design/                          # design write-ups (compile-time codegen, ...)
+├── .github/workflows/                    # CI, release, javadoc, publish pipelines
+├── CONTRIBUTING.md, CHANGELOG.md, ROADMAP.md, LICENSE
+└── README.md
+```
+
+Every `annotation/*` subpackage is an `@interface` your code references
+directly; everything under `internal/` is package-private and never part of
+the public API (see [How it works](#how-it-works)).
+
+## Development
+
+### Building and testing
+
+```bash
+git clone https://github.com/shrinivas93/REST-in-peace.git
+cd REST-in-peace
+mvn clean test
+```
+
+If your local JDK is newer than 8 (likely), also run this before pushing —
+CI enforces it, and it's the only way to actually catch a post-8 API
+slipping in (a plain `mvn test` silently compiles against your local JDK's
+own class library):
+
+```bash
+mvn -Dmaven.compiler.release=8 clean test
+```
+
+To check the generated API docs build cleanly (zero warnings is the bar CI
+holds every change to):
+
+```bash
+mvn javadoc:javadoc
+```
+
+### Code style
+
+- Tabs for indentation, matching the existing source.
+- No comments unless something is genuinely non-obvious (a hidden
+  constraint, a workaround, a subtle invariant) — well-named code and
+  Javadoc cover the rest. Every public class, annotation, method, and field
+  should have a Javadoc comment.
+- Keep changes minimal and scoped to what's being asked — no speculative
+  abstractions or unrelated cleanup mixed into a fix.
+
+### Running the sample consumer locally
+
+```bash
+mvn install -DskipTests                       # install this library's current commit locally
+cd samples/compile-time-proxy-consumer
+mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
+    -Drest-in-peace.version="$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml)"
+java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
+```
+
+See [`.github/workflows/sample-consumer-test.yml`](.github/workflows/sample-consumer-test.yml)
+for the exact steps CI runs, including the GraalVM native-image build.
+
+## Contributing
+
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+full guide (build/test commands, code style, and the release process for
+maintainers). The short version:
+
+- Branch from `develop`, open your PR against `develop`.
+- `master` only ever advances via a pull request from `develop` — direct
+  pushes to `master` are blocked by branch protection, with a narrow
+  exception for `release.yml`'s own automated version-bump commit.
+- Every PR and every push to `develop`/`master` runs the full test suite on
+  Java 8 (see the CI badge at the top of this file).
+- Update [`CHANGELOG.md`](CHANGELOG.md) under `[Unreleased]` as part of any
+  user-facing change.
+
+## Versioning and releases
+
+Versions follow `1.0.0.N` — an auto-incrementing build counter via
+`maven-release-plugin`, not semantic versioning; check
+[`CHANGELOG.md`](CHANGELOG.md) for what actually changed in a given release,
+and look for a `**Breaking:**` note called out explicitly when a release
+does contain a breaking change. Every release is tagged, published to
+[GitHub Packages](https://github.com/shrinivas93/REST-in-peace/packages),
+and listed on the [Releases page](https://github.com/shrinivas93/REST-in-peace/releases)
+with auto-generated notes linking back to the merged PRs it contains.
+
+## Roadmap
+
+[`ROADMAP.md`](ROADMAP.md) tracks library-maturity items that aren't tied to
+a specific issue — some already shipped and checked off, some intentionally
+parked with the reasoning for later, some still open. Worth a look before
+proposing a large new feature, to see whether it's already been scoped out
+(or scoped in) there.
+
+## FAQ / Troubleshooting
+
+**My short-lived program hangs after an async call instead of exiting.**
+Unirest's async client runs on non-daemon threads by default. Call
+`RIP.useDaemonThreadsForAsync()` once at startup, or
+`Unirest.shutDown()` when you're done — see [Async](#async).
+
+**I get `RestInPeaceException: No JSON ObjectMapper is configured.`**
+You (or something in your app) called `RIP.setObjectMapper(null)` (or the
+shared Unirest client's own mapper was explicitly cleared). Configure one
+with `RIP.setObjectMapper(...)` — see [JSON `ObjectMapper`](#json-objectmapper).
+
+**GitHub Packages says I'm unauthorized even though the repo is public.**
+GitHub Packages requires authentication for *every* read, public repos
+included — see the credential setup links under [Installation](#installation).
+
+**A `@RestClient` interface I just wrote throws at `RIP.getClient(...)`
+time instead of on the first call.**
+That's [validation](#quick-start) working as intended — the exception
+message lists every problem found (missing HTTP verb, unmatched
+`{pathParam}`, conflicting annotations, ...) so you can fix them all at
+once instead of discovering them one call at a time.
+
+**Why does my interface's generated `_RipImpl` seem to be missing / a
+change to it isn't picked up?**
+The annotation processor only covers a subset of method shapes (see
+[Compile-time proxy generation](#compile-time-proxy-generation)) — anything
+outside that subset silently falls back to the reflective proxy, which is
+by design, not an error. If you're testing a genuinely-covered method and
+still don't see the generated class, do a full rebuild (`mvn clean
+compile`) — annotation processors don't always re-run on an incremental one.
+
+**Something else isn't covered here.**
+Open an issue, or check [`docs/design/compile-time-proxy-generation.md`](docs/design/compile-time-proxy-generation.md)
+and [`ROADMAP.md`](ROADMAP.md) for design rationale that might already
+answer it.
+
+## Acknowledgments
+
+Built on top of:
+
+- [Unirest for Java](https://github.com/Kong/unirest-java) — the underlying
+  HTTP client and default (Gson-backed) JSON `ObjectMapper`.
+- [JUnit 5](https://junit.org/junit5/) — the test framework, including the
+  `MockRestServerExtension` integration.
+- [`maven-release-plugin`](https://maven.apache.org/maven-release/maven-release-plugin/) —
+  drives the tag-and-version-bump half of the [release process](#versioning-and-releases).
 
 ## License
 
