@@ -1,4 +1,4 @@
-package com.shri.restinpeace.spring;
+package com.shri.restinpeace.spring.registration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Configuration;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.spring.EnableRestInPeaceClients;
 
 import com.sun.net.httpserver.HttpServer;
 
@@ -24,6 +25,15 @@ import com.sun.net.httpserver.HttpServer;
  * {@link EnableRestInPeaceClients}: annotate, scan, register, inject, call -
  * proving a {@code @RestClient} interface comes back as a real, working
  * Spring bean with zero hand-written {@code @Bean} method.
+ *
+ * <p>
+ * Declared in its own dedicated {@code .registration} sub-package, scanned
+ * on its own - {@link EnableRestInPeaceClients}'s registrar resolves every
+ * {@link com.shri.restinpeace.annotation.marker.RestClient#baseUrlProperty()}
+ * it finds eagerly, at bean-registration time (matching the core library's
+ * own fail-fast-at-construction philosophy), so an unrelated test's
+ * {@code @RestClient} interface with an unset property sitting in the same
+ * scanned package would otherwise fail this context's startup too.
  */
 class EnableRestInPeaceClientsTest {
 
@@ -34,7 +44,7 @@ class EnableRestInPeaceClientsTest {
 	}
 
 	@Configuration
-	@EnableRestInPeaceClients(basePackages = "com.shri.restinpeace.spring")
+	@EnableRestInPeaceClients(basePackages = "com.shri.restinpeace.spring.registration")
 	static class TestConfig {
 	}
 
