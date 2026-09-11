@@ -845,7 +845,12 @@ up.
 - [ ] **Spring/Micronaut integration module** — auto-register every
       `@RestClient` interface found on the classpath as a bean, the way
       OpenFeign integrates with Spring Cloud. This is what actually gets a
-      library adopted broadly rather than used standalone.
+      library adopted broadly rather than used standalone. **In progress** —
+      design doc and chunked rollout plan at
+      [`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md);
+      Micronaut scoped out of the first pass (see the doc's non-goals) since
+      its compile-time DI model needs a structurally different integration
+      than Spring's runtime classpath scanning.
 - [ ] **(Low priority) Fix branch protection on `master`** — repo process,
       not a library feature. A ruleset requiring a pull request before
       merging was set up on `master`, but the bypass entry for the release
