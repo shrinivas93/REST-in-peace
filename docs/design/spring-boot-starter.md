@@ -1,23 +1,46 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 3 landed**. Chunk 1 (this doc), then chunk 2
+Status: **in progress - chunk 4 landed**. Chunk 1 (this doc), then chunk 2
 (standalone project scaffolding, targeting **Spring Boot 4.x** rather than
 3.x - 3.x reached its own open-source end of life shortly after this doc's
-first draft, and 4.x keeps the same Java 17 floor §2 already assumed).
-Chunk 3 added the first real code: `@EnableRestInPeaceClients`,
-`RestInPeaceClientsRegistrar` (a `ClassPathScanningCandidateComponentProvider`
-overridden to accept interfaces, the same fix MyBatis-Spring's own
-mapper scanner uses), and `RestInPeaceClientFactoryBean` (extends
-`AbstractFactoryBean` for its built-in singleton caching, calling
-`RIP.getClient(Class)` exactly once per interface). One real deviation
-from §4.2's sketch, caught by the chunk's own bean-naming test:
+first draft, and 4.x keeps the same Java 17 floor §2 already assumed), then
+chunk 3 (`@EnableRestInPeaceClients`, `RestInPeaceClientsRegistrar`, and
+`RestInPeaceClientFactoryBean` - see that chunk's own note below).
+
+Chunk 4 added `@RestInPeaceClient` and `baseUrlProperty` resolution (§4.3),
+surfacing two real design corrections along the way:
+
+- **§4.3's original sketch put `baseUrlProperty` directly on the core
+  library's `@RestClient` annotation** - a real source change to the core
+  module, contradicting this doc's own §2 goal and §3 non-goal. Fixed by
+  introducing `@RestInPeaceClient` as a second, starter-only annotation
+  applied *alongside* `@RestClient` rather than folded into it - §4.3 and
+  §4.4 now describe the corrected shape; the core library's source is still
+  untouched, for real this time.
+- **The registrar resolves `baseUrlProperty` eagerly, at bean-registration
+  time** (matching the core library's own fail-fast-at-construction
+  philosophy - see `RIP.getClient(...)`'s own javadoc), which means every
+  `@RestClient` interface in a scanned package needs its property already
+  resolvable, whether or not that particular bean is ever actually
+  requested. Harmless for real application code (an app should configure
+  every client it registers), but it broke test isolation the moment two
+  test classes shared one scanned package - one test's interface with an
+  unset property crashed a *different* test's context on startup. Fixed by
+  giving each test its own dedicated fixture sub-package
+  (`.registration`, `.baseurl`, ...), a convention every later chunk's
+  tests should keep following.
+
+Chunk 3's own note, unchanged from when it landed: one deviation from
+§4.2's sketch, caught by its bean-naming test -
 `ClassUtils.getShortName(...)` includes the enclosing class's name for a
-nested interface (`Outer.PingApi`, not `PingApi`) - `Class.getSimpleName()`
-is the correct call for deriving a bean name. Verified end to end with a
-real local `HttpServer`-backed test: annotate, scan, register, inject
-(`context.getBean(PingApi.class)` and by its derived name), call. See §7
-for the full chunked rollout plan and which chunk is next. Roadmap item:
-"Spring/Micronaut integration module" in `ROADMAP.md`.
+nested interface (`Outer.PingApi`, not `PingApi`); `Class.getSimpleName()`
+is the correct call for deriving a bean name.
+
+Verified end to end with real local `HttpServer`-backed tests (3/3
+passing): annotate, scan, register (by `@BaseUrl` or by
+`baseUrlProperty`), inject, call. See §7 for the full chunked rollout plan
+and which chunk is next. Roadmap item: "Spring/Micronaut integration
+module" in `ROADMAP.md`.
 
 ## 1. Problem
 
@@ -109,6 +132,7 @@ REST-in-peace/
     ├── pom.xml                    # depends on com.shri:rest-in-peace + spring-boot-autoconfigure
     └── src/main/java/com/shri/restinpeace/spring/
         ├── EnableRestInPeaceClients.java
+        ├── RestInPeaceClient.java             # optional per-interface Spring metadata (§4.3)
         ├── RestInPeaceClientsRegistrar.java   # ImportBeanDefinitionRegistrar
         ├── RestInPeaceClientFactoryBean.java
         └── RestInPeaceClientProperties.java   # @ConfigurationProperties("rest-in-peace")
@@ -140,10 +164,20 @@ section.
 
 ### 4.3 Base URL resolution
 
-`@RestClient` gains one new, Spring-only, optional attribute:
+**Corrected from the original sketch** (caught before chunk 4 was written,
+not after - see the chunk 4 status entry): the first draft of this section
+put `baseUrlProperty` directly on the core library's `@RestClient`
+annotation. That's a real, if backward-compatible, source change to the
+core library - directly contradicting this doc's own §2 goal of "zero
+changes to how a `@RestClient` interface is declared or called" and §3's
+non-goal of touching anything in the core module. The fix: a second,
+**starter-only** annotation, `@RestInPeaceClient`, applied *alongside*
+`@RestClient` rather than folded into it - the core library never needs to
+know this module exists, in its build files or its source:
 
 ```java
-@RestClient(baseUrlProperty = "user-api.base-url")
+@RestClient
+@RestInPeaceClient(baseUrlProperty = "user-api.base-url")
 interface UserApi {
     @GET("/users/{id}")
     User getUser(@PathParam("id") String id);
@@ -156,24 +190,26 @@ user-api:
 ```
 
 `baseUrlProperty` is a plain `String` naming a property *key* - a valid
-compile-time constant - not the resolved value itself. The registrar reads
-it with `Environment.resolveRequiredPlaceholders(...)` at bean-creation
-time, after Spring's `Environment` exists, exactly mirroring what a
-hand-written `@Value("${user-api.base-url}") String baseUrl` parameter does
-today. An interface with a real `@BaseUrl` instead of `baseUrlProperty`
-still works unmodified - the two aren't mutually exclusive at the type
-level, but the registrar treats them as mutually exclusive in practice: if
-`baseUrlProperty` is set, it wins (the whole point is overriding what
-`@BaseUrl` can't itself express).
+compile-time constant - not the resolved value itself. The registrar
+resolves it via the `Environment` (injected through
+`ImportBeanDefinitionRegistrar`'s `EnvironmentAware` callback, a standard
+Spring extension point) at bean-*registration* time, after Spring's
+`Environment` exists but before any client is constructed - mirroring what
+a hand-written `@Value("${user-api.base-url}") String baseUrl` parameter
+does today. `@RestInPeaceClient` is entirely optional: an interface with
+only `@RestClient` keeps working exactly as chunk 3 shipped it (a real
+`@BaseUrl`, resolving with no runtime override). Omitting `baseUrlProperty`
+on an interface that *does* carry `@RestInPeaceClient` (e.g. for its
+`name()` alone, see §4.4) falls back to the same `@BaseUrl`-only behavior.
 
 ### 4.4 Per-client configuration and bean wiring
 
 ```yaml
 rest-in-peace:
   clients:
-    user-api:                 # matched to @RestClient(name = "user-api"), or a
-                               # kebab-case default derived from the interface's
-                               # simple name if name() is left unset
+    user-api:                 # matched to @RestInPeaceClient(name = "user-api"),
+                               # or a decapitalized default derived from the
+                               # interface's simple name if name() is left unset
       connect-timeout-millis: 2000
       read-timeout-millis: 10000
       proxy: { host: proxy.example.com, port: 8080 }
@@ -236,9 +272,9 @@ Everything method/parameter-level - `@PathParam`/`@QueryParam`/`@QueryMap`/
 changes and zero Spring awareness, because Spring only ever constructs the
 *client instance*, never touches a method call. Compile-time vs. reflective
 dispatch stays fully transparent too, for the same reason. The genuinely
-new surface is small and fully contained to this new project: one
-annotation attribute (`baseUrlProperty`, plus an optional `name`), a
-`@ConfigurationProperties` class, a registrar + `FactoryBean`, an
+new surface is small and fully contained to this new project: one new
+annotation (`@RestInPeaceClient`, carrying `baseUrlProperty` and an
+optional `name`), a `@ConfigurationProperties` class, a registrar + `FactoryBean`, an
 auto-configuration class, and the `MockRestServer` test-support piece.
 
 ## 7. Rollout plan (chunked)
