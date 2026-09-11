@@ -1,8 +1,15 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 1 (this doc)**. See §7 for the full chunked
-rollout plan and which chunk is next. Roadmap item: "Spring/Micronaut
-integration module" in `ROADMAP.md`.
+Status: **in progress - chunk 2 landed**. Chunk 1 (this doc) merged first;
+chunk 2 added `spring-boot-starter/` as a standalone Maven project (Java 17,
+targeting **Spring Boot 4.x** rather than 3.x - 3.x reached its own
+open-source end of life shortly after this doc's first draft, and 4.x keeps
+the same Java 17 floor §2 already assumed) plus
+`.github/workflows/spring-boot-starter-test.yml`, verified end to end:
+installs the core library locally, resolves `spring-boot-dependencies`'
+BOM, and builds clean with zero production code yet (intentional - see §7's
+chunk 2 scope). See §7 for the full chunked rollout plan and which chunk is
+next. Roadmap item: "Spring/Micronaut integration module" in `ROADMAP.md`.
 
 ## 1. Problem
 
