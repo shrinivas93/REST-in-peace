@@ -1,6 +1,6 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 4 landed**. Chunk 1 (this doc), then chunk 2
+Status: **in progress - chunk 5 landed**. Chunk 1 (this doc), then chunk 2
 (standalone project scaffolding, targeting **Spring Boot 4.x** rather than
 3.x - 3.x reached its own open-source end of life shortly after this doc's
 first draft, and 4.x keeps the same Java 17 floor §2 already assumed), then
@@ -49,17 +49,49 @@ Chunk 4 added `baseUrlProperty`/`name` and their `Environment` resolution
   (`.registration`, `.baseurl`, ...), a convention every later chunk's
   tests should keep following.
 
+Chunk 5 added `RipClientConfig`'s connect/read timeout and proxy, bound
+from `rest-in-peace.clients.<name>.*` (§4.4, minus the `ObjectMapper`/
+`Cache`/interceptor bean wiring - that's chunk 6):
+
+- **`RestInPeaceClientFactoryBean` now always goes through
+  `RIP.getClient(Class, RipClientConfig)`**, not the `Class`/`Class,String`
+  overloads it branched between before - a `RipClientConfig` with every
+  field unset already behaves identically to `RIP.getClient(Class)` (see
+  that class's own javadoc on the "keeps sharing the static client" case),
+  so unifying on it removed a branch instead of adding one.
+- **A new package-private `RestInPeaceClientProperties`** (plain JavaBean
+  getters/setters, not a Java record) holds one client's `connectTimeoutMillis`/
+  `readTimeoutMillis`/`proxy`, bound via Spring Boot's `Binder` -
+  `Binder.get(environment).bind("rest-in-peace.clients.<name>", ...)` -
+  the same eager, registration-time resolution `baseUrlProperty` already
+  gets, for the same fail-fast-at-construction reason.
+- **Real bug caught by the existing tests, not a new one of theirs**:
+  `ConfigurationPropertyName.of(...)` (what `Binder.bind(String, ...)` calls
+  internally) only accepts an already-canonical, kebab-case name - relaxed
+  binding matches a canonical name against differently-cased keys already
+  *in* a property source, but never accepts a differently-cased name to
+  parse as the binding target in the first place. A derived bean name like
+  `pingApi` therefore threw `InvalidConfigurationPropertyNameException`
+  immediately, failing every existing test's context startup the moment
+  this chunk's binder call was added - not just the new chunk 5 test.
+  Fixed with a small `toKebabCase(String)` helper (`pingApi` → `ping-api`)
+  applied only to the property-path segment; the registered bean name
+  itself stays camelCase, unaffected.
+
 Chunk 3's own note, unchanged from when it landed: one deviation from
 §4.2's sketch, caught by its bean-naming test -
 `ClassUtils.getShortName(...)` includes the enclosing class's name for a
 nested interface (`Outer.PingApi`, not `PingApi`); `Class.getSimpleName()`
 is the correct call for deriving a bean name.
 
-Verified end to end with real local `HttpServer`-backed tests (3/3
-passing): annotate, scan, register (by `@BaseUrl` or by
-`baseUrlProperty`), inject, call. See §7 for the full chunked rollout plan
-and which chunk is next. Roadmap item: "Spring/Micronaut integration
-module" in `ROADMAP.md`.
+Verified end to end with real local `HttpServer`-backed tests (6/6
+passing): annotate, scan, register (by `@BaseUrl`, `baseUrlProperty`, or
+per-client timeout/proxy), inject, call - the timeout/proxy tests mirror
+core's own `RipClientConfigIntegrationTest` shapes (300ms server delay vs.
+a 50ms read timeout; an unreachable `localhost:1` proxy) to prove the
+bound properties actually reach `RipClientConfig`, not just that binding
+doesn't throw. See §7 for the full chunked rollout plan and which chunk is
+next. Roadmap item: "Spring/Micronaut integration module" in `ROADMAP.md`.
 
 ## 1. Problem
 
@@ -156,7 +188,7 @@ REST-in-peace/
         ├── EnableRestInPeaceClients.java
         ├── RestInPeaceClientsRegistrar.java   # ImportBeanDefinitionRegistrar
         ├── RestInPeaceClientFactoryBean.java
-        └── RestInPeaceClientProperties.java   # @ConfigurationProperties("rest-in-peace")
+        └── RestInPeaceClientProperties.java   # per-client timeout/proxy, bound via Binder (§4.4)
 ```
 
 `@RestClient`'s own `baseUrlProperty()`/`name()` attributes (core library,
@@ -235,18 +267,24 @@ rest-in-peace:
       proxy: { host: proxy.example.com, port: 8080 }
 ```
 
-binds via `@ConfigurationProperties("rest-in-peace")` into a
-`RipClientConfig.Builder` per named client. `ObjectMapper`/`Cache` beans
-resolve by type, qualified to a client name when more than one bean of that
-type exists in the context (`@Qualifier("user-api")`), falling back to a
-single unqualified bean shared by every client without its own - mirroring
-`RIP.setObjectMapper(...)`/`RIP.setCache(...)`'s existing "shared default"
-role. Any Spring bean implementing `RequestInterceptor` with no client
-qualifier is registered globally (`RIP.addInterceptor(...)`, once, from the
-auto-configuration) at context startup; one qualified to a client name goes
-into that client's own `RipClientConfig.Builder.interceptors(...)` instead -
-same "per-client interceptors run in addition to global ones" semantics the
-core library already documents.
+`connect-timeout-millis`/`read-timeout-millis`/`proxy` (chunk 5, landed) bind
+straight into a `RipClientConfig.Builder` per named client, via Spring
+Boot's `Binder` against `rest-in-peace.clients.<name>` at the same
+bean-registration time `baseUrlProperty` already resolves at - **not** a
+registered `@ConfigurationProperties` bean (there's no single bean that
+could hold "every client's config" before the set of clients is even known,
+since that set comes from the classpath scan itself). `ObjectMapper`/`Cache`
+beans (chunk 6, not yet built) will resolve by type, qualified to a client
+name when more than one bean of that type exists in the context
+(`@Qualifier("user-api")`), falling back to a single unqualified bean shared
+by every client without its own - mirroring `RIP.setObjectMapper(...)`/
+`RIP.setCache(...)`'s existing "shared default" role. Any Spring bean
+implementing `RequestInterceptor` with no client qualifier will be
+registered globally (`RIP.addInterceptor(...)`, once, from the
+auto-configuration) at context startup; one qualified to a client name will
+go into that client's own `RipClientConfig.Builder.interceptors(...)`
+instead - same "per-client interceptors run in addition to global ones"
+semantics the core library already documents.
 
 ### 4.5 `MockRestServer` test support
 
@@ -294,8 +332,9 @@ changes and zero Spring awareness, because Spring only ever constructs the
 dispatch stays fully transparent too, for the same reason. The genuinely
 new surface is small: two optional, inert attributes on the core library's
 `@RestClient` (`baseUrlProperty`, `name`), and, fully contained to this new
-project, a `@ConfigurationProperties` class, a registrar + `FactoryBean`, an
-auto-configuration class, and the `MockRestServer` test-support piece.
+project, a small `Binder`-bound properties class (`RestInPeaceClientProperties`),
+a registrar + `FactoryBean`, an auto-configuration class, and the
+`MockRestServer` test-support piece.
 
 ## 7. Rollout plan (chunked)
 
