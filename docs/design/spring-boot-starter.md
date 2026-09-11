@@ -1,0 +1,265 @@
+# Design: Spring Boot starter module
+
+Status: **in progress - chunk 1 (this doc)**. See §7 for the full chunked
+rollout plan and which chunk is next. Roadmap item: "Spring/Micronaut
+integration module" in `ROADMAP.md`.
+
+## 1. Problem
+
+Wiring a `@RestClient` interface into a Spring-managed app today means one
+hand-written `@Bean` method per interface:
+
+```java
+@Bean
+public UserApi userApi(@Value("${user-api.base-url}") String baseUrl) {
+    return RIP.getClient(UserApi.class, baseUrl);
+}
+```
+
+Fine for a handful of clients, tedious past a dozen - exactly the gap
+OpenFeign's `@EnableFeignClients` closes for its own model. Two problems
+being conflated as one, worth separating up front:
+
+1. **Discovery/registration boilerplate** - one `@Bean` method per
+   interface, all doing the same three things (resolve config, call
+   `RIP.getClient(...)`, return it).
+2. **A genuine language constraint, not just missing glue code**:
+   `@BaseUrl`'s `value()` must be a compile-time constant (Java annotation
+   attributes always are), so it can never hold a Spring property
+   placeholder like `${user-api.base-url}` - not a RIP limitation, a Java
+   one. Something has to bridge annotation-declared metadata and Spring's
+   runtime `Environment` for a Spring consumer to configure a base URL the
+   way they configure everything else.
+
+## 2. Goals
+
+- Auto-register every `@RestClient` interface found on the classpath as a
+  Spring-managed singleton bean, removing the one-`@Bean`-per-interface
+  boilerplate entirely for the common case.
+- Base URL, connect/read timeout, and proxy configurable per client from
+  `application.yml`/`.properties`, the way every other Spring Boot
+  integration is configured - not from Java constants.
+- `ObjectMapper`/`Cache`/`RequestInterceptor` beans already in the Spring
+  context get wired into the right client(s) automatically - a consumer
+  defines them once as ordinary `@Bean`s/`@Component`s, same as they would
+  for any other Spring integration.
+- Dedicated Spring Boot test support for `MockRestServer` - the one thing
+  that doesn't fall out for free from "call `RIP.getClient(...)` for you"
+  (see §3).
+- Zero changes to `RequestExecutor` or any of its collaborators, and zero
+  changes to how a `@RestClient` interface is declared or called - every
+  annotation (`@PathParam`, `@Multipart`, `@Retry`, ...), every return type,
+  and both dispatch paths (compile-time-generated and reflective) already
+  work identically regardless of how the client instance was constructed,
+  because `RIP.getClient(...)` is the single choke point both this starter
+  and today's hand-written `@Bean` method call into. This module is purely
+  about *constructing and registering* clients, never about the request
+  lifecycle itself.
+
+## 3. Non-goals
+
+- Not a Micronaut module. Spring's classpath-scanning + runtime bean
+  registration model (`ImportBeanDefinitionRegistrar`) maps directly onto
+  what's needed here; Micronaut's DI is itself compile-time (its own
+  annotation processor generates bean definitions ahead of time), so a
+  Micronaut integration is a structurally different second effort that has
+  to cooperate with `RestClientProcessor`'s own codegen, not a port of this
+  module. Tracked as a separate future item if there's real demand.
+- Not touching the existing single-module `pom.xml`, `ci.yml`,
+  `release.yml`, `maven-publish.yml`, or `javadoc.yml`. The starter is a
+  new **standalone** Maven project (its own `pom.xml`, depending on
+  `com.shri:rest-in-peace` as an ordinary dependency), the same shape
+  `samples/compile-time-proxy-consumer` already is - not a reactor
+  submodule of the core library's POM. Full "modularization" of the core
+  artifact itself (splitting `rest-in-peace` into multiple published
+  artifacts) is a separate, larger roadmap item this design deliberately
+  does not depend on or block.
+- Not solving how the starter itself gets published for real consumption
+  (own Maven coordinates, its own release cadence) - deferred to the last
+  rollout chunk (§7), once the feature is functionally complete and there's
+  something worth versioning.
+- Not adding a `CallAdapter`-style pluggable return-type system (a
+  separate, already-parked roadmap item) - this module never touches
+  return-type decoding.
+
+## 4. Proposed architecture
+
+### 4.1 New standalone project, not a reactor module
+
+```
+REST-in-peace/
+├── pom.xml                        # unchanged - still packages the core jar
+├── src/, samples/, docs/          # unchanged
+└── spring-boot-starter/           # new, standalone Maven project
+    ├── pom.xml                    # depends on com.shri:rest-in-peace + spring-boot-autoconfigure
+    └── src/main/java/com/shri/restinpeace/spring/
+        ├── EnableRestInPeaceClients.java
+        ├── RestInPeaceClientsRegistrar.java   # ImportBeanDefinitionRegistrar
+        ├── RestInPeaceClientFactoryBean.java
+        └── RestInPeaceClientProperties.java   # @ConfigurationProperties("rest-in-peace")
+```
+
+Building/testing it locally or in CI mirrors exactly what
+`sample-consumer-test.yml` already does for the sample consumer: install
+the core library's current commit (`mvn install -DskipTests` at the repo
+root), then build the standalone project against whatever version was just
+installed.
+
+### 4.2 Registration flow
+
+```mermaid
+flowchart TD
+    A["@EnableRestInPeaceClients(basePackages=...)"] --> B["RestInPeaceClientsRegistrar\n(ImportBeanDefinitionRegistrar)"]
+    B --> C["Classpath scan for @RestClient interfaces"]
+    C --> D["One BeanDefinition per interface,\nbacked by RestInPeaceClientFactoryBean"]
+    D --> E["FactoryBean.getObject():\nresolve RipClientConfig from\nEnvironment + qualified beans"]
+    E --> F["RIP.getClient(interfaceClass, config)"]
+    F --> G["Ordinary Spring singleton bean,\ninjectable like any other"]
+```
+
+`RestInPeaceClientFactoryBean<T>` is the only piece that ever calls
+`RIP.getClient(...)` - once per interface, at bean-creation time, matching
+the "construct once, reuse" guidance already in the README's
+[Integrating with your project](../../README.md#integrating-with-your-project)
+section.
+
+### 4.3 Base URL resolution
+
+`@RestClient` gains one new, Spring-only, optional attribute:
+
+```java
+@RestClient(baseUrlProperty = "user-api.base-url")
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+```
+
+```yaml
+user-api:
+  base-url: https://api.example.com
+```
+
+`baseUrlProperty` is a plain `String` naming a property *key* - a valid
+compile-time constant - not the resolved value itself. The registrar reads
+it with `Environment.resolveRequiredPlaceholders(...)` at bean-creation
+time, after Spring's `Environment` exists, exactly mirroring what a
+hand-written `@Value("${user-api.base-url}") String baseUrl` parameter does
+today. An interface with a real `@BaseUrl` instead of `baseUrlProperty`
+still works unmodified - the two aren't mutually exclusive at the type
+level, but the registrar treats them as mutually exclusive in practice: if
+`baseUrlProperty` is set, it wins (the whole point is overriding what
+`@BaseUrl` can't itself express).
+
+### 4.4 Per-client configuration and bean wiring
+
+```yaml
+rest-in-peace:
+  clients:
+    user-api:                 # matched to @RestClient(name = "user-api"), or a
+                               # kebab-case default derived from the interface's
+                               # simple name if name() is left unset
+      connect-timeout-millis: 2000
+      read-timeout-millis: 10000
+      proxy: { host: proxy.example.com, port: 8080 }
+```
+
+binds via `@ConfigurationProperties("rest-in-peace")` into a
+`RipClientConfig.Builder` per named client. `ObjectMapper`/`Cache` beans
+resolve by type, qualified to a client name when more than one bean of that
+type exists in the context (`@Qualifier("user-api")`), falling back to a
+single unqualified bean shared by every client without its own - mirroring
+`RIP.setObjectMapper(...)`/`RIP.setCache(...)`'s existing "shared default"
+role. Any Spring bean implementing `RequestInterceptor` with no client
+qualifier is registered globally (`RIP.addInterceptor(...)`, once, from the
+auto-configuration) at context startup; one qualified to a client name goes
+into that client's own `RipClientConfig.Builder.interceptors(...)` instead -
+same "per-client interceptors run in addition to global ones" semantics the
+core library already documents.
+
+### 4.5 `MockRestServer` test support
+
+The one piece that doesn't fall out of "call `RIP.getClient(...)` for you":
+a test needs every registered client's base URL redirected to a running
+`MockRestServer` instance for the test's duration.
+
+```java
+@SpringBootTest
+@AutoConfigureMockRestServer
+class UserServiceTest {
+    @Autowired MockRestServer server;
+    @Autowired UserApi userApi;   // already pointed at server.baseUrl()
+
+    @Test
+    void getUser_returnsDecodedBody() {
+        server.on(HTTPMethod.GET, "/users/{id}", MockResponse.json(new User("42", "Shrinivas")));
+        assertEquals("Shrinivas", userApi.getUser("42").name);
+    }
+}
+```
+
+`@AutoConfigureMockRestServer` starts a `MockRestServer`, exposes it as an
+injectable bean, and overrides every registered client's resolved base URL
+to `server.baseUrl()` for that test's application context - a genuinely new
+piece of Spring-test-specific code, not a thin wrapper.
+
+## 5. Async and daemon threads
+
+A Spring Boot app is long-running, so the README's
+["short-lived program hangs after an async call"](../../README.md#faq--troubleshooting)
+FAQ entry is largely moot in this context. The auto-configuration calls
+`RIP.useDaemonThreadsForAsync()` once at context startup as a sane default -
+a long-running Spring app has no reason to want non-daemon I/O threads
+outliving its own shutdown.
+
+## 6. What's genuinely new vs. what's untouched
+
+Everything method/parameter-level - `@PathParam`/`@QueryParam`/`@QueryMap`/
+`@HeaderParam`/`@HeaderMap`/`@Headers`/`@Body`/`@Multipart`/`@Part`/
+`@PartMap`/`@FormUrlEncoded`/`@Field`/`@FieldMap`, every return type,
+`@ErrorType`/`RestInPeaceHttpException`, `@Retry`, `@Timeout` - needs zero
+changes and zero Spring awareness, because Spring only ever constructs the
+*client instance*, never touches a method call. Compile-time vs. reflective
+dispatch stays fully transparent too, for the same reason. The genuinely
+new surface is small and fully contained to this new project: one
+annotation attribute (`baseUrlProperty`, plus an optional `name`), a
+`@ConfigurationProperties` class, a registrar + `FactoryBean`, an
+auto-configuration class, and the `MockRestServer` test-support piece.
+
+## 7. Rollout plan (chunked)
+
+Each chunk is its own PR, verified and merged before the next starts,
+mirroring how compile-time proxy generation itself shipped in slices (see
+`docs/design/compile-time-proxy-generation.md` §8-§9).
+
+1. **This design doc.** ✅ (once merged)
+2. **Standalone project scaffolding** - `spring-boot-starter/pom.xml`
+   (depends on `com.shri:rest-in-peace`, `spring-boot-autoconfigure`,
+   `spring-context`), a new `spring-boot-starter-test.yml` CI workflow
+   mirroring `sample-consumer-test.yml`'s "install core locally, build the
+   standalone project against it" pattern. No production code yet - just a
+   building, empty-but-real Maven project wired into CI.
+3. **Minimal registration** - `@EnableRestInPeaceClients(basePackages)`,
+   the registrar, and `RestInPeaceClientFactoryBean` calling
+   `RIP.getClient(Class)` alone - interfaces must still use a real
+   `@BaseUrl` at this point, no property resolution yet. Smallest possible
+   end-to-end slice: annotate, scan, register, inject, call.
+4. **Base URL from Spring properties** - the `baseUrlProperty` attribute
+   and its `Environment` resolution (§4.3).
+5. **Per-client `RipClientConfig` properties** - timeout and proxy bound
+   from `application.yml` (§4.4, minus bean wiring).
+6. **`ObjectMapper`/`Cache`/interceptor bean wiring** - the qualified/
+   unqualified bean-resolution rules in §4.4.
+7. **`MockRestServer` test support** - `@AutoConfigureMockRestServer` (§4.5).
+8. **Sample Spring Boot consumer + docs + publishing decision** - a
+   `samples/spring-boot-consumer` project exercising the whole starter end
+   to end (mirroring `samples/compile-time-proxy-consumer`'s role for
+   compile-time codegen), README/`ROADMAP.md` updates, and an explicit
+   decision on how the starter itself gets published (own Maven
+   coordinates, own version, own release workflow) before calling this
+   roadmap item done.
+
+Each chunk after the first should update this doc's Status line with what
+actually landed and any real deviations from the sketch above, the same
+way `docs/design/compile-time-proxy-generation.md` §9 records its own
+rollout history.
