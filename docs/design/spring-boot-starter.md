@@ -1,6 +1,7 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 7 landed**. Chunk 1 (this doc), then chunk 2
+Status: **all 8 chunks landed - functionally complete, not yet released**.
+Chunk 1 (this doc), then chunk 2
 (standalone project scaffolding, targeting **Spring Boot 4.x** rather than
 3.x - 3.x reached its own open-source end of life shortly after this doc's
 first draft, and 4.x keeps the same Java 17 floor §2 already assumed), then
@@ -156,6 +157,18 @@ happening to overlap):
   assertion caught it. Fixed by reading `getIndexedArgumentValues()`
   instead.
 
+Chunk 8 added `samples/spring-boot-consumer` (a real, separate downstream
+project depending on both `rest-in-peace` and
+`rest-in-peace-spring-boot-starter` as ordinary Maven dependencies, the
+same role `samples/compile-time-proxy-consumer` plays for compile-time
+codegen), its own CI job in `spring-boot-starter-test.yml`, README/
+`ROADMAP.md` updates, and the publishing decision recorded in §8 -
+completing the rollout plan. No design surprises this time: the sample's
+`Main` (`@SpringBootApplication @EnableRestInPeaceClients`, no
+`basePackages`) starts a throwaway local server, injects `UserApi` via a
+`CommandLineRunner`, and asserts a real call succeeds - verified locally
+end to end (`VERIFICATION PASSED`) before being wired into CI.
+
 Chunk 3's own note, unchanged from when it landed: one deviation from
 §4.2's sketch, caught by its bean-naming test -
 `ClassUtils.getShortName(...)` includes the enclosing class's name for a
@@ -171,9 +184,9 @@ shapes (300ms server delay vs. a 50ms read timeout; an unreachable
 `localhost:1` proxy), and the bean-wiring
 tests use a fixed-value `ObjectMapper`, a request-header-adding
 interceptor, and a call-counting `Cache` to prove the wired bean is
-actually the one consulted, not just that wiring doesn't throw. See §7 for
-the full chunked rollout plan and which chunk is next. Roadmap item:
-"Spring/Micronaut integration module" in `ROADMAP.md`.
+actually the one consulted, not just that wiring doesn't throw. Roadmap
+item: "Spring/Micronaut integration module" in `ROADMAP.md`, now done for
+Spring (Micronaut remains scoped out - see §3).
 
 ## 1. Problem
 
@@ -430,26 +443,27 @@ Each chunk is its own PR, verified and merged before the next starts,
 mirroring how compile-time proxy generation itself shipped in slices (see
 `docs/design/compile-time-proxy-generation.md` §8-§9).
 
-1. **This design doc.** ✅ (once merged)
-2. **Standalone project scaffolding** - `spring-boot-starter/pom.xml`
+1. **This design doc.** ✅
+2. **Standalone project scaffolding** ✅ - `spring-boot-starter/pom.xml`
    (depends on `com.shri:rest-in-peace`, `spring-boot-autoconfigure`,
    `spring-context`), a new `spring-boot-starter-test.yml` CI workflow
    mirroring `sample-consumer-test.yml`'s "install core locally, build the
    standalone project against it" pattern. No production code yet - just a
    building, empty-but-real Maven project wired into CI.
-3. **Minimal registration** - `@EnableRestInPeaceClients(basePackages)`,
+3. **Minimal registration** ✅ - `@EnableRestInPeaceClients(basePackages)`,
    the registrar, and `RestInPeaceClientFactoryBean` calling
    `RIP.getClient(Class)` alone - interfaces must still use a real
    `@BaseUrl` at this point, no property resolution yet. Smallest possible
    end-to-end slice: annotate, scan, register, inject, call.
-4. **Base URL from Spring properties** - the `baseUrlProperty` attribute
-   and its `Environment` resolution (§4.3).
-5. **Per-client `RipClientConfig` properties** - timeout and proxy bound
-   from `application.yml` (§4.4, minus bean wiring).
-6. **`ObjectMapper`/`Cache`/interceptor bean wiring** - the qualified/
+4. **Base URL from Spring properties** ✅ - the `baseUrlProperty`
+   attribute and its `Environment` resolution (§4.3).
+5. **Per-client `RipClientConfig` properties** ✅ - timeout and proxy
+   bound from `application.yml` (§4.4, minus bean wiring).
+6. **`ObjectMapper`/`Cache`/interceptor bean wiring** ✅ - the qualified/
    unqualified bean-resolution rules in §4.4.
-7. **`MockRestServer` test support** - `@AutoConfigureMockRestServer` (§4.5).
-8. **Sample Spring Boot consumer + docs + publishing decision** - a
+7. **`MockRestServer` test support** ✅ - `@AutoConfigureMockRestServer`
+   (§4.5).
+8. **Sample Spring Boot consumer + docs + publishing decision** ✅ - a
    `samples/spring-boot-consumer` project exercising the whole starter end
    to end (mirroring `samples/compile-time-proxy-consumer`'s role for
    compile-time codegen), README/`ROADMAP.md` updates, and an explicit
@@ -461,3 +475,41 @@ Each chunk after the first should update this doc's Status line with what
 actually landed and any real deviations from the sketch above, the same
 way `docs/design/compile-time-proxy-generation.md` §9 records its own
 rollout history.
+
+## 8. Publishing
+
+The starter is published under its **own Maven coordinates**
+(`com.shri:rest-in-peace-spring-boot-starter`), its **own, independent
+version** (starting at `0.1.0`, unrelated to the core library's `1.0.0.x`
+line), and its **own release workflow** - `spring-boot-starter-release.yml`
++ `spring-boot-starter-maven-publish.yml`, structurally identical to the
+core library's `release.yml`/`maven-publish.yml` (same `maven-release-plugin`
++ GitHub Packages `distributionManagement` pattern), just scoped to the
+`spring-boot-starter/` subdirectory and published as a separate artifact.
+Both projects release from tags in this same repository - the starter's
+own tags use a `spring-boot-starter-v@{version}` prefix (its
+`maven-release-plugin` `tagNameFormat`) to stay unambiguous alongside the
+core library's own bare `v@{version}` tags.
+
+Why independent rather than releasing them together: the two artifacts
+have completely different audiences (every RIP user vs. only Spring Boot
+users), different Java floors (8 vs. 17), and no reason to force a version
+bump on one just because the other shipped a fix - the same reasoning
+`docs/design/compile-time-proxy-generation.md` already established for
+keeping `samples/*` out of the main release entirely, one step further
+for an artifact real consumers actually depend on.
+
+**A real prerequisite this setup does not automate**: `maven-release-plugin`
+refuses to release a project with a `SNAPSHOT` dependency, so
+`spring-boot-starter/pom.xml`'s `<rest-in-peace.version>` property has to
+be bumped to a real, already-published core release (never the
+`-SNAPSHOT` development default the property normally holds) in a commit
+on `master` before `spring-boot-starter-release.yml` is ever triggered.
+This is a manual step, called out in that workflow's own comments -
+automating "find and pin the latest compatible core release" is real
+scope, deliberately left out of this rollout rather than guessed at.
+
+No release of the starter has happened yet as of chunk 8 landing - this
+section documents the decision and the infrastructure to act on it, not
+an announcement that a release occurred. The starter's version stays
+`0.1.0-SNAPSHOT` until a maintainer explicitly decides to cut `0.1.0`.

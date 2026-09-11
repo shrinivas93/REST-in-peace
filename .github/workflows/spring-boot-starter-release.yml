@@ -1,0 +1,90 @@
+name: Spring Boot Starter Release
+
+# Cuts a release of spring-boot-starter/ independently of the core
+# rest-in-peace library's own release.yml - the two artifacts have
+# completely independent version numbers and release cadences (see
+# docs/design/spring-boot-starter.md's "Publishing" section), even though
+# they live in and release from this same repository.
+#
+# Never fires on its own - manual dispatch only, exactly like release.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      releaseVersion:
+        description: 'Version to release (blank = current version with -SNAPSHOT stripped)'
+        required: false
+      developmentVersion:
+        description: 'Next development version (blank = auto-incremented -SNAPSHOT)'
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # maven-release-plugin runs from spring-boot-starter/ - its git
+      # commands (add/commit/tag) operate against the enclosing repository
+      # exactly as they would from the repository root, just scoped to this
+      # subdirectory's own pom.xml and working tree changes.
+      #
+      # Prerequisite this workflow does NOT handle automatically:
+      # maven-release-plugin refuses to release a project with a SNAPSHOT
+      # dependency, so spring-boot-starter/pom.xml's <rest-in-peace.version>
+      # property must already be bumped to a real, published core release
+      # (not the "...-SNAPSHOT" development default) in a commit on master
+      # before triggering this workflow.
+      - name: Prepare release
+        working-directory: spring-boot-starter
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.releaseVersion }}
+          DEV_VERSION: ${{ github.event.inputs.developmentVersion }}
+        run: |
+          ARGS=()
+          if [ -n "$RELEASE_VERSION" ]; then
+            ARGS+=("-DreleaseVersion=$RELEASE_VERSION")
+          fi
+          if [ -n "$DEV_VERSION" ]; then
+            ARGS+=("-DdevelopmentVersion=$DEV_VERSION")
+          fi
+          mvn -B release:prepare "${ARGS[@]}"
+
+      - name: Determine released tag
+        id: released_tag
+        run: echo "tag=$(git describe --tags --abbrev=0 --match 'spring-boot-starter-v*')" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
+        run: gh release create "$RELEASE_TAG" --generate-notes --title "$RELEASE_TAG"
+
+      # A release created via the default GITHUB_TOKEN does not fire other
+      # workflows' `on: release` triggers (GitHub's anti-recursion rule), so
+      # spring-boot-starter-maven-publish.yml would never run on its own -
+      # dispatch it explicitly, same as release.yml does for the core library.
+      - name: Trigger publish workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
+        run: gh workflow run spring-boot-starter-maven-publish.yml --ref "$RELEASE_TAG"

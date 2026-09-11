@@ -49,3 +49,50 @@ jobs:
       - name: Build and test the Spring Boot starter
         working-directory: spring-boot-starter
         run: mvn -B test -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
+
+  # samples/spring-boot-consumer (step 8 of
+  # docs/design/spring-boot-starter.md's rollout plan) - a real, separate
+  # downstream project depending on both the core library and the starter
+  # as ordinary Maven dependencies, the same way samples/compile-time-proxy-consumer
+  # does for compile-time proxy generation. A separate job (not folded into
+  # spring-boot-starter above) so a regression here is reported distinctly
+  # from a failure in the starter's own unit tests.
+  sample-spring-boot-consumer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Install the core library locally
+        run: mvn -B install -DskipTests --file pom.xml
+
+      - name: Determine the installed core library version
+        id: rip-version
+        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' pom.xml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install the Spring Boot starter locally
+        working-directory: spring-boot-starter
+        run: mvn -B install -DskipTests -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
+
+      # The starter's own pom.xml pins a default rest-in-peace-spring-boot-starter.version
+      # for convenience, but - same reasoning as rip-version above - that
+      # default drifts the moment this branch's version differs from
+      # whatever was just installed.
+      - name: Determine the installed starter version
+        id: starter-version
+        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' spring-boot-starter/pom.xml)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and run the sample consumer
+        working-directory: samples/spring-boot-consumer
+        run: |
+          mvn -B compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
+            -Drest-in-peace.version=${{ steps.rip-version.outputs.version }} \
+            -Drest-in-peace-spring-boot-starter.version=${{ steps.starter-version.outputs.version }}
+          java -cp "target/classes:src/main/resources:$(cat cp.txt)" com.example.consumer.Main
