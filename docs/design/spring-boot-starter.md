@@ -1,15 +1,23 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 2 landed**. Chunk 1 (this doc) merged first;
-chunk 2 added `spring-boot-starter/` as a standalone Maven project (Java 17,
-targeting **Spring Boot 4.x** rather than 3.x - 3.x reached its own
-open-source end of life shortly after this doc's first draft, and 4.x keeps
-the same Java 17 floor §2 already assumed) plus
-`.github/workflows/spring-boot-starter-test.yml`, verified end to end:
-installs the core library locally, resolves `spring-boot-dependencies`'
-BOM, and builds clean with zero production code yet (intentional - see §7's
-chunk 2 scope). See §7 for the full chunked rollout plan and which chunk is
-next. Roadmap item: "Spring/Micronaut integration module" in `ROADMAP.md`.
+Status: **in progress - chunk 3 landed**. Chunk 1 (this doc), then chunk 2
+(standalone project scaffolding, targeting **Spring Boot 4.x** rather than
+3.x - 3.x reached its own open-source end of life shortly after this doc's
+first draft, and 4.x keeps the same Java 17 floor §2 already assumed).
+Chunk 3 added the first real code: `@EnableRestInPeaceClients`,
+`RestInPeaceClientsRegistrar` (a `ClassPathScanningCandidateComponentProvider`
+overridden to accept interfaces, the same fix MyBatis-Spring's own
+mapper scanner uses), and `RestInPeaceClientFactoryBean` (extends
+`AbstractFactoryBean` for its built-in singleton caching, calling
+`RIP.getClient(Class)` exactly once per interface). One real deviation
+from §4.2's sketch, caught by the chunk's own bean-naming test:
+`ClassUtils.getShortName(...)` includes the enclosing class's name for a
+nested interface (`Outer.PingApi`, not `PingApi`) - `Class.getSimpleName()`
+is the correct call for deriving a bean name. Verified end to end with a
+real local `HttpServer`-backed test: annotate, scan, register, inject
+(`context.getBean(PingApi.class)` and by its derived name), call. See §7
+for the full chunked rollout plan and which chunk is next. Roadmap item:
+"Spring/Micronaut integration module" in `ROADMAP.md`.
 
 ## 1. Problem
 
