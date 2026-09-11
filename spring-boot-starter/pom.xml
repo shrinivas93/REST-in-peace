@@ -20,6 +20,17 @@
 		and has no dependency on this module either direction.
 	</description>
 
+	<!-- Published, versioned, and released independently of the core
+	     rest-in-peace artifact (own coordinates, own version, own release
+	     workflow), from the same monorepo - see the design doc's
+	     "Publishing" section for the full rationale. -->
+	<scm>
+		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
+		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
+		<url>https://github.com/shrinivas93/REST-in-peace</url>
+		<tag>HEAD</tag>
+	</scm>
+
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.source>17</maven.compiler.source>
@@ -69,7 +80,28 @@
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.13.0</version>
 			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-release-plugin</artifactId>
+				<version>3.3.1</version>
+				<configuration>
+					<!-- Distinct prefix from core's own "v@{project.version}" tags -
+					     both projects release from tags in this same repository, and
+					     the two version numbers are completely independent (this
+					     project started at 0.1.0, unrelated to core's 1.0.0.x line). -->
+					<tagNameFormat>spring-boot-starter-v@{project.version}</tagNameFormat>
+					<autoVersionSubmodules>true</autoVersionSubmodules>
+				</configuration>
+			</plugin>
 		</plugins>
 	</build>
+
+	<distributionManagement>
+		<repository>
+			<id>github</id>
+			<name>GitHub Packages</name>
+			<url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
+		</repository>
+	</distributionManagement>
 
 </project>

@@ -842,15 +842,24 @@ up.
       shape, and nested field paths unaddressed - enough open surface area
       to park until real usage narrows which shape(s) actually matter,
       rather than building against a guess.
-- [ ] **Spring/Micronaut integration module** — auto-register every
-      `@RestClient` interface found on the classpath as a bean, the way
-      OpenFeign integrates with Spring Cloud. This is what actually gets a
-      library adopted broadly rather than used standalone. **In progress** —
-      design doc and chunked rollout plan at
+- [x] **Spring integration module** — auto-registers every `@RestClient`
+      interface found on the classpath as a bean, the way OpenFeign
+      integrates with Spring Cloud, via the optional
+      `rest-in-peace-spring-boot-starter` module (Spring Boot 4.x, Java
+      17+). Design doc and full chunked rollout history at
       [`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md);
-      Micronaut scoped out of the first pass (see the doc's non-goals) since
+      sample consumer at
+      [`samples/spring-boot-consumer`](samples/spring-boot-consumer). Not
+      yet published to Maven Central/GitHub Packages - see that doc's §8.
+      Micronaut integration remains a separate, unstarted item below since
       its compile-time DI model needs a structurally different integration
       than Spring's runtime classpath scanning.
+- [ ] **Micronaut integration module** — split out from the item above once
+      the Spring integration shipped. Needs to cooperate with
+      `RestClientProcessor`'s own compile-time codegen rather than port the
+      Spring starter's `ImportBeanDefinitionRegistrar`-based approach,
+      since Micronaut's own DI is itself compile-time. Not started; no
+      design doc yet.
 - [ ] **(Low priority) Fix branch protection on `master`** — repo process,
       not a library feature. A ruleset requiring a pull request before
       merging was set up on `master`, but the bypass entry for the release

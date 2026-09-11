@@ -1272,9 +1272,52 @@ whatever container your app already uses.
 
 ### Spring / Spring Boot
 
-Expose each `@RestClient` interface as a singleton bean, resolving
-environment-specific settings (base URL, timeout) from Spring's own
-configuration:
+For **Spring Boot 4.x on Java 17+**, the optional
+`rest-in-peace-spring-boot-starter` module (see
+[`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md)
+for the full design) auto-registers every `@RestClient` interface on the
+classpath as a Spring bean, removing the one-`@Bean`-per-interface
+boilerplate entirely:
+
+```java
+@RestClient(baseUrlProperty = "user-api.base-url")
+public interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+```
+
+```java
+@SpringBootApplication
+@EnableRestInPeaceClients
+public class Application { ... }
+```
+
+```yaml
+user-api:
+  base-url: https://api.example.com
+rest-in-peace:
+  clients:
+    user-api:
+      connect-timeout-millis: 2000
+      read-timeout-millis: 10000
+```
+
+Then inject `UserApi` like any other Spring bean — constructor injection
+into a `@Service` works exactly the same as it would for a hand-written
+client. `ObjectMapper`/`Cache`/`RequestInterceptor` beans already in the
+context get wired in automatically too (qualified to a specific client via
+`@Qualifier`, or shared by every client as a single unqualified bean), and
+`@AutoConfigureMockRestServer` redirects every registered client to a
+`MockRestServer` for tests. See
+[`samples/spring-boot-consumer`](samples/spring-boot-consumer) for a
+complete, runnable example.
+
+**Everywhere else** (Spring on Java 8-16, Micronaut, or simply preferring
+explicit `@Bean` methods over classpath scanning), expose each
+`@RestClient` interface as a singleton bean by hand, resolving
+environment-specific settings (base URL, timeout) from your framework's
+own configuration:
 
 ```java
 @Configuration
@@ -1297,11 +1340,9 @@ public class RipClientsConfig {
 }
 ```
 
-Then inject `UserApi`/`StripeApi` like any other Spring bean — constructor
-injection into a `@Service` works exactly the same as it would for a
-hand-written client. Global interceptors (`RIP.addInterceptor(...)`) are a
-natural fit for an `ApplicationRunner`/`@PostConstruct` hook that runs once
-at startup, before any client is used.
+Global interceptors (`RIP.addInterceptor(...)`) are a natural fit for an
+`ApplicationRunner`/`@PostConstruct` hook that runs once at startup, before
+any client is used.
 
 ### Plain Java, CLI tools, and scripts
 
@@ -1349,6 +1390,15 @@ zero extra configuration, including a working GraalVM native-image build.
 See its own [README](samples/compile-time-proxy-consumer/README.md) for how
 to build and run it.
 
+[`samples/spring-boot-consumer`](samples/spring-boot-consumer) is a
+standalone project showing what a real downstream consumer sees from the
+[Spring Boot starter](#spring--spring-boot) - add both `rest-in-peace` and
+`rest-in-peace-spring-boot-starter` as ordinary dependencies, annotate one
+`@RestClient` interface, and inject it like any other Spring bean with
+zero hand-written `@Bean` method. See its own
+[README](samples/spring-boot-consumer/README.md) for how to build and run
+it.
+
 ## Project structure
 
 ```text
@@ -1385,7 +1435,9 @@ REST-in-peace/
 ├── src/test/java/com/shri/restinpeace/
 │   ├── AbstractRipIntegrationTest.java   # shared local-server fixture
 │   └── Rip*IntegrationTest.java          # one class per feature area
+├── spring-boot-starter/                  # optional Spring Boot 4.x/Java 17 auto-configuration
 ├── samples/compile-time-proxy-consumer/  # standalone downstream-consumer sample
+├── samples/spring-boot-consumer/         # standalone downstream-consumer sample (Spring Boot)
 ├── docs/design/                          # design write-ups (compile-time codegen, ...)
 ├── .github/workflows/                    # CI, release, javadoc, publish pipelines
 ├── CONTRIBUTING.md, CHANGELOG.md, ROADMAP.md, LICENSE

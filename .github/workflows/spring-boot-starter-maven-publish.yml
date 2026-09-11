@@ -1,0 +1,43 @@
+# This workflow will build spring-boot-starter/ using Maven and then
+# publish it to GitHub Packages when spring-boot-starter-release.yml
+# dispatches it - the starter's own equivalent of the core library's
+# maven-publish.yml, publishing rest-in-peace-spring-boot-starter under
+# its own, independent version instead.
+
+name: Spring Boot Starter Maven Package
+
+on:
+  # spring-boot-starter-release.yml creates the GitHub release with the
+  # default GITHUB_TOKEN, which doesn't fire `on: release` here (GitHub's
+  # anti-recursion rule), so it dispatches this workflow explicitly instead
+  # - workflow_dispatch is exempt from that restriction.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up JDK 17
+      uses: actions/setup-java@v6
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        server-id: github # Value of the distributionManagement/repository/id field of spring-boot-starter/pom.xml
+        settings-path: ${{ github.workspace }} # location for the settings.xml file
+
+    - name: Build with Maven
+      working-directory: spring-boot-starter
+      run: mvn -B package --file pom.xml
+
+    - name: Publish to GitHub Packages Apache Maven
+      working-directory: spring-boot-starter
+      run: mvn deploy -s $GITHUB_WORKSPACE/settings.xml
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
