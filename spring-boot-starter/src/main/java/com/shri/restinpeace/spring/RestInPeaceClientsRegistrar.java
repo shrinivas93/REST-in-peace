@@ -1,12 +1,16 @@
 package com.shri.restinpeace.spring;
 
 import java.beans.Introspector;
+import java.util.List;
 import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.config.RuntimeBeanReference;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.ManagedList;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.EnvironmentAware;
@@ -20,6 +24,10 @@ import org.springframework.util.ClassUtils;
 
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.annotation.marker.RestClient;
+import com.shri.restinpeace.cache.Cache;
+import com.shri.restinpeace.interceptor.RequestInterceptor;
+
+import kong.unirest.ObjectMapper;
 
 /**
  * Backs {@link EnableRestInPeaceClients}: scans
@@ -42,7 +50,12 @@ import com.shri.restinpeace.annotation.marker.RestClient;
  * {@link RestClient#baseUrlProperty()} and this client's
  * {@code rest-in-peace.clients.<name>.*} timeout/proxy settings against the
  * real {@code Environment} at bean-registration time, before any client is
- * constructed.
+ * constructed. {@code ObjectMapper}/{@code Cache}/{@code RequestInterceptor}
+ * beans are handled differently: only bean *names* are resolved here (via
+ * {@link RestInPeaceBeanQualifiers}, reading definition metadata rather than
+ * instantiating anything), wired onto {@link RestInPeaceClientFactoryBean}
+ * as ordinary property references Spring itself resolves later, at that
+ * factory bean's own creation time.
  */
 final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar, EnvironmentAware {
 
@@ -82,20 +95,26 @@ final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar
 		}
 		RestClient metadata = restClientInterface.getAnnotation(RestClient.class);
 		String beanName = resolveBeanName(restClientInterface, metadata);
+		String qualifier = toKebabCase(beanName);
 
 		BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition(RestInPeaceClientFactoryBean.class)
-				.addConstructorArgValue(restClientInterface).addConstructorArgValue(resolveClientConfig(metadata, beanName));
+				.addConstructorArgValue(restClientInterface).addConstructorArgValue(resolveConfigBuilder(metadata, qualifier));
+
+		if (registry instanceof ConfigurableListableBeanFactory beanFactory) {
+			wireOptionalBeans(beanFactory, builder, qualifier);
+		}
+
 		registry.registerBeanDefinition(beanName, builder.getBeanDefinition());
 	}
 
-	private RipClientConfig resolveClientConfig(RestClient metadata, String beanName) {
+	private RipClientConfig.Builder resolveConfigBuilder(RestClient metadata, String qualifier) {
 		RipClientConfig.Builder builder = RipClientConfig.builder();
 		if (!metadata.baseUrlProperty().isEmpty()) {
 			builder.baseUrl(environment.getRequiredProperty(metadata.baseUrlProperty()));
 		}
 
 		RestInPeaceClientProperties properties = Binder.get(environment)
-				.bind("rest-in-peace.clients." + toKebabCase(beanName), Bindable.of(RestInPeaceClientProperties.class))
+				.bind("rest-in-peace.clients." + qualifier, Bindable.of(RestInPeaceClientProperties.class))
 				.orElseGet(RestInPeaceClientProperties::new);
 		if (properties.getConnectTimeoutMillis() != null) {
 			builder.connectTimeoutMillis(properties.getConnectTimeoutMillis());
@@ -107,7 +126,33 @@ final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar
 			RestInPeaceClientProperties.Proxy proxy = properties.getProxy();
 			builder.proxy(proxy.getHost(), proxy.getPort(), proxy.getUsername(), proxy.getPassword());
 		}
-		return builder.build();
+		return builder;
+	}
+
+	/**
+	 * Wires this client's {@code objectMapper}/{@code cache}/
+	 * {@code interceptors} properties onto {@code builder}'s eventual
+	 * {@link RestInPeaceClientFactoryBean} as bean references, resolved by
+	 * Spring only when that factory bean is itself created - see
+	 * {@link RestInPeaceBeanQualifiers} for how the candidate bean name(s)
+	 * are found without instantiating anything this early.
+	 */
+	private void wireOptionalBeans(ConfigurableListableBeanFactory beanFactory, BeanDefinitionBuilder builder,
+			String qualifier) {
+		RestInPeaceBeanQualifiers.findQualifiedOrSharedBean(beanFactory, ObjectMapper.class, qualifier)
+				.ifPresent(name -> builder.addPropertyReference("objectMapper", name));
+		RestInPeaceBeanQualifiers.findQualifiedOrSharedBean(beanFactory, Cache.class, qualifier)
+				.ifPresent(name -> builder.addPropertyReference("cache", name));
+
+		List<String> interceptorBeanNames = RestInPeaceBeanQualifiers.findQualifiedBeans(beanFactory,
+				RequestInterceptor.class, qualifier);
+		if (!interceptorBeanNames.isEmpty()) {
+			ManagedList<RuntimeBeanReference> interceptorRefs = new ManagedList<>(interceptorBeanNames.size());
+			for (String interceptorBeanName : interceptorBeanNames) {
+				interceptorRefs.add(new RuntimeBeanReference(interceptorBeanName));
+			}
+			builder.addPropertyValue("interceptors", interceptorRefs);
+		}
 	}
 
 	private String resolveBeanName(Class<?> restClientInterface, RestClient metadata) {
@@ -124,7 +169,10 @@ final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar
 	 * keys, but never accepts a differently-cased name to parse in the first
 	 * place. A derived bean name like {@code pingApi} has to become
 	 * {@code ping-api} before it can be used as part of the property path
-	 * passed to {@link Binder#bind(String, Bindable)}.
+	 * passed to {@link Binder#bind(String, Bindable)} - the same kebab-case
+	 * form doubles as this client's {@code @Qualifier} value for
+	 * {@code ObjectMapper}/{@code Cache}/{@code RequestInterceptor} beans
+	 * (§4.4), matching the YAML client key exactly.
 	 *
 	 * @param name a bean name, e.g. {@code pingApi} or {@code user-api}
 	 * @return {@code name} in kebab-case, e.g. {@code ping-api}

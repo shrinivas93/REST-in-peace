@@ -1,6 +1,6 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 5 landed**. Chunk 1 (this doc), then chunk 2
+Status: **in progress - chunk 6 landed**. Chunk 1 (this doc), then chunk 2
 (standalone project scaffolding, targeting **Spring Boot 4.x** rather than
 3.x - 3.x reached its own open-source end of life shortly after this doc's
 first draft, and 4.x keeps the same Java 17 floor §2 already assumed), then
@@ -78,20 +78,69 @@ from `rest-in-peace.clients.<name>.*` (§4.4, minus the `ObjectMapper`/
   applied only to the property-path segment; the registered bean name
   itself stays camelCase, unaffected.
 
+Chunk 6 added `ObjectMapper`/`Cache`/`RequestInterceptor` bean wiring
+(§4.4), the piece chunk 5 deliberately left out, and required rethinking
+how `RestInPeaceClientFactoryBean` itself is built:
+
+- **`RestInPeaceClientFactoryBean` no longer takes a finished
+  `RipClientConfig`** - it takes the `RipClientConfig.Builder` (base URL,
+  timeout, proxy already set by the registrar) and finishes it lazily,
+  inside `createInstance()`, after Spring has populated three new
+  properties (`objectMapper`, `cache`, `interceptors`) via ordinary
+  property injection. This defers `ObjectMapper`/`Cache`/
+  `RequestInterceptor` bean resolution to this factory bean's own normal
+  creation time - the same, safe, lazy point a hand-written `@Bean`
+  method's own `@Autowired` parameters would resolve at - instead of
+  requiring `RestInPeaceClientsRegistrar` to instantiate arbitrary user
+  beans itself at bean-*registration* time, well before the container can
+  guarantee they're safe to construct.
+- **A new `RestInPeaceBeanQualifiers` helper** finds which bean(s) to
+  reference for a client - one explicitly qualified for it
+  (`@Qualifier("user-api")`, matching the same kebab-case name used for
+  `rest-in-peace.clients.<name>` and derived from the bean name exactly
+  the way §4.4's YAML sample always assumed), or the single unqualified
+  bean of that type shared by every client without its own - by reading
+  `BeanDefinition` metadata directly (`MergedAnnotations` off the
+  `@Bean` factory method or the component class), never by instantiating
+  anything. The registrar then wires the chosen bean *name* onto the
+  factory bean via `addPropertyReference`/`addPropertyValue`, leaving
+  actual resolution to Spring's own dependency injection.
+- **A new `RestInPeaceAutoConfiguration`** (`public`, unlike every other
+  class in this package - `@AutoConfiguration` classes need to be
+  reachable from `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
+  and from a test's own `@Import`, neither of which package-private
+  visibility allows) registers every unqualified `RequestInterceptor`
+  bean globally via `RIP.addInterceptor(...)` once at startup, and folds
+  in §5's `RIP.useDaemonThreadsForAsync()` default too, since this is the
+  first chunk that needed an auto-configuration class to exist at all.
+- **Real bug caught while wiring this up, not a pre-existing one**:
+  `BeanDefinitionBuilder.addPropertyReference(...)` resolves properties
+  through `java.beans.Introspector`, which only ever sees **public**
+  methods, regardless of the declaring class's own visibility - every
+  other class in this package is package-private by convention, and the
+  new `setObjectMapper`/`setCache`/`setInterceptors` methods followed
+  that convention at first, immediately failing every test in this chunk
+  with `NotWritablePropertyException: ... is not writable`. Fixed by
+  making just those three setters `public`; the enclosing
+  `RestInPeaceClientFactoryBean` class itself stays package-private.
+
 Chunk 3's own note, unchanged from when it landed: one deviation from
 §4.2's sketch, caught by its bean-naming test -
 `ClassUtils.getShortName(...)` includes the enclosing class's name for a
 nested interface (`Outer.PingApi`, not `PingApi`); `Class.getSimpleName()`
 is the correct call for deriving a bean name.
 
-Verified end to end with real local `HttpServer`-backed tests (6/6
-passing): annotate, scan, register (by `@BaseUrl`, `baseUrlProperty`, or
-per-client timeout/proxy), inject, call - the timeout/proxy tests mirror
-core's own `RipClientConfigIntegrationTest` shapes (300ms server delay vs.
-a 50ms read timeout; an unreachable `localhost:1` proxy) to prove the
-bound properties actually reach `RipClientConfig`, not just that binding
-doesn't throw. See §7 for the full chunked rollout plan and which chunk is
-next. Roadmap item: "Spring/Micronaut integration module" in `ROADMAP.md`.
+Verified end to end with real local `HttpServer`-backed tests (11/11
+passing): annotate, scan, register (by `@BaseUrl`, `baseUrlProperty`,
+per-client timeout/proxy, or qualified/shared `ObjectMapper`/`Cache`/
+interceptor beans), inject, call - the timeout/proxy tests mirror core's
+own `RipClientConfigIntegrationTest` shapes (300ms server delay vs. a
+50ms read timeout; an unreachable `localhost:1` proxy), and the bean-wiring
+tests use a fixed-value `ObjectMapper`, a request-header-adding
+interceptor, and a call-counting `Cache` to prove the wired bean is
+actually the one consulted, not just that wiring doesn't throw. See §7 for
+the full chunked rollout plan and which chunk is next. Roadmap item:
+"Spring/Micronaut integration module" in `ROADMAP.md`.
 
 ## 1. Problem
 
@@ -188,7 +237,9 @@ REST-in-peace/
         ├── EnableRestInPeaceClients.java
         ├── RestInPeaceClientsRegistrar.java   # ImportBeanDefinitionRegistrar
         ├── RestInPeaceClientFactoryBean.java
-        └── RestInPeaceClientProperties.java   # per-client timeout/proxy, bound via Binder (§4.4)
+        ├── RestInPeaceClientProperties.java   # per-client timeout/proxy, bound via Binder (§4.4)
+        ├── RestInPeaceBeanQualifiers.java     # reads a bean's @Qualifier without instantiating it (§4.4)
+        └── RestInPeaceAutoConfiguration.java  # global interceptors + daemon threads (§4.4, §5)
 ```
 
 `@RestClient`'s own `baseUrlProperty()`/`name()` attributes (core library,
@@ -274,15 +325,15 @@ bean-registration time `baseUrlProperty` already resolves at - **not** a
 registered `@ConfigurationProperties` bean (there's no single bean that
 could hold "every client's config" before the set of clients is even known,
 since that set comes from the classpath scan itself). `ObjectMapper`/`Cache`
-beans (chunk 6, not yet built) will resolve by type, qualified to a client
-name when more than one bean of that type exists in the context
+beans (chunk 6, landed) resolve by type, qualified to a client name when
+more than one bean of that type exists in the context
 (`@Qualifier("user-api")`), falling back to a single unqualified bean shared
 by every client without its own - mirroring `RIP.setObjectMapper(...)`/
 `RIP.setCache(...)`'s existing "shared default" role. Any Spring bean
-implementing `RequestInterceptor` with no client qualifier will be
+implementing `RequestInterceptor` with no client qualifier is
 registered globally (`RIP.addInterceptor(...)`, once, from the
-auto-configuration) at context startup; one qualified to a client name will
-go into that client's own `RipClientConfig.Builder.interceptors(...)`
+auto-configuration) at context startup; one qualified to a client name goes
+into that client's own `RipClientConfig.Builder.interceptors(...)`
 instead - same "per-client interceptors run in addition to global ones"
 semantics the core library already documents.
 
@@ -319,7 +370,9 @@ A Spring Boot app is long-running, so the README's
 FAQ entry is largely moot in this context. The auto-configuration calls
 `RIP.useDaemonThreadsForAsync()` once at context startup as a sane default -
 a long-running Spring app has no reason to want non-daemon I/O threads
-outliving its own shutdown.
+outliving its own shutdown. Landed alongside chunk 6, the first chunk that
+needed an auto-configuration class (`RestInPeaceAutoConfiguration`) to
+exist at all.
 
 ## 6. What's genuinely new vs. what's untouched
 
