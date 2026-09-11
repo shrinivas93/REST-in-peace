@@ -7,16 +7,35 @@ first draft, and 4.x keeps the same Java 17 floor §2 already assumed), then
 chunk 3 (`@EnableRestInPeaceClients`, `RestInPeaceClientsRegistrar`, and
 `RestInPeaceClientFactoryBean` - see that chunk's own note below).
 
-Chunk 4 added `@RestInPeaceClient` and `baseUrlProperty` resolution (§4.3),
-surfacing two real design corrections along the way:
+Chunk 4 added `baseUrlProperty`/`name` and their `Environment` resolution
+(§4.3), surfacing two real design turns along the way:
 
 - **§4.3's original sketch put `baseUrlProperty` directly on the core
   library's `@RestClient` annotation** - a real source change to the core
-  module, contradicting this doc's own §2 goal and §3 non-goal. Fixed by
-  introducing `@RestInPeaceClient` as a second, starter-only annotation
-  applied *alongside* `@RestClient` rather than folded into it - §4.3 and
-  §4.4 now describe the corrected shape; the core library's source is still
-  untouched, for real this time.
+  module, contradicting this doc's own §2 goal and §3 non-goal as first
+  written. First fix: introduce `@RestInPeaceClient` as a second,
+  starter-only annotation applied *alongside* `@RestClient`, keeping the
+  core library's source untouched. That shipped in chunk 4's first PR, but
+  the maintainer then explicitly reconsidered the two-annotation shape
+  (`Is it absolutely necessary to have another new annotation?`) and, after
+  weighing the tradeoffs below, decided to fold `baseUrlProperty`/`name`
+  into the core's `@RestClient` directly instead - **a deliberate maintainer
+  decision, not a bug fix**, and this doc's §2 goal of "zero core changes"
+  is explicitly superseded by it:
+  - *Against reuse* (the case for the two-annotation split, and my own
+    recommendation at the time): every non-Spring consumer of the core
+    library now sees Spring-flavored attributes on `@RestClient` whether or
+    not they use Spring; future tweaks to these two attributes force a core
+    release even for Spring-only changes.
+  - *For reuse* (the maintainer's actual call): one annotation to look up
+    instead of two on the same interface; both attributes are inert,
+    documented as starter-only metadata, and add no behavior to
+    `RIP.getClient(...)` or anything else in core - the coupling is
+    textual, not run-time.
+  - `@RestInPeaceClient.java` was deleted; `RestClient.java` (core) gained
+    `baseUrlProperty()`/`name()`, both defaulting to `""` and documented as
+    read only by the optional starter module. §4.1, §4.3, §4.4, and §6 below
+    describe this final shape.
 - **The registrar resolves `baseUrlProperty` eagerly, at bean-registration
   time** (matching the core library's own fail-fast-at-construction
   philosophy - see `RIP.getClient(...)`'s own javadoc), which means every
@@ -84,15 +103,18 @@ being conflated as one, worth separating up front:
 - Dedicated Spring Boot test support for `MockRestServer` - the one thing
   that doesn't fall out for free from "call `RIP.getClient(...)` for you"
   (see §3).
-- Zero changes to `RequestExecutor` or any of its collaborators, and zero
-  changes to how a `@RestClient` interface is declared or called - every
-  annotation (`@PathParam`, `@Multipart`, `@Retry`, ...), every return type,
-  and both dispatch paths (compile-time-generated and reflective) already
-  work identically regardless of how the client instance was constructed,
-  because `RIP.getClient(...)` is the single choke point both this starter
-  and today's hand-written `@Bean` method call into. This module is purely
-  about *constructing and registering* clients, never about the request
-  lifecycle itself.
+- Zero changes to `RequestExecutor` or any of its collaborators, and no
+  changes to the request lifecycle itself for any `@RestClient` interface -
+  every annotation (`@PathParam`, `@Multipart`, `@Retry`, ...), every return
+  type, and both dispatch paths (compile-time-generated and reflective)
+  already work identically regardless of how the client instance was
+  constructed, because `RIP.getClient(...)` is the single choke point both
+  this starter and today's hand-written `@Bean` method call into. This
+  module is purely about *constructing and registering* clients.
+  (Originally scoped as "zero changes to `@RestClient` itself" too - see the
+  chunk 4 status entry above for why that got explicitly superseded:
+  `baseUrlProperty()`/`name()` are now two small, inert, optional attributes
+  on the core annotation, read only by this starter.)
 
 ## 3. Non-goals
 
@@ -132,11 +154,14 @@ REST-in-peace/
     ├── pom.xml                    # depends on com.shri:rest-in-peace + spring-boot-autoconfigure
     └── src/main/java/com/shri/restinpeace/spring/
         ├── EnableRestInPeaceClients.java
-        ├── RestInPeaceClient.java             # optional per-interface Spring metadata (§4.3)
         ├── RestInPeaceClientsRegistrar.java   # ImportBeanDefinitionRegistrar
         ├── RestInPeaceClientFactoryBean.java
         └── RestInPeaceClientProperties.java   # @ConfigurationProperties("rest-in-peace")
 ```
+
+`@RestClient`'s own `baseUrlProperty()`/`name()` attributes (core library,
+§4.3) carry the per-interface Spring metadata - no separate annotation
+class in this project.
 
 Building/testing it locally or in CI mirrors exactly what
 `sample-consumer-test.yml` already does for the sample consumer: install
@@ -164,20 +189,17 @@ section.
 
 ### 4.3 Base URL resolution
 
-**Corrected from the original sketch** (caught before chunk 4 was written,
-not after - see the chunk 4 status entry): the first draft of this section
-put `baseUrlProperty` directly on the core library's `@RestClient`
-annotation. That's a real, if backward-compatible, source change to the
-core library - directly contradicting this doc's own §2 goal of "zero
-changes to how a `@RestClient` interface is declared or called" and §3's
-non-goal of touching anything in the core module. The fix: a second,
-**starter-only** annotation, `@RestInPeaceClient`, applied *alongside*
-`@RestClient` rather than folded into it - the core library never needs to
-know this module exists, in its build files or its source:
+**Final shape, after an explicit maintainer decision** (see the chunk 4
+status entry above for the full back-and-forth): `baseUrlProperty()` and
+`name()` live directly on the core library's own `@RestClient` annotation,
+as two optional attributes both defaulting to `""`. Both are documented on
+the annotation itself as inert metadata read only by this optional starter
+module - every other consumer of `@RestClient` (the reflective path, the
+compile-time codegen processor, any non-Spring caller of
+`RIP.getClient(...)`) ignores them entirely:
 
 ```java
-@RestClient
-@RestInPeaceClient(baseUrlProperty = "user-api.base-url")
+@RestClient(baseUrlProperty = "user-api.base-url")
 interface UserApi {
     @GET("/users/{id}")
     User getUser(@PathParam("id") String id);
@@ -196,19 +218,17 @@ resolves it via the `Environment` (injected through
 Spring extension point) at bean-*registration* time, after Spring's
 `Environment` exists but before any client is constructed - mirroring what
 a hand-written `@Value("${user-api.base-url}") String baseUrl` parameter
-does today. `@RestInPeaceClient` is entirely optional: an interface with
-only `@RestClient` keeps working exactly as chunk 3 shipped it (a real
-`@BaseUrl`, resolving with no runtime override). Omitting `baseUrlProperty`
-on an interface that *does* carry `@RestInPeaceClient` (e.g. for its
-`name()` alone, see §4.4) falls back to the same `@BaseUrl`-only behavior.
+does today. Both attributes are entirely optional: an interface that leaves
+`baseUrlProperty` unset keeps working exactly as chunk 3 shipped it (a real
+`@BaseUrl`, resolving with no runtime override).
 
 ### 4.4 Per-client configuration and bean wiring
 
 ```yaml
 rest-in-peace:
   clients:
-    user-api:                 # matched to @RestInPeaceClient(name = "user-api"),
-                               # or a decapitalized default derived from the
+    user-api:                 # matched to @RestClient(name = "user-api"), or
+                               # a decapitalized default derived from the
                                # interface's simple name if name() is left unset
       connect-timeout-millis: 2000
       read-timeout-millis: 10000
@@ -272,9 +292,9 @@ Everything method/parameter-level - `@PathParam`/`@QueryParam`/`@QueryMap`/
 changes and zero Spring awareness, because Spring only ever constructs the
 *client instance*, never touches a method call. Compile-time vs. reflective
 dispatch stays fully transparent too, for the same reason. The genuinely
-new surface is small and fully contained to this new project: one new
-annotation (`@RestInPeaceClient`, carrying `baseUrlProperty` and an
-optional `name`), a `@ConfigurationProperties` class, a registrar + `FactoryBean`, an
+new surface is small: two optional, inert attributes on the core library's
+`@RestClient` (`baseUrlProperty`, `name`), and, fully contained to this new
+project, a `@ConfigurationProperties` class, a registrar + `FactoryBean`, an
 auto-configuration class, and the `MockRestServer` test-support piece.
 
 ## 7. Rollout plan (chunked)

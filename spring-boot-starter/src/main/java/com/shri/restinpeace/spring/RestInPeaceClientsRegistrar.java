@@ -35,9 +35,8 @@ import com.shri.restinpeace.annotation.marker.RestClient;
  * <p>
  * Implements {@link EnvironmentAware} - a standard Spring extension point
  * for {@link ImportBeanDefinitionRegistrar} - purely to resolve
- * {@link RestInPeaceClient#baseUrlProperty()} against the real
- * {@code Environment} at bean-registration time, before any client is
- * constructed.
+ * {@link RestClient#baseUrlProperty()} against the real {@code Environment}
+ * at bean-registration time, before any client is constructed.
  */
 final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar, EnvironmentAware {
 
@@ -73,7 +72,7 @@ final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar
 			throw new IllegalStateException(
 					String.format("Could not load @RestClient interface %s.", restClientInterfaceName), e);
 		}
-		RestInPeaceClient metadata = restClientInterface.getAnnotation(RestInPeaceClient.class);
+		RestClient metadata = restClientInterface.getAnnotation(RestClient.class);
 
 		BeanDefinitionBuilder builder = BeanDefinitionBuilder.genericBeanDefinition(RestInPeaceClientFactoryBean.class)
 				.addConstructorArgValue(restClientInterface).addConstructorArgValue(resolveBaseUrl(metadata));
@@ -82,19 +81,18 @@ final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar
 
 	/**
 	 * @return the base URL {@code metadata}'s {@code baseUrlProperty} names,
-	 *         or {@code null} when {@code metadata} is absent or leaves it
-	 *         unset - the interface must then resolve its own base URL
-	 *         entirely on its own
+	 *         or {@code null} when left unset - the interface must then
+	 *         resolve its own base URL entirely on its own
 	 */
-	private String resolveBaseUrl(RestInPeaceClient metadata) {
-		if (metadata == null || metadata.baseUrlProperty().isEmpty()) {
+	private String resolveBaseUrl(RestClient metadata) {
+		if (metadata.baseUrlProperty().isEmpty()) {
 			return null;
 		}
 		return environment.getRequiredProperty(metadata.baseUrlProperty());
 	}
 
-	private String resolveBeanName(Class<?> restClientInterface, RestInPeaceClient metadata) {
-		if (metadata != null && !metadata.name().isEmpty()) {
+	private String resolveBeanName(Class<?> restClientInterface, RestClient metadata) {
+		if (!metadata.name().isEmpty()) {
 			return metadata.name();
 		}
 		return Introspector.decapitalize(restClientInterface.getSimpleName());

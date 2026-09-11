@@ -29,9 +29,9 @@ import com.sun.net.httpserver.HttpServer;
  * <p>
  * Declared in its own dedicated {@code .registration} sub-package, scanned
  * on its own - {@link EnableRestInPeaceClients}'s registrar resolves every
- * {@link com.shri.restinpeace.spring.RestInPeaceClient#baseUrlProperty()} it
- * finds eagerly, at bean-registration time (matching the core library's own
- * fail-fast-at-construction philosophy), so an unrelated test's
+ * {@link com.shri.restinpeace.annotation.marker.RestClient#baseUrlProperty()}
+ * it finds eagerly, at bean-registration time (matching the core library's
+ * own fail-fast-at-construction philosophy), so an unrelated test's
  * {@code @RestClient} interface with an unset property sitting in the same
  * scanned package would otherwise fail this context's startup too.
  */

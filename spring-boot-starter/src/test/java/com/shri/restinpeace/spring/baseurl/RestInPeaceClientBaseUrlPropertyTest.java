@@ -18,13 +18,12 @@ import org.springframework.core.env.MapPropertySource;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.spring.EnableRestInPeaceClients;
-import com.shri.restinpeace.spring.RestInPeaceClient;
 
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * Proves {@link RestInPeaceClient#baseUrlProperty()} resolves a client's
- * base URL from Spring's {@code Environment} instead of requiring a real
+ * Proves {@link RestClient#baseUrlProperty()} resolves a client's base URL
+ * from Spring's {@code Environment} instead of requiring a real
  * {@code @BaseUrl} - the bridge {@code @BaseUrl} itself can never express,
  * since a Java annotation attribute must always be a compile-time constant.
  *
@@ -36,8 +35,7 @@ import com.sun.net.httpserver.HttpServer;
  */
 class RestInPeaceClientBaseUrlPropertyTest {
 
-	@RestClient
-	@RestInPeaceClient(baseUrlProperty = "ping-api.base-url")
+	@RestClient(baseUrlProperty = "ping-api.base-url")
 	interface PropertyConfiguredPingApi {
 		@GET("/ping")
 		String ping();
