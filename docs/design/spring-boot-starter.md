@@ -1,6 +1,6 @@
 # Design: Spring Boot starter module
 
-Status: **in progress - chunk 6 landed**. Chunk 1 (this doc), then chunk 2
+Status: **in progress - chunk 7 landed**. Chunk 1 (this doc), then chunk 2
 (standalone project scaffolding, targeting **Spring Boot 4.x** rather than
 3.x - 3.x reached its own open-source end of life shortly after this doc's
 first draft, and 4.x keeps the same Java 17 floor §2 already assumed), then
@@ -124,18 +124,51 @@ how `RestInPeaceClientFactoryBean` itself is built:
   making just those three setters `public`; the enclosing
   `RestInPeaceClientFactoryBean` class itself stays package-private.
 
+Chunk 7 added `@AutoConfigureMockRestServer` (§4.5) - the piece that
+doesn't fall out of "call `RIP.getClient(...)` for you", since a test has
+no real base URL to point at. It works directly on the still-mutable
+`RipClientConfig.Builder` each `RestInPeaceClientFactoryBean` already
+holds - found via a plain `BeanFactoryPostProcessor` (guaranteed to run
+after every `@RestClient` interface is already scanned and registered,
+but before any bean, including the `MockRestServer` this same
+post-processor also starts, is actually constructed) - and mutating that
+exact builder's `baseUrl` in place before it's ever `build()`-t, rather
+than introducing any new indirection for tests to route through. Two real
+bugs surfaced while wiring this up, both caught immediately by the
+chunk's own test (never silently wrong - a genuinely useless
+`localhost:1` `@BaseUrl` guarantees the test fails loudly if the override
+doesn't really take effect, rather than the mock and the real base URL
+happening to overlap):
+
+- **`beanFactory.getBeanNamesForType(RestInPeaceClientFactoryBean.class)`
+  returns the `&`-dereferenced name** (`"&userApi"`, not `"userApi"`) for
+  a match against a concrete `FactoryBean` subtype - `getBeanDefinition(...)`
+  itself never accepts that prefix, throwing
+  `NoSuchBeanDefinitionException: No bean named '&userApi' available`
+  immediately. Fixed with `BeanFactoryUtils.transformedBeanName(...)`, the
+  standard utility for exactly this.
+- **`BeanDefinitionBuilder.addConstructorArgValue(...)` stores *indexed*
+  argument values, not generic ones** - `ConstructorArgumentValues.getGenericArgumentValues()`
+  (what the first draft of this override read from) is always empty for a
+  bean definition built this way, so the override silently found nothing
+  to mutate and every request kept going to the interface's real
+  `@BaseUrl` instead. No exception either way - only the test's own
+  assertion caught it. Fixed by reading `getIndexedArgumentValues()`
+  instead.
+
 Chunk 3's own note, unchanged from when it landed: one deviation from
 §4.2's sketch, caught by its bean-naming test -
 `ClassUtils.getShortName(...)` includes the enclosing class's name for a
 nested interface (`Outer.PingApi`, not `PingApi`); `Class.getSimpleName()`
 is the correct call for deriving a bean name.
 
-Verified end to end with real local `HttpServer`-backed tests (11/11
+Verified end to end with real local `HttpServer`-backed tests (12/12
 passing): annotate, scan, register (by `@BaseUrl`, `baseUrlProperty`,
-per-client timeout/proxy, or qualified/shared `ObjectMapper`/`Cache`/
-interceptor beans), inject, call - the timeout/proxy tests mirror core's
-own `RipClientConfigIntegrationTest` shapes (300ms server delay vs. a
-50ms read timeout; an unreachable `localhost:1` proxy), and the bean-wiring
+per-client timeout/proxy, qualified/shared `ObjectMapper`/`Cache`/
+interceptor beans, or a `MockRestServer` override), inject, call - the
+timeout/proxy tests mirror core's own `RipClientConfigIntegrationTest`
+shapes (300ms server delay vs. a 50ms read timeout; an unreachable
+`localhost:1` proxy), and the bean-wiring
 tests use a fixed-value `ObjectMapper`, a request-header-adding
 interceptor, and a call-counting `Cache` to prove the wired bean is
 actually the one consulted, not just that wiring doesn't throw. See §7 for
@@ -239,7 +272,9 @@ REST-in-peace/
         ├── RestInPeaceClientFactoryBean.java
         ├── RestInPeaceClientProperties.java   # per-client timeout/proxy, bound via Binder (§4.4)
         ├── RestInPeaceBeanQualifiers.java     # reads a bean's @Qualifier without instantiating it (§4.4)
-        └── RestInPeaceAutoConfiguration.java  # global interceptors + daemon threads (§4.4, §5)
+        ├── RestInPeaceAutoConfiguration.java  # global interceptors + daemon threads (§4.4, §5)
+        ├── AutoConfigureMockRestServer.java   # test-only annotation (§4.5)
+        └── MockRestServerTestConfiguration.java # backs it - starts the server, overrides base URLs (§4.5)
 ```
 
 `@RestClient`'s own `baseUrlProperty()`/`name()` attributes (core library,
