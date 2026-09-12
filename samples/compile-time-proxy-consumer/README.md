@@ -47,12 +47,12 @@ you need a locally-installed build of it first:
 
 ```sh
 # From the repository root:
-mvn install -DskipTests
+mvn install -DskipTests --file core/pom.xml
 
 # Then, from this directory:
 cd samples/compile-time-proxy-consumer
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-  -Drest-in-peace.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml)
+  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 
@@ -63,9 +63,9 @@ VERIFICATION PASSED: compile-time proxy generation works for a real downstream c
 ```
 
 `-Drest-in-peace.version=...` overrides this pom.xml's own
-`<rest-in-peace.version>` default with whatever the repository root's
-`pom.xml` `<version>` actually is right now - they're two independent
-projects, so nothing keeps the two in sync automatically, and the root
+`<rest-in-peace.version>` default with whatever `core/pom.xml`'s
+`<version>` actually is right now - they're two independent
+projects, so nothing keeps the two in sync automatically, and the core
 version does change over time (each release bumps it). Omitting the flag
 falls back to the hardcoded default, which will fail to resolve once it
 drifts from whatever you just installed.
@@ -77,12 +77,12 @@ of an ordinary JDK 8:
 
 ```sh
 # From the repository root, using a GraalVM JDK:
-mvn install -DskipTests
+mvn install -DskipTests --file core/pom.xml
 
 # Then, from this directory:
 cd samples/compile-time-proxy-consumer
 mvn -Pnative package \
-  -Drest-in-peace.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml)
+  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
 ./target/compile-time-proxy-consumer
 ```
 

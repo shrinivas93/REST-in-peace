@@ -1406,39 +1406,45 @@ it.
 
 ```text
 REST-in-peace/
-├── src/main/java/com/shri/restinpeace/
-│   ├── RIP.java                  # entry point: RIP.getClient(...)
-│   ├── RipClientConfig.java      # per-client base URL/timeout/proxy/cache/interceptors
-│   ├── RipResponse.java          # T + status + headers wrapper
-│   ├── annotation/               # every @RestClient-facing annotation
-│   │   ├── marker/                 #   @RestClient, @BaseUrl
-│   │   ├── method/                 #   @GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS
-│   │   ├── request/                #   @PathParam, @QueryParam, @Body, @Multipart, ...
-│   │   ├── retry/                  #   @Retry
-│   │   ├── timeout/                #   @Timeout
-│   │   ├── cache/                  #   @NoCache
-│   │   └── error/                  #   @ErrorType
-│   ├── internal/                 # RequestExecutor + its 7 single-purpose collaborators
-│   │   ├── RequestExecutor.java    #   orchestrator; also generated code's entry points
-│   │   ├── UrlResolver.java        #   @BaseUrl / @PathParam / @Url resolution
-│   │   ├── InterceptorDispatcher.java
-│   │   ├── CacheCoordinator.java
-│   │   ├── RetryExecutor.java
-│   │   ├── FormEncoder.java        #   @FormUrlEncoded
-│   │   ├── MultipartEncoder.java   #   @Multipart
-│   │   └── ResponseDecoder.java
-│   ├── proxy/                    # RestClientInvocationHandler (reflective JDK proxy)
-│   ├── processor/                # RestClientProcessor (compile-time codegen) + validator
-│   ├── validator/                # ReflectiveRestClientValidator - fail-fast validation
-│   ├── interceptor/               # RequestInterceptor + pre-built interceptors
-│   ├── cache/                     # Cache, InMemoryCache, CachedResponse
-│   ├── mock/                      # MockRestServer test double
-│   ├── download/ upload/ multipart/  # progress listeners, PartValue
-│   └── exception/                 # RestInPeaceException, RestInPeaceHttpException
-├── src/test/java/com/shri/restinpeace/
-│   ├── AbstractRipIntegrationTest.java   # shared local-server fixture
-│   └── Rip*IntegrationTest.java          # one class per feature area
-├── spring-boot-starter/                  # optional Spring Boot 4.x/Java 17 auto-configuration
+├── pom.xml                               # reactor aggregator only - lists core/ as its one module;
+│                                          # never itself released or published (see core/pom.xml)
+├── core/                                 # the actual rest-in-peace artifact - independently
+│   │                                      # versioned/released, own 1.0.0.N cadence
+│   ├── pom.xml
+│   ├── src/main/java/com/shri/restinpeace/
+│   │   ├── RIP.java                  # entry point: RIP.getClient(...)
+│   │   ├── RipClientConfig.java      # per-client base URL/timeout/proxy/cache/interceptors
+│   │   ├── RipResponse.java          # T + status + headers wrapper
+│   │   ├── annotation/               # every @RestClient-facing annotation
+│   │   │   ├── marker/                 #   @RestClient, @BaseUrl
+│   │   │   ├── method/                 #   @GET/@POST/@PUT/@PATCH/@DELETE/@HEAD/@OPTIONS
+│   │   │   ├── request/                #   @PathParam, @QueryParam, @Body, @Multipart, ...
+│   │   │   ├── retry/                  #   @Retry
+│   │   │   ├── timeout/                #   @Timeout
+│   │   │   ├── cache/                  #   @NoCache
+│   │   │   └── error/                  #   @ErrorType
+│   │   ├── internal/                 # RequestExecutor + its 7 single-purpose collaborators
+│   │   │   ├── RequestExecutor.java    #   orchestrator; also generated code's entry points
+│   │   │   ├── UrlResolver.java        #   @BaseUrl / @PathParam / @Url resolution
+│   │   │   ├── InterceptorDispatcher.java
+│   │   │   ├── CacheCoordinator.java
+│   │   │   ├── RetryExecutor.java
+│   │   │   ├── FormEncoder.java        #   @FormUrlEncoded
+│   │   │   ├── MultipartEncoder.java   #   @Multipart
+│   │   │   └── ResponseDecoder.java
+│   │   ├── proxy/                    # RestClientInvocationHandler (reflective JDK proxy)
+│   │   ├── processor/                # RestClientProcessor (compile-time codegen) + validator
+│   │   ├── validator/                # ReflectiveRestClientValidator - fail-fast validation
+│   │   ├── interceptor/               # RequestInterceptor + pre-built interceptors
+│   │   ├── cache/                     # Cache, InMemoryCache, CachedResponse
+│   │   ├── mock/                      # MockRestServer test double
+│   │   ├── download/ upload/ multipart/  # progress listeners, PartValue
+│   │   └── exception/                 # RestInPeaceException, RestInPeaceHttpException
+│   └── src/test/java/com/shri/restinpeace/
+│       ├── AbstractRipIntegrationTest.java   # shared local-server fixture
+│       └── Rip*IntegrationTest.java          # one class per feature area
+├── spring-boot-starter/                  # optional Spring Boot 4.x/Java 17 auto-configuration -
+│                                          # standalone project, not a reactor module (see below)
 ├── samples/compile-time-proxy-consumer/  # standalone downstream-consumer sample
 ├── samples/spring-boot-consumer/         # standalone downstream-consumer sample (Spring Boot)
 ├── docs/design/                          # design write-ups (compile-time codegen, ...)
@@ -1446,6 +1452,16 @@ REST-in-peace/
 ├── CONTRIBUTING.md, CHANGELOG.md, ROADMAP.md, LICENSE
 └── README.md
 ```
+
+`core/` is its own Maven module so its build/release/versioning is fully
+self-contained, but `spring-boot-starter/` and `samples/*` are deliberately
+**not** reactor modules — both resolve the core artifact as an ordinary
+external Maven dependency, the same way a real downstream consumer would,
+rather than through reactor resolution. See
+[`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md)
+and
+[`docs/design/compile-time-proxy-generation.md`](docs/design/compile-time-proxy-generation.md)
+for why that's intentional.
 
 Every `annotation/*` subpackage is an `@interface` your code references
 directly; everything under `internal/` is package-private and never part of
@@ -1461,6 +1477,10 @@ cd REST-in-peace
 mvn clean test
 ```
 
+The repo root `pom.xml` is a reactor aggregator over `core/` (the actual
+`rest-in-peace` artifact) — running Maven from the root cascades into
+`core/` automatically, so the command above is all you need day to day.
+
 If your local JDK is newer than 8 (likely), also run this before pushing —
 CI enforces it, and it's the only way to actually catch a post-8 API
 slipping in (a plain `mvn test` silently compiles against your local JDK's
@@ -1471,10 +1491,11 @@ mvn -Dmaven.compiler.release=8 clean test
 ```
 
 To check the generated API docs build cleanly (zero warnings is the bar CI
-holds every change to):
+holds every change to) — this one needs to target `core/` directly, since
+the aggregator POM has no javadoc plugin config of its own:
 
 ```bash
-mvn javadoc:javadoc
+mvn javadoc:javadoc --file core/pom.xml
 ```
 
 ### Code style
@@ -1490,10 +1511,10 @@ mvn javadoc:javadoc
 ### Running the sample consumer locally
 
 ```bash
-mvn install -DskipTests                       # install this library's current commit locally
+mvn install -DskipTests --file core/pom.xml   # install this library's current commit locally
 cd samples/compile-time-proxy-consumer
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-    -Drest-in-peace.version="$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml)"
+    -Drest-in-peace.version="$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')"
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 

@@ -34,17 +34,24 @@ jobs:
       # downstream consumer's own build would see once the library is
       # published, except from a fresh local install of the current commit
       # instead of a released version.
+      # core/ is the actual rest-in-peace artifact - the repo root pom.xml
+      # is just a reactor aggregator with no distributionManagement of its
+      # own.
       - name: Install the core library locally
-        run: mvn -B install -DskipTests --file pom.xml
+        run: mvn -B install -DskipTests --file core/pom.xml
 
       # The starter's own pom.xml pins a default rest-in-peace.version for
       # convenience, but that default drifts the moment this branch's
       # version differs from whatever was just installed above - so always
       # resolve the version that was actually just installed instead of
       # trusting the default.
+      # core/pom.xml has a <parent> block whose own <version> tag comes
+      # first in the file, so a plain first-match grep would pick that up
+      # instead of the artifact's own version - anchor on the
+      # rest-in-peace artifactId (not rest-in-peace-parent) instead.
       - name: Determine the installed core library version
         id: rip-version
-        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' pom.xml)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')" >> "$GITHUB_OUTPUT"
 
       - name: Build and test the Spring Boot starter
         working-directory: spring-boot-starter
@@ -70,12 +77,19 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      # core/ is the actual rest-in-peace artifact - the repo root pom.xml
+      # is just a reactor aggregator with no distributionManagement of its
+      # own.
       - name: Install the core library locally
-        run: mvn -B install -DskipTests --file pom.xml
+        run: mvn -B install -DskipTests --file core/pom.xml
 
+      # core/pom.xml has a <parent> block whose own <version> tag comes
+      # first in the file, so a plain first-match grep would pick that up
+      # instead of the artifact's own version - anchor on the
+      # rest-in-peace artifactId (not rest-in-peace-parent) instead.
       - name: Determine the installed core library version
         id: rip-version
-        run: echo "version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' pom.xml)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')" >> "$GITHUB_OUTPUT"
 
       - name: Install the Spring Boot starter locally
         working-directory: spring-boot-starter

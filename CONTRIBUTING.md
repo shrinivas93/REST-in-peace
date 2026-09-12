@@ -28,10 +28,12 @@ javac to check against the real Java 8 API surface, which is what CI enforces.
 A change that passes locally without this flag but fails CI almost always
 means it used a post-8 API.
 
-To check the generated API docs build cleanly:
+To check the generated API docs build cleanly — this needs to target
+`core/` directly, since the repo root `pom.xml` is just a reactor
+aggregator with no javadoc plugin config of its own:
 
 ```bash
-mvn javadoc:javadoc
+mvn javadoc:javadoc --file core/pom.xml
 ```
 
 ## Code style

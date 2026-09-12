@@ -34,17 +34,17 @@ publishing" item in [`ROADMAP.md`](../../ROADMAP.md)), so you need locally
 
 ```sh
 # From the repository root:
-mvn install -DskipTests
+mvn install -DskipTests --file core/pom.xml
 
 # From spring-boot-starter/, using whatever version was just installed above:
 cd spring-boot-starter
 mvn install -DskipTests \
-  -Drest-in-peace.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../pom.xml)
+  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
 
 # Then, from this directory:
 cd ../samples/spring-boot-consumer
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-  -Drest-in-peace.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../pom.xml) \
+  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)') \
   -Drest-in-peace-spring-boot-starter.version=$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../../spring-boot-starter/pom.xml)
 java -cp "target/classes:src/main/resources:$(cat cp.txt)" com.example.consumer.Main
 ```

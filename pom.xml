@@ -1,110 +1,30 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<groupId>com.shri</groupId>
-	<artifactId>rest-in-peace</artifactId>
-	<version>1.0.0.1-SNAPSHOT</version>
-	<packaging>jar</packaging>
+	<!--
+	Reactor aggregator only - no source of its own, never itself released or
+	published. `core/` is the actual rest-in-peace artifact, versioned and
+	released completely independently of this POM (see core/pom.xml's own
+	<parent> - it explicitly overrides <artifactId>/<version> rather than
+	inheriting them, so this file's own version never needs to move).
 
-	<name>rest-in-peace</name>
+	spring-boot-starter/ and samples/* are deliberately NOT modules here -
+	both are standalone Maven projects that depend on the core artifact as
+	an ordinary external dependency, the same way a real downstream consumer
+	would, rather than resolving it through this reactor. See
+	docs/design/spring-boot-starter.md §3 and
+	docs/design/compile-time-proxy-generation.md for why that's intentional.
+	-->
+	<groupId>com.shri</groupId>
+	<artifactId>rest-in-peace-parent</artifactId>
+	<version>1-SNAPSHOT</version>
+	<packaging>pom</packaging>
+
+	<name>rest-in-peace-parent</name>
 	<url>http://maven.apache.org</url>
 
-	<scm>
-		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
-		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
-		<url>https://github.com/shrinivas93/REST-in-peace</url>
-		<tag>HEAD</tag>
-	</scm>
-
-	<properties>
-		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<maven.compiler.source>1.8</maven.compiler.source>
-		<maven.compiler.target>1.8</maven.compiler.target>
-		<unirest.version>3.14.5</unirest.version>
-		<junit.version>5.14.4</junit.version>
-	</properties>
-
-	<dependencies>
-		<dependency>
-			<groupId>com.konghq</groupId>
-			<artifactId>unirest-java</artifactId>
-			<version>${unirest.version}</version>
-		</dependency>
-		<dependency>
-			<!-- provided, not test: MockRestServerExtension (main source) implements
-			     JUnit 5 extension interfaces, so this needs to be on the main
-			     compile classpath too, not just test. provided is still
-			     non-transitive - consumers who never reference that class see no
-			     dependency change; using it just requires junit-jupiter-api on
-			     their own test classpath, which a JUnit 5 project already has. -->
-			<groupId>org.junit.jupiter</groupId>
-			<artifactId>junit-jupiter</artifactId>
-			<version>${junit.version}</version>
-			<scope>provided</scope>
-		</dependency>
-	</dependencies>
-
-	<build>
-		<plugins>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-compiler-plugin</artifactId>
-				<version>3.13.0</version>
-				<executions>
-					<!-- Annotation processing is disabled for this module's own main-source
-					     compile only: RestClientProcessor is compiled here as ordinary source,
-					     and can't discover itself via SPI within the same javac invocation
-					     that's still compiling it. test-compile (a later, separate invocation)
-					     has this module's already-built main classes - including the
-					     compiled processor - on its classpath, so it runs the processor
-					     normally against test sources (see GeneratedApiTest). A downstream
-					     consumer depending on the published jar hits neither constraint,
-					     since our processor is already-built bytecode on their classpath
-					     from the start of their own, entirely separate build. -->
-					<execution>
-						<id>default-compile</id>
-						<configuration>
-							<proc>none</proc>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-plugin</artifactId>
-				<version>3.5.6</version>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-release-plugin</artifactId>
-				<version>3.3.1</version>
-				<configuration>
-					<tagNameFormat>v@{project.version}</tagNameFormat>
-					<autoVersionSubmodules>true</autoVersionSubmodules>
-				</configuration>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-javadoc-plugin</artifactId>
-				<version>3.12.0</version>
-				<executions>
-					<execution>
-						<id>attach-javadocs</id>
-						<goals>
-							<goal>jar</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-		</plugins>
-	</build>
-
-	<distributionManagement>
-		<repository>
-			<id>github</id>
-			<name>GitHub Packages</name>
-			<url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
-		</repository>
-	</distributionManagement>
+	<modules>
+		<module>core</module>
+	</modules>
 
 </project>

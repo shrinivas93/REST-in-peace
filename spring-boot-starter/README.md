@@ -27,9 +27,9 @@ From the repository root, install the core library's current commit first,
 then build this project against it:
 
 ```bash
-mvn install -DskipTests                        # from the repo root
+mvn install -DskipTests --file core/pom.xml    # from the repo root
 cd spring-boot-starter
-mvn test -Drest-in-peace.version="$(grep -m1 -oP '(?<=<version>)[^<]+(?=</version>)' ../pom.xml)"
+mvn test -Drest-in-peace.version="$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')"
 ```
 
 See [`.github/workflows/spring-boot-starter-test.yml`](../.github/workflows/spring-boot-starter-test.yml)
