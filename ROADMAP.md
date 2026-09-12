@@ -849,8 +849,9 @@ up.
       17+). Design doc and full chunked rollout history at
       [`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md);
       sample consumer at
-      [`samples/spring-boot-consumer`](samples/spring-boot-consumer). Not
-      yet published to Maven Central/GitHub Packages - see that doc's §8.
+      [`samples/spring-boot-consumer`](samples/spring-boot-consumer).
+      Published to GitHub Packages alongside core as of `v1.0.0.35` - the
+      two share one version and release cadence; see that doc's §8.1.
       Micronaut integration remains a separate, unstarted item below since
       its compile-time DI model needs a structurally different integration
       than Spring's runtime classpath scanning.

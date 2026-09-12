@@ -58,8 +58,9 @@ mvn javadoc:javadoc --file core/pom.xml
   version-bump/tag commit (see below), which is bypass-listed for the
   `github-actions` bot specifically since `maven-release-plugin` pushes it
   directly by design.
-- Every PR and every push to `develop`/`master` runs the CI workflow
-  (`.github/workflows/ci.yml`): build + full test suite on Java 8.
+- Every PR and every push to `develop`/`master` runs `ci.yml` (`core`'s
+  test suite on Java 8) and `spring-boot-starter-test.yml` (the starter's
+  own tests plus the sample Spring Boot consumer, on Java 17) in parallel.
 
 ## Release process (maintainers)
 

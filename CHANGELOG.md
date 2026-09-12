@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (build layout, not runtime API):** `core/` and
+  `spring-boot-starter/` are now sibling Maven modules under a real parent
+  POM at the repo root, sharing one version instead of each declaring its
+  own - a single release now bumps and publishes both together (published
+  under `v1.0.0.35`, the first release to include the Spring Boot starter
+  at all). `samples/*` remain standalone, non-reactor projects. See
+  [`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md#81-superseded-independent-versioning-post-chunk-8)
+  for what changed and why.
+
 ### Added
 
 - `CONTRIBUTING.md` and this changelog.
