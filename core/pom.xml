@@ -1,8 +1,8 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<!-- Inherits <version>/distributionManagement/release-plugin config from
-	     the parent so this artifact and rest-in-peace-spring-boot-starter's
+	<!-- Inherits <version>/scm/distributionManagement/release-plugin config
+	     from the parent so this artifact and rest-in-peace-spring-boot-starter's
 	     (its sibling module) always share one version, bumped together by a
 	     single release:prepare run at the root - see pom.xml's own comment. -->
 	<parent>
@@ -17,13 +17,6 @@
 
 	<name>rest-in-peace</name>
 	<url>http://maven.apache.org</url>
-
-	<scm>
-		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
-		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
-		<url>https://github.com/shrinivas93/REST-in-peace</url>
-		<tag>HEAD</tag>
-	</scm>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
