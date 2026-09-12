@@ -100,7 +100,7 @@ jobs:
       # resolve by hand - never auto-resolved or force-pushed.
       - name: Sync master back into develop
         run: |
-          git fetch origin develop
+          git fetch origin master develop
           git checkout -B develop origin/develop
           git merge origin/master --no-edit
           git push origin develop
