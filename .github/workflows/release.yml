@@ -88,3 +88,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
         run: gh workflow run javadoc.yml --ref master -f ref="$RELEASE_TAG"
+
+      # "Prepare release" above pushed two new commits directly to master
+      # (the version bump + tag, then the next-dev-snapshot bump) - nothing
+      # else ever brings those back down to develop, which is exactly how
+      # the two branches drift apart, release after release, with nobody
+      # noticing until it's a large, awkward merge. Merge master back into
+      # develop immediately, in this same run, so they can never diverge
+      # this way again. A real conflict here (extremely unlikely for a pure
+      # version-bump commit) fails this step loudly for a maintainer to
+      # resolve by hand - never auto-resolved or force-pushed.
+      - name: Sync master back into develop
+        run: |
+          git fetch origin develop
+          git checkout -B develop origin/develop
+          git merge origin/master --no-edit
+          git push origin develop
