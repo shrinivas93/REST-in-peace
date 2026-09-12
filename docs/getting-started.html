@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Every REST-in-peace feature — plain Java and the Spring Boot starter, side by side, with runnable examples.">
+<meta name="color-scheme" content="light dark">
+<title>REST-in-peace Field Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+<style>
+  :root{
+    --paper:#f7f5f1; --paper-raised:#ffffff; --paper-sunken:#efece5;
+    --ink:#211d17; --ink-soft:#6b6558; --ink-faint:#9a9384;
+    --border:#e4ded2; --border-strong:#d3cbb9;
+    --java-solid:#8f5510; --java-soft:#f2e4cd; --java-border:#dfc492;
+    --spring-solid:#37633a; --spring-soft:#e1ebe1; --spring-border:#a9c7ab;
+    --shadow: 0 1px 2px rgba(33,29,23,.06), 0 6px 20px -8px rgba(33,29,23,.12);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#18160f; --paper-raised:#221f17; --paper-sunken:#131110;
+      --ink:#f1ece0; --ink-soft:#b7ae9a; --ink-faint:#7d7565;
+      --border:#39331f; --border-strong:#4a422a;
+      --java-solid:#e3a656; --java-soft:#3a2c14; --java-border:#5c4520;
+      --spring-solid:#8bc290; --spring-soft:#213022; --spring-border:#3c5a3e;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -10px rgba(0,0,0,.5);
+    }
+  }
+
+  *{box-sizing:border-box;}
+  html{ background:var(--paper); }
+  body{
+    margin:0;
+    background:var(--paper); color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;
+    font-size:15.5px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{ font-family:"Fraunces",Georgia,serif; text-wrap:balance; letter-spacing:-0.01em; }
+  code, pre, .mono{ font-family:"IBM Plex Mono",ui-monospace,monospace; }
+
+  a{ color:var(--java-solid); }
+
+  .shell{ display:flex; min-height:100vh; }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    position:sticky; top:0; align-self:flex-start; height:100vh;
+    width:270px; flex:0 0 270px; overflow-y:auto;
+    border-right:1px solid var(--border);
+    padding:28px 20px 40px;
+    display:flex; flex-direction:column; gap:22px;
+  }
+  .brand{ display:flex; flex-direction:column; gap:4px; }
+  .brand .mark{ font-family:"Fraunces",serif; font-size:1.5rem; font-weight:600; line-height:1.15; }
+  .brand .tag{ font-size:.8rem; color:var(--ink-soft); }
+  .brand-links{ display:flex; gap:12px; margin-top:6px; }
+  .brand-links a{
+    font-family:"IBM Plex Mono",monospace; font-size:.72rem; text-decoration:none;
+    color:var(--ink-soft); border-bottom:1px solid var(--border-strong);
+  }
+  .brand-links a:hover{ color:var(--java-solid); border-color:var(--java-solid); }
+
+  .legend{ display:flex; flex-direction:column; gap:6px; font-size:.72rem; }
+  .legend .row{ display:flex; align-items:center; gap:8px; }
+  .swatch{ width:10px; height:10px; border-radius:2px; flex:0 0 auto; }
+  .swatch.java{ background:var(--java-solid); }
+  .swatch.spring{ background:var(--spring-solid); }
+  .legend .row span.label{ text-transform:uppercase; letter-spacing:.06em; color:var(--ink-soft); }
+
+  #filter{
+    width:100%; padding:8px 10px; border-radius:7px;
+    border:1px solid var(--border-strong); background:var(--paper-raised); color:var(--ink);
+    font-family:"IBM Plex Mono",monospace; font-size:.78rem;
+  }
+  #filter:focus{ outline:2px solid var(--java-border); outline-offset:1px; }
+  #filter::placeholder{ color:var(--ink-faint); }
+
+  nav.toc{ display:flex; flex-direction:column; gap:2px; font-size:.86rem; }
+  nav.toc .group-title{
+    margin:14px 0 4px; font-family:"IBM Plex Mono",monospace; font-size:.66rem;
+    text-transform:uppercase; letter-spacing:.09em; color:var(--ink-faint);
+  }
+  nav.toc a{
+    color:var(--ink-soft); text-decoration:none; padding:4px 8px; border-radius:6px;
+    display:block;
+  }
+  nav.toc a:hover{ background:var(--paper-sunken); color:var(--ink); }
+  nav.toc a.active{ background:var(--java-soft); color:var(--java-solid); font-weight:500; }
+
+  .sidebar-toggle{ display:none; }
+
+  /* ---------- Main ---------- */
+  main{ flex:1 1 auto; min-width:0; padding:44px clamp(20px,4vw,64px) 100px; }
+  .intro{ max-width:700px; margin-bottom:52px; }
+  .eyebrow{
+    font-family:"IBM Plex Mono",monospace; font-size:.74rem; text-transform:uppercase;
+    letter-spacing:.1em; color:var(--ink-faint); margin-bottom:10px;
+  }
+  .intro h1{ font-size:clamp(1.9rem,3.2vw,2.5rem); margin:0 0 14px; }
+  .intro p{ color:var(--ink-soft); max-width:62ch; }
+  .intro p + p{ margin-top:10px; }
+
+  section.category{ margin-bottom:56px; scroll-margin-top:20px; }
+  section.category > h2{
+    font-size:1.5rem; margin:0 0 6px; padding-bottom:12px; border-bottom:1px solid var(--border);
+  }
+  section.category > .category-desc{ color:var(--ink-soft); font-size:.92rem; margin:8px 0 28px; max-width:64ch; }
+
+  .feature{ margin-bottom:38px; scroll-margin-top:20px; }
+  .feature h3{ font-size:1.12rem; margin:0 0 4px; font-family:"IBM Plex Sans",sans-serif; font-weight:600; }
+  .feature .blurb{ color:var(--ink-soft); font-size:.9rem; margin:0 0 16px; max-width:66ch; }
+  .feature .blurb code{ font-size:.85em; }
+
+  .snippets{ display:flex; flex-direction:column; gap:14px; }
+  .snippet{
+    border:1px solid var(--border); border-left-width:3px; border-radius:9px;
+    background:var(--paper-raised); box-shadow:var(--shadow); overflow:hidden;
+  }
+  .snippet.java{ border-left-color:var(--java-solid); }
+  .snippet.spring{ border-left-color:var(--spring-solid); }
+  .snippet.neutral{ border-left-color:var(--border-strong); }
+
+  .snippet-head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 14px; border-bottom:1px solid var(--border);
+  }
+  .snippet-tag{
+    font-family:"IBM Plex Mono",monospace; font-size:.68rem; text-transform:uppercase;
+    letter-spacing:.08em; padding:3px 8px; border-radius:20px; font-weight:600;
+  }
+  .snippet.java .snippet-tag{ background:var(--java-soft); color:var(--java-solid); }
+  .snippet.spring .snippet-tag{ background:var(--spring-soft); color:var(--spring-solid); }
+  .snippet.neutral .snippet-tag{ background:var(--paper-sunken); color:var(--ink-soft); }
+  .snippet-caption{ font-size:.78rem; color:var(--ink-faint); text-align:right; }
+
+  pre{ margin:0; padding:14px 16px; overflow-x:auto; font-size:.83rem; line-height:1.55; }
+  code.hljs{ background:none !important; color:var(--ink); }
+  .hljs-keyword,.hljs-built_in{ color:var(--java-solid); }
+  .hljs-string{ color:var(--spring-solid); }
+  .hljs-comment{ color:var(--ink-faint); font-style:italic; }
+  .hljs-title.class_,.hljs-title.function_{ color:var(--ink); font-weight:600; }
+  .hljs-meta,.hljs-symbol{ color:var(--ink-soft); }
+  .hljs-number,.hljs-literal{ color:var(--java-solid); }
+  .hljs-attr{ color:var(--spring-solid); }
+
+  .footline{
+    margin-top:26px; padding-top:16px; border-top:1px solid var(--border);
+    font-size:.8rem; color:var(--ink-faint); font-family:"IBM Plex Mono",monospace;
+  }
+  .footline a{ color:var(--ink-soft); }
+
+  [hidden]{ display:none !important; }
+
+  @media (max-width: 860px){
+    .shell{ flex-direction:column; }
+    .sidebar{
+      position:relative; height:auto; width:100%; flex:none;
+      border-right:none; border-bottom:1px solid var(--border);
+      padding:16px 18px;
+    }
+    .sidebar-toggle{
+      display:flex; align-items:center; justify-content:space-between; width:100%;
+      background:none; border:none; color:var(--ink); font-family:"Fraunces",serif;
+      font-size:1.3rem; font-weight:600; padding:0; cursor:pointer;
+    }
+    .sidebar-toggle .chev{ font-family:"IBM Plex Mono",monospace; font-size:.9rem; color:var(--ink-faint); }
+    .sidebar-body{ display:flex; flex-direction:column; gap:18px; margin-top:16px; }
+    .sidebar-body[data-collapsed="true"]{ display:none; }
+    main{ padding:30px 18px 80px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <button class="sidebar-toggle" id="sidebarToggle" type="button">
+      <span>REST-in-peace</span><span class="chev" id="sidebarChev">▾</span>
+    </button>
+    <div class="sidebar-body" id="sidebarBody">
+      <div class="brand">
+        <span class="mark">REST-in-peace</span>
+        <span class="tag">Field guide — every feature, every way to call it</span>
+        <div class="brand-links">
+          <a href="https://github.com/shrinivas93/REST-in-peace">GitHub ↗</a>
+          <a href="apidocs/">Javadoc ↗</a>
+        </div>
+      </div>
+
+      <div class="legend">
+        <div class="row"><span class="swatch java"></span><span class="label">Plain Java / core</span></div>
+        <div class="row"><span class="swatch spring"></span><span class="label">Spring Boot starter</span></div>
+      </div>
+
+      <input id="filter" type="text" placeholder="Filter features…" autocomplete="off">
+
+      <nav class="toc" id="toc">
+        <div class="group-title">Setup</div>
+        <a href="#setup">Declaring a client</a>
+
+        <div class="group-title">Requests</div>
+        <a href="#http-methods">HTTP methods &amp; URLs</a>
+        <a href="#path-param">@PathParam</a>
+        <a href="#url-param">@Url</a>
+        <a href="#query-header">@QueryParam / @HeaderParam</a>
+        <a href="#query-header-map">@QueryMap / @HeaderMap</a>
+        <a href="#headers">@Headers</a>
+
+        <div class="group-title">Request bodies</div>
+        <a href="#body">@Body</a>
+        <a href="#multipart">@Multipart / @Part</a>
+        <a href="#form">@FormUrlEncoded / @Field</a>
+
+        <div class="group-title">Return types</div>
+        <a href="#return-basic">String / POJO / void</a>
+        <a href="#downloads">byte[] / File downloads</a>
+        <a href="#ripresponse">RipResponse&lt;T&gt;</a>
+        <a href="#async">Async — CompletableFuture</a>
+
+        <div class="group-title">Errors &amp; resilience</div>
+        <a href="#errors">Error handling</a>
+        <a href="#retry">@Retry &amp; idempotency</a>
+        <a href="#timeout">@Timeout</a>
+
+        <div class="group-title">Client configuration</div>
+        <a href="#client-config">RipClientConfig</a>
+        <a href="#object-mapper">JSON ObjectMapper</a>
+
+        <div class="group-title">Caching</div>
+        <a href="#caching">Response caching</a>
+
+        <div class="group-title">Interceptors</div>
+        <a href="#interceptors-global">Global &amp; per-client</a>
+        <a href="#interceptors-prebuilt">Pre-built interceptors</a>
+
+        <div class="group-title">Codegen &amp; testing</div>
+        <a href="#codegen">Compile-time proxies</a>
+        <a href="#testing">MockRestServer</a>
+
+        <div class="group-title">Integration</div>
+        <a href="#integration">Java, Spring, Kotlin</a>
+      </nav>
+    </div>
+  </aside>
+
+  <main>
+    <div class="intro">
+      <div class="eyebrow">Getting started · rest-in-peace + rest-in-peace-spring-boot-starter</div>
+      <h1>One client interface, every way to wire it up.</h1>
+      <p>Every feature below works identically no matter how the client was constructed — a JDK dynamic proxy, a compile-time-generated class, or a Spring bean all resolve through the same <code>RIP.getClient(...)</code> choke point. What differs is <em>how you configure and inject</em> the client. Each entry shows the plain-Java form first, then every documented alternative — a different overload, a default, a collection form, or the Spring Boot starter's own way of expressing the same thing.</p>
+      <p>Amber snippets run in plain Java (or any JVM language). Green snippets are specific to the <code>rest-in-peace-spring-boot-starter</code> module. See the <a href="https://github.com/shrinivas93/REST-in-peace#installation">README</a> for Maven/Gradle coordinates and the <a href="apidocs/">Javadoc</a> for the full API surface.</p>
+    </div>
+
+    <!-- ============ SETUP ============ -->
+    <section class="category" id="setup">
+      <h2>Declaring a client</h2>
+      <p class="category-desc">Every client starts as an annotated interface. Where its base URL comes from is the first thing that varies by environment — and by whether Spring is involved.</p>
+
+      <div class="feature">
+        <h3>@RestClient + @BaseUrl</h3>
+        <p class="blurb">A fixed base URL, known at compile time. Methods write relative paths against it.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+
+UserApi api = RIP.getClient(UserApi.class);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <h3>Base URL resolved at runtime</h3>
+        <p class="blurb"><code>@BaseUrl</code> must be a compile-time constant, so an env-dependent host bypasses it entirely.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · env var</span>
+              <span class="snippet-caption">wins over @BaseUrl</span></div>
+            <pre><code class="language-java">@RestClient
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}
+
+UserApi api = RIP.getClient(UserApi.class, System.getenv("USER_API_BASE_URL"));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · full config</span>
+              <span class="snippet-caption">base URL + timeout + proxy together</span></div>
+            <pre><code class="language-java">UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .baseUrl(prodBaseUrl)
+        .connectTimeoutMillis(2_000)
+        .readTimeoutMillis(10_000)
+        .build());</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · property-resolved</span></div>
+            <pre><code class="language-java">@RestClient(baseUrlProperty = "user-api.base-url")
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}</code></pre>
+            <pre><code class="language-yaml">user-api:
+  base-url: https://api.example.com</code></pre>
+            <pre><code class="language-java">@SpringBootApplication
+@EnableRestInPeaceClients
+class Application { }
+
+@Service
+class Orders {
+    Orders(UserApi userApi) { ... }   // injected — zero @Bean method
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HTTP METHODS / URL ============ -->
+    <section class="category" id="http-methods">
+      <h2>HTTP methods &amp; URLs</h2>
+      <p class="category-desc">One verb annotation per method, plus two ways to build the URL a request hits.</p>
+
+      <div class="feature">
+        <h3>Method annotations</h3>
+        <p class="blurb">Exactly one of <code>@GET @POST @PUT @PATCH @DELETE @HEAD @OPTIONS</code> per method — none or more than one fails validation.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items/{id}")
+String getItem(@PathParam("id") String id);
+
+@DELETE("https://api.example.com/items/{id}")
+void deleteItem(@PathParam("id") String id);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="path-param">
+        <h3>@PathParam</h3>
+        <p class="blurb">Fills a <code>{placeholder}</code> in the URL. Values are percent-encoded, so a stray <code>/</code> or <code>?</code> never breaks the route.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items/{id}")
+String getItem(@PathParam("id") String id);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="url-param">
+        <h3>@Url</h3>
+        <p class="blurb">For a URL that isn't a fixed template — a pagination <code>next</code> link, a HATEOAS action link.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · pagination</span></div>
+            <pre><code class="language-java">@GET
+Page<Item> nextPage(@Url String url);
+
+Page<Item> page = itemApi.firstPage();
+while (page.next != null) {
+    page = itemApi.nextPage(page.next);
+    process(page.items);
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ QUERY / HEADER ============ -->
+    <section class="category" id="query-header">
+      <h2>Query params &amp; headers</h2>
+      <p class="category-desc">Fixed-by-name params, open-ended maps for names known only at runtime, and headers that never change.</p>
+
+      <div class="feature">
+        <h3>@QueryParam / @HeaderParam</h3>
+        <p class="blurb"><code>required</code> throws at call time with no value; <code>defaultValue</code> fills in for <code>null</code>.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · required + default</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items")
+String search(@QueryParam(value = "q", required = true) String query,
+               @QueryParam(value = "page", defaultValue = "1") Integer page);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · collection repeats</span>
+              <span class="snippet-caption">?tag=a&amp;tag=b</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items")
+String search(@QueryParam("tag") List<String> tags);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · header</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items")
+String search(@HeaderParam(value = "Authorization", required = true) String token);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="query-header-map">
+        <h3>@QueryMap / @HeaderMap</h3>
+        <p class="blurb">For names not known until runtime — an open-ended filter set, caller-supplied headers. One entry becomes one param; <code>null</code> entries are skipped, not thrown.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · dynamic filters</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/search")
+String search(@QueryParam("q") String query, @QueryMap Map<String, String> filters);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · dynamic headers</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users/{id}")
+User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHeaders);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="headers">
+        <h3>@Headers</h3>
+        <p class="blurb">Fixed headers that are always the same value — split on the first <code>:</code>, whitespace trimmed.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span>
+              <span class="snippet-caption">@HeaderParam/@HeaderMap wins on a name clash</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users")
+@Headers({ "Cache-Control: no-cache", "X-Api-Version: 2" })
+List<User> listUsers();</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ BODIES ============ -->
+    <section class="category" id="body">
+      <h2>Request bodies</h2>
+      <p class="category-desc">Three mutually-exclusive body encodings — JSON/raw, multipart, and form-urlencoded — each valid only on <code>POST/PUT/PATCH/DELETE</code>.</p>
+
+      <div class="feature">
+        <h3>@Body</h3>
+        <p class="blurb">A <code>String</code> goes as-is; anything else is JSON-serialized.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · POJO</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/items")
+String createItem(@Body Item item);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · raw JSON string</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/items/raw")
+String createRaw(@Body String rawJson);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="multipart">
+        <h3>@Multipart / @Part / @PartMap</h3>
+        <p class="blurb">File uploads and classic form POSTs. <code>File</code>, <code>byte[]</code>, and <code>InputStream</code> parts all become file parts; a plain <code>String</code> becomes a form field.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · fixed parts</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatar(@PathParam("id") String id,
+        @Part("caption") String caption, @Part("file") File avatar);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · byte[] needs a filename</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatarBytes(@PathParam("id") String id,
+        @Part(value = "file", fileName = "avatar.png") byte[] avatarBytes);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · dynamic parts</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/uploads")
+@Multipart
+String upload(@PartMap Map<String, Object> parts);
+
+Map<String, Object> parts = new LinkedHashMap<>();
+parts.put("caption", "vacation photo");                    // plain field
+parts.put("thumb", photoBytes);                             // filename defaults to "thumb"
+parts.put("file", PartValue.of(photoBytes, "photo.jpg"));   // explicit filename
+api.upload(parts);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · progress</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/users/{id}/avatar")
+@Multipart
+String uploadAvatar(@PathParam("id") String id, @Part("file") File avatar,
+        UploadProgressListener onProgress);
+
+api.uploadAvatar("42", avatar, (field, sent, total) ->
+        System.out.printf("%s: %d / %d%n", field, sent, total));</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="form">
+        <h3>@FormUrlEncoded / @Field / @FieldMap</h3>
+        <p class="blurb">OAuth token endpoints and classic HTML forms — <code>application/x-www-form-urlencoded</code>, not JSON.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/oauth/token")
+@FormUrlEncoded
+String getToken(@Field("grant_type") String grantType, @Field("client_id") String clientId);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · dynamic fields</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/search")
+@FormUrlEncoded
+String search(@FieldMap Map<String, Object> filters);</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RETURN TYPES ============ -->
+    <section class="category" id="return-basic">
+      <h2>Return types</h2>
+      <p class="category-desc">The declared return type is the whole decoding contract — no separate converter registration.</p>
+
+      <div class="feature">
+        <h3>String / POJO / void</h3>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · all three</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users/{id}")
+String getUserRaw(@PathParam("id") String id);   // raw response body
+
+@GET("https://api.example.com/users/{id}")
+User getUser(@PathParam("id") String id);        // JSON deserialized into User
+
+@POST("https://api.example.com/events")
+void fireEvent(@Body Event event);               // response discarded</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="downloads">
+        <h3>Binary downloads: byte[] and File</h3>
+        <p class="blurb"><code>byte[]</code> buffers the whole response; <code>File</code> streams straight to disk for large payloads.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · byte[]</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/reports/{id}/pdf")
+byte[] downloadReport(@PathParam("id") String id);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · streamed to File</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id, @Destination File target);
+
+File pdf = reportApi.downloadReport("42", new File("/tmp/report.pdf"));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · progress</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id, @Destination File target,
+        DownloadProgressListener onProgress);
+
+reportApi.downloadReport("42", target, (sent, total) ->
+        System.out.printf("%d / %d%n", sent, total));   // total is -1 with no Content-Length</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="ripresponse">
+        <h3>RipResponse&lt;T&gt;</h3>
+        <p class="blurb">When a call needs the status code or a header too, not just the body.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users/{id}")
+RipResponse<User> getUser(@PathParam("id") String id);
+
+RipResponse<User> response = userApi.getUser("42");
+response.getStatus();               // 200
+response.getHeader("ETag");         // first value, case-insensitive
+response.getHeaders();              // Map<String, List<String>>
+User user = response.getBody();</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="async">
+        <h3>Async — CompletableFuture&lt;T&gt;</h3>
+        <p class="blurb">Same decoding rules as a synchronous <code>T</code>, just non-blocking. Combines with <code>byte[]</code>, <code>File</code>, and <code>RipResponse&lt;T&gt;</code> too.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users/{id}")
+CompletableFuture<User> getUserAsync(@PathParam("id") String id);
+
+userApi.getUserAsync("42").thenAccept(user -> System.out.println(user.name));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · keep the JVM exiting</span>
+              <span class="snippet-caption">not the default — reconfigures the shared client</span></div>
+            <pre><code class="language-java">RIP.useDaemonThreadsForAsync();   // call once at startup, before any async call</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · default flipped</span>
+              <span class="snippet-caption">called for you, unconditionally, at context startup</span></div>
+            <pre><code class="language-java">// A long-running Spring app has no reason to want non-daemon I/O threads
+// outliving its own shutdown — the starter's auto-configuration calls
+// RIP.useDaemonThreadsForAsync() automatically. No property to opt out;
+// exclude RestInPeaceAutoConfiguration if you truly need the plain-Java default.</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ERRORS / RESILIENCE ============ -->
+    <section class="category" id="errors">
+      <h2>Error handling &amp; resilience</h2>
+      <p class="category-desc">A non-2xx response always throws; retries and timeouts are declared per method.</p>
+
+      <div class="feature">
+        <h3>RestInPeaceHttpException / @ErrorType</h3>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · raw error body</span></div>
+            <pre><code class="language-java">try {
+    User user = userApi.getUser("42");
+} catch (RestInPeaceHttpException e) {
+    e.getStatus();     // 404
+    e.getRawBody();    // always available
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · typed error body</span></div>
+            <pre><code class="language-java">@GET("/users/{id}")
+@ErrorType(ApiError.class)
+User getUser(@PathParam("id") String id);
+
+catch (RestInPeaceHttpException e) {
+    ApiError error = e.getErrorBody();   // deserialized, not raw
+    System.out.println(error.code);
+}</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="retry">
+        <h3>@Retry &amp; idempotency keys</h3>
+        <p class="blurb">Retries on transport errors or a configurable status set; <code>idempotent=true</code> makes retrying a POST safe too.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span>
+              <span class="snippet-caption">default retryOnStatus: 429, 502, 503, 504</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users/{id}")
+@Retry(times = 3, delayMillis = 200, backoffMultiplier = 2.0)
+User getUser(@PathParam("id") String id);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · fixed delay</span></div>
+            <pre><code class="language-java">@Retry(times = 3, delayMillis = 500, backoffMultiplier = 1.0)   // no exponential backoff</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · safe retry for POST</span>
+              <span class="snippet-caption">one Idempotency-Key header, identical across attempts</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/charges")
+@Retry(times = 3, delayMillis = 200, idempotent = true)
+String createCharge(@Body Charge charge);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="timeout">
+        <h3>@Timeout</h3>
+        <p class="blurb">Overrides connect/read timeout for one method only. Priority: <code>@Timeout</code> &gt; <code>RipClientConfig</code> &gt; shared client default.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/reports/export")
+@Timeout(readMillis = 120_000)
+String exportReport();</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CLIENT CONFIG ============ -->
+    <section class="category" id="client-config">
+      <h2>Client configuration</h2>
+      <p class="category-desc">Everything one client's environment can differ in — base URL, timeout, proxy, JSON mapper, cache, interceptors — lives on <code>RipClientConfig</code>.</p>
+
+      <div class="feature">
+        <h3>RipClientConfig.builder()</h3>
+        <p class="blurb">Setting a timeout, proxy, or objectMapper gives the client its own connection pool instead of sharing the app-wide one.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · full builder</span></div>
+            <pre><code class="language-java">UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .baseUrl(prodBaseUrl)
+        .connectTimeoutMillis(2_000)
+        .readTimeoutMillis(10_000)
+        .proxy("proxy.example.com", 8080)                 // or proxy(host, port, user, pass)
+        .objectMapper(new JacksonObjectMapper(myMapper))
+        .build());</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · YAML-bound</span>
+              <span class="snippet-caption">no @Bean method — resolved per client by name</span></div>
+            <pre><code class="language-yaml">rest-in-peace:
+  clients:
+    user-api:                 # @RestClient(name = "user-api"), or the
+                               # decapitalized interface name by default
+      connect-timeout-millis: 2000
+      read-timeout-millis: 10000
+      proxy: { host: proxy.example.com, port: 8080 }</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="object-mapper">
+        <h3>JSON ObjectMapper</h3>
+        <p class="blurb">Gson-backed by default. Swap it app-wide, or per client.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · shared default</span>
+              <span class="snippet-caption">every client sharing the static Unirest client</span></div>
+            <pre><code class="language-java">RIP.setObjectMapper(new JacksonObjectMapper(myJacksonMapper));   // once, at startup</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · one client's own</span>
+              <span class="snippet-caption">RIP.setObjectMapper has no effect on this one</span></div>
+            <pre><code class="language-java">RipClientConfig.builder().objectMapper(new JacksonObjectMapper(myMapper)).build();</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · by bean, qualified or shared</span></div>
+            <pre><code class="language-java">@Bean
+@Qualifier("user-api")           // wired only into the user-api client
+ObjectMapper userApiMapper() { return new JacksonObjectMapper(myMapper); }
+
+@Bean                            // unqualified — used as the shared default
+ObjectMapper sharedMapper() { return new JacksonObjectMapper(myMapper); }
+// ^ only applies when it's the single unqualified bean of that type</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CACHING ============ -->
+    <section class="category" id="caching">
+      <h2>Response caching</h2>
+      <p class="category-desc">Honors <code>Cache-Control</code>/<code>ETag</code>/<code>Last-Modified</code> — never invents caching the server didn't ask for. GET/POJO only, for now.</p>
+
+      <div class="feature">
+        <h3>Cache — shared, per-client, or a bean</h3>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · shared default</span></div>
+            <pre><code class="language-java">RIP.setCache(new InMemoryCache());   // ConcurrentHashMap-backed, ships free</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · one client's own</span></div>
+            <pre><code class="language-java">UserApi api = RIP.getClient(UserApi.class,
+        RipClientConfig.builder().cache(new InMemoryCache()).build());
+
+// Or back it with Redis / Caffeine / anything else:
+class RedisCache implements Cache {
+    public CachedResponse get(String key) { ... }
+    public void put(String key, CachedResponse r) { ... }
+    public void evict(String key) { ... }
+    public void clear() { ... }
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · opt one method out</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/prices/{symbol}")
+@NoCache
+Price getLivePrice(@PathParam("symbol") String symbol);</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · qualified or shared bean</span></div>
+            <pre><code class="language-java">@Bean
+@Qualifier("user-api")
+Cache userApiCache() { return new InMemoryCache(); }</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ INTERCEPTORS ============ -->
+    <section class="category" id="interceptors-global">
+      <h2>Interceptors</h2>
+      <p class="category-desc">"Onion" ordering: global <code>beforeRequest</code> runs first, global <code>afterResponse</code> runs last — global interceptors bracket every per-client one.</p>
+
+      <div class="feature">
+        <h3>Global vs. per-client</h3>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · global, every client</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new RequestInterceptor() {
+    public void beforeRequest(RequestContext ctx) {
+        ctx.addHeader("Authorization", "Bearer " + currentToken());
+    }
+    public void afterResponse(RequestContext ctx, int status, Object body) {
+        System.out.println(ctx.getHttpMethod() + " " + ctx.getUrl() + " -> " + status);
+    }
+});
+
+RIP.clearInterceptors();   // removes everything registered</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · scoped to one client</span></div>
+            <pre><code class="language-java">StripeApi stripe = RIP.getClient(StripeApi.class, RipClientConfig.builder()
+        .baseUrl("https://api.stripe.com")
+        .interceptors(List.of(new HeaderInterceptor("Authorization", () -> "Bearer " + stripeKey)))
+        .build());</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · qualifier decides scope</span>
+              <span class="snippet-caption">unqualified → global; qualified → that one client</span></div>
+            <pre><code class="language-java">@Bean                              // no @Qualifier — registered globally at startup
+RequestInterceptor authInterceptor() {
+    return new HeaderInterceptor("Authorization", () -> "Bearer " + currentToken());
+}
+
+@Bean
+@Qualifier("stripe-api")           // wired only into the stripe-api client's own config
+RequestInterceptor stripeAuth() { ... }</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="interceptors-prebuilt">
+        <h3>Pre-built interceptors</h3>
+        <p class="blurb">Registered exactly like a hand-written one — plain Java shown; each also works as a <code>@Bean</code> in Spring, qualified or not.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">HeaderInterceptor</span>
+              <span class="snippet-caption">fixed, Supplier, or a map of either</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + token));      // fixed value
+RIP.addInterceptor(new HeaderInterceptor("Authorization", () -> currentToken()));    // re-evaluated per call
+RIP.addInterceptor(HeaderInterceptor.of(Map.of("X-Api-Key", "abc123")));             // several at once
+RIP.addInterceptor(new HeaderInterceptor(Map.of("Authorization", () -> currentToken())));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">LoggingInterceptor</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new LoggingInterceptor());                 // to System.out
+RIP.addInterceptor(new LoggingInterceptor(logger::info));     // or your own sink</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">CorrelationIdInterceptor</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new CorrelationIdInterceptor());                                // random UUID, X-Request-Id
+RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGenerator.next()));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">MetricsInterceptor</span>
+              <span class="snippet-caption">one sample per attempt, incl. retries</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new MetricsInterceptor((method, url, status, ms) ->
+        System.out.printf("%s %s -> %d (%dms)%n", method, url, status, ms)));</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CODEGEN / TESTING ============ -->
+    <section class="category" id="codegen">
+      <h2>Compile-time proxies &amp; testing</h2>
+      <p class="category-desc">Two things that happen underneath the interface, without changing how you call it.</p>
+
+      <div class="feature">
+        <h3>Compile-time proxy generation</h3>
+        <p class="blurb">No opt-in — a supported method shape gets a real generated <code>&lt;Interface&gt;_RipImpl</code> class automatically; anything else falls back to the reflective proxy, transparently.</p>
+        <div class="snippets">
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Zero code change</span>
+              <span class="snippet-caption">same call site either way</span></div>
+            <pre><code class="language-java">UserApi api = RIP.getClient(UserApi.class);
+// api.getClass() is UserApi_RipImpl        — supported shape, reflection-free
+// api.getClass() is a java.lang.reflect.Proxy — unsupported shape, same behavior</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="testing">
+        <h3>MockRestServer</h3>
+        <p class="blurb">A real local HTTP server — <code>@Retry</code>, <code>@Timeout</code>, and every interceptor run completely unmodified against it.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · manual lifecycle</span></div>
+            <pre><code class="language-java">MockRestServer server = MockRestServer.start();
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+
+OrderApi api = RIP.getClient(OrderApi.class, server.baseUrl());
+assertEquals("shipped", api.getOrder("42").status);
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}"));
+server.close();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · JUnit 5 extension</span>
+              <span class="snippet-caption">no Spring context needed at all</span></div>
+            <pre><code class="language-java">@ExtendWith(MockRestServerExtension.class)
+class OrderApiTest {
+    @Test
+    void getOrder_returnsDecodedBody(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+        OrderApi api = RIP.getClient(OrderApi.class, server.baseUrl());
+        assertEquals("shipped", api.getOrder("42").status);
+    }
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · prove @Retry recovers</span></div>
+            <pre><code class="language-java">server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2,
+        MockResponse.status(503, ""), MockResponse.json(new Order("42", "shipped")));
+
+Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt</code></pre>
+          </div>
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring · @AutoConfigureMockRestServer</span>
+              <span class="snippet-caption">redirects every registered client's base URL for you</span></div>
+            <pre><code class="language-java">@SpringBootTest
+@AutoConfigureMockRestServer
+class UserServiceTest {
+    @Autowired MockRestServer server;
+    @Autowired UserApi userApi;   // already pointed at server.baseUrl()
+
+    @Test
+    void getUser_returnsDecodedBody() {
+        server.on(HTTPMethod.GET, "/users/{id}", MockResponse.json(new User("42", "Shrinivas")));
+        assertEquals("Shrinivas", userApi.getUser("42").name);
+    }
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ INTEGRATION ============ -->
+    <section class="category" id="integration">
+      <h2>Java, Spring, Kotlin</h2>
+      <p class="category-desc">The construction site is the one place plain Java and Spring genuinely diverge — everything above is identical once you have a client instance.</p>
+
+      <div class="feature">
+        <h3>Plain Java, CLI tools, scripts</h3>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · construct once, reuse</span></div>
+            <pre><code class="language-java">public final class Clients {
+    public static final UserApi USER_API = RIP.getClient(UserApi.class);
+    private Clients() {}
+}</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <h3>Spring — two ways to wire a bean</h3>
+        <div class="snippets">
+          <div class="snippet spring">
+            <div class="snippet-head"><span class="snippet-tag">Spring Boot starter</span>
+              <span class="snippet-caption">4.x, Java 17+ — zero hand-written @Bean method</span></div>
+            <pre><code class="language-java">@SpringBootApplication
+@EnableRestInPeaceClients
+class Application { }
+
+@RestClient(baseUrlProperty = "user-api.base-url")
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · hand-written @Bean</span>
+              <span class="snippet-caption">Spring on older Java, or anywhere you'd rather not scan</span></div>
+            <pre><code class="language-java">@Configuration
+class RipClientsConfig {
+    @Bean
+    UserApi userApi(@Value("${user-api.base-url}") String baseUrl) {
+        return RIP.getClient(UserApi.class, baseUrl);
+    }
+
+    @Bean
+    StripeApi stripeApi(@Value("${stripe.api-key}") String apiKey) {
+        return RIP.getClient(StripeApi.class, RipClientConfig.builder()
+                .baseUrl("https://api.stripe.com")
+                .connectTimeoutMillis(2_000)
+                .interceptors(List.of(new HeaderInterceptor("Authorization", () -> "Bearer " + apiKey)))
+                .build());
+    }
+}</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <h3>Kotlin, Scala, other JVM languages</h3>
+        <p class="blurb">No Java-specific runtime magic beyond an annotated interface — works from any JVM language that can implement one.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · Kotlin</span></div>
+            <pre><code class="language-kotlin">@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    fun getUser(@PathParam("id") id: String): User
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footline">
+      This page is generated documentation, kept alongside <a href="https://github.com/shrinivas93/REST-in-peace/blob/master/README.md">README.md</a> and <a href="https://github.com/shrinivas93/REST-in-peace/blob/master/docs/design/spring-boot-starter.md">docs/design/spring-boot-starter.md</a> in the repository. Amber = plain Java · core library. Green = rest-in-peace-spring-boot-starter. Full API surface: <a href="apidocs/">Javadoc</a>.
+    </div>
+  </main>
+</div>
+
+<script>
+  hljs.highlightAll();
+
+  // Sidebar collapse (mobile)
+  const toggle = document.getElementById('sidebarToggle');
+  const body = document.getElementById('sidebarBody');
+  const chev = document.getElementById('sidebarChev');
+  function isMobile(){ return window.matchMedia('(max-width: 860px)').matches; }
+  function setCollapsed(collapsed){
+    body.dataset.collapsed = collapsed ? 'true' : 'false';
+    chev.textContent = collapsed ? '▾' : '▴';
+  }
+  if (isMobile()) setCollapsed(true);
+  toggle.addEventListener('click', () => setCollapsed(body.dataset.collapsed !== 'true'));
+
+  // Filter
+  const filterInput = document.getElementById('filter');
+  const features = Array.from(document.querySelectorAll('.feature'));
+  const categories = Array.from(document.querySelectorAll('section.category'));
+  filterInput.addEventListener('input', () => {
+    const q = filterInput.value.trim().toLowerCase();
+    features.forEach(f => {
+      const text = f.textContent.toLowerCase();
+      f.hidden = q.length > 0 && !text.includes(q);
+    });
+    categories.forEach(cat => {
+      const anyVisible = Array.from(cat.querySelectorAll('.feature')).some(f => !f.hidden);
+      cat.hidden = !anyVisible;
+    });
+  });
+
+  // Active section highlighting
+  const links = Array.from(document.querySelectorAll('#toc a'));
+  const linkFor = id => links.find(a => a.getAttribute('href') === '#' + id);
+  const targets = Array.from(document.querySelectorAll('section.category[id], .feature[id]'));
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const link = linkFor(entry.target.id);
+      if (!link) return;
+      if (entry.isIntersecting) {
+        links.forEach(a => a.classList.remove('active'));
+        link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-10% 0px -75% 0px' });
+  targets.forEach(t => observer.observe(t));
+
+  links.forEach(a => a.addEventListener('click', () => { if (isMobile()) setCollapsed(true); }));
+</script>
+</body>
+</html>
