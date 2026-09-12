@@ -24,7 +24,7 @@
 	-->
 	<groupId>com.shri</groupId>
 	<artifactId>rest-in-peace-parent</artifactId>
-	<version>1.0.0.36-SNAPSHOT</version>
+	<version>1.0.0.35-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>
