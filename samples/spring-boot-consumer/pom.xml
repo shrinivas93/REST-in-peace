@@ -3,8 +3,9 @@
 
 	<!--
 	A standalone Maven project - deliberately NOT a module of the parent
-	rest-in-peace build (this repo is single-module by design) - showing
-	what a real downstream consumer sees from the Spring Boot starter
+	rest-in-peace build (core and spring-boot-starter are sibling reactor
+	modules of it, but this sample isn't) - showing what a real
+	downstream consumer sees from the Spring Boot starter
 	(../../docs/design/spring-boot-starter.md): add both the core library
 	and rest-in-peace-spring-boot-starter as ordinary dependencies,
 	annotate a single @RestClient interface, and get a working Spring bean
@@ -20,10 +21,10 @@
 		<maven.compiler.source>17</maven.compiler.source>
 		<maven.compiler.target>17</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<!-- Must match rest-in-peace's own pom.xml <version> - see README.md. -->
-		<rest-in-peace.version>1.0.0.1-SNAPSHOT</rest-in-peace.version>
-		<!-- Must match spring-boot-starter/pom.xml's own <version> - see README.md. -->
-		<rest-in-peace-spring-boot-starter.version>0.1.0-SNAPSHOT</rest-in-peace-spring-boot-starter.version>
+		<!-- Must match core and the starter's own shared parent <version> -
+		     see README.md. Both always match each other by construction. -->
+		<rest-in-peace.version>1.0.0.36-SNAPSHOT</rest-in-peace.version>
+		<rest-in-peace-spring-boot-starter.version>1.0.0.36-SNAPSHOT</rest-in-peace-spring-boot-starter.version>
 		<spring-boot.version>4.1.1</spring-boot.version>
 	</properties>
 

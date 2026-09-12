@@ -37,22 +37,33 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - name: Set up JDK 8
+      # spring-boot-starter targets Java 17; one JDK 17 setup generates
+      # Javadoc for both modules since javac reads core's own
+      # -source/-target 8 code fine on a newer JDK too.
+      - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
-          java-version: '8'
+          java-version: '17'
           distribution: temurin
           cache: maven
-      # core/ is the actual rest-in-peace artifact - the repo root pom.xml
-      # is just a reactor aggregator with no javadoc plugin config of its
-      # own.
+      # Directly invoking a plugin goal (rather than a lifecycle phase)
+      # doesn't build reactor dependencies first, so spring-boot-starter
+      # can't otherwise resolve core - install the reactor once so both
+      # modules' javadoc:javadoc runs below have what they need.
+      - name: Install the reactor
+        run: mvn -B install -DskipTests
+      # The repo root pom.xml is just a reactor aggregator with no javadoc
+      # plugin config of its own - core and spring-boot-starter each
+      # declare it themselves and get built (and their docs published)
+      # separately.
       - name: Generate Javadoc
-        run: mvn -B javadoc:javadoc --file core/pom.xml
+        run: mvn -B javadoc:javadoc -pl core,spring-boot-starter
       - name: Assemble site
         run: |
-          mkdir -p target/site
+          mkdir -p target/site/spring-boot-starter
           cp docs/getting-started.html target/site/index.html
           cp -r core/target/reports/apidocs target/site/apidocs
+          cp -r spring-boot-starter/target/reports/apidocs target/site/spring-boot-starter/apidocs
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site
