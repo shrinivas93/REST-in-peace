@@ -3,10 +3,11 @@
 
 	<!--
 	Reactor aggregator only - no source of its own, never itself released or
-	published. `core/` is the actual rest-in-peace artifact, versioned and
-	released completely independently of this POM (see core/pom.xml's own
-	<parent> - it explicitly overrides <artifactId>/<version> rather than
-	inheriting them, so this file's own version never needs to move).
+	published, and deliberately not a <parent> of core/pom.xml (core has no
+	<parent> at all - see the comment there for why). This listing under
+	<modules> exists solely so `mvn` at the repo root cascades into core/
+	too; core's own build/version/release cadence is entirely independent
+	of this file.
 
 	spring-boot-starter/ and samples/* are deliberately NOT modules here -
 	both are standalone Maven projects that depend on the core artifact as

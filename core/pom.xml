@@ -1,17 +1,16 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<!-- Parent is a build-only aggregator (../pom.xml) - groupId/artifactId/
-	     version are all explicitly overridden below rather than inherited,
-	     so this artifact's own identity and its independent 1.0.0.N release
-	     cadence are completely unaffected by the parent's existence. -->
-	<parent>
-		<groupId>com.shri</groupId>
-		<artifactId>rest-in-peace-parent</artifactId>
-		<version>1-SNAPSHOT</version>
-		<relativePath>../pom.xml</relativePath>
-	</parent>
-
+	<!-- No <parent> here on purpose: the root pom.xml lists this directory
+	     under <modules> so `mvn` at the repo root still cascades into this
+	     build, but that listing alone is enough for reactor cascading - it
+	     doesn't require (or benefit from) this POM declaring the aggregator
+	     as its parent. A <parent> would make every consumer resolving this
+	     artifact's POM (a local install, a CI job, a real GitHub Packages
+	     consumer) also need to resolve rest-in-peace-parent's own POM from
+	     wherever they got this one, which is one more thing to keep
+	     published in sync for zero actual benefit, since nothing here
+	     inherits anything from the aggregator anyway. -->
 	<groupId>com.shri</groupId>
 	<artifactId>rest-in-peace</artifactId>
 	<version>1.0.0.35-SNAPSHOT</version>
