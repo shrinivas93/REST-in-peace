@@ -1,10 +1,21 @@
-name: Publish Javadoc
+name: Publish Site
+
+# Publishes the project's GitHub Pages site: docs/getting-started.html (the
+# field guide - every feature, plain Java and the Spring Boot starter side
+# by side) as the site root, with the generated Javadoc underneath it at
+# /apidocs/. Kept as one workflow/one deployment rather than two, since
+# GitHub Pages serves exactly one artifact per environment - the getting-
+# started page links to /apidocs/ for the full API surface.
+#
+# Filename kept as javadoc.yml (not renamed) since release.yml dispatches
+# it by filename (`gh workflow run javadoc.yml`) - only this display name
+# and what it builds have grown.
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git ref (tag or commit) to build the Javadoc site from (blank = the ref this workflow runs on)'
+        description: 'Git ref (tag or commit) to build the site from (blank = the ref this workflow runs on)'
         required: false
 
 permissions:
@@ -17,7 +28,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  javadoc:
+  site:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -34,12 +45,17 @@ jobs:
           cache: maven
       - name: Generate Javadoc
         run: mvn -B javadoc:javadoc
+      - name: Assemble site
+        run: |
+          mkdir -p target/site
+          cp docs/getting-started.html target/site/index.html
+          cp -r target/reports/apidocs target/site/apidocs
       - name: Configure Pages
         uses: actions/configure-pages@v5
-      - name: Upload Javadoc site
+      - name: Upload site
         uses: actions/upload-pages-artifact@v4
         with:
-          path: target/reports/apidocs
+          path: target/site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

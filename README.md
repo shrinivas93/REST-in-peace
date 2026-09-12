@@ -10,9 +10,12 @@ methods like any other Java call.
 [![CI](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml)
 [![Sample Consumer Test](https://github.com/shrinivas93/REST-in-peace/actions/workflows/sample-consumer-test.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/sample-consumer-test.yml)
 [![Latest Release](https://img.shields.io/github/v/release/shrinivas93/REST-in-peace?label=release)](https://github.com/shrinivas93/REST-in-peace/releases/latest)
-[![Javadoc](https://img.shields.io/badge/javadoc-latest-blue)](https://shrinivas93.github.io/REST-in-peace/)
+[![Getting Started Guide](https://img.shields.io/badge/guide-field%20guide-8f5510)](https://shrinivas93.github.io/REST-in-peace/)
+[![Javadoc](https://img.shields.io/badge/javadoc-latest-blue)](https://shrinivas93.github.io/REST-in-peace/apidocs/)
 [![Java 8+](https://img.shields.io/badge/Java-8%2B-orange)](#requirements)
 [![License: MIT](https://img.shields.io/github/license/shrinivas93/REST-in-peace)](LICENSE)
+
+**[Field guide — every feature, plain Java and Spring side by side](https://shrinivas93.github.io/REST-in-peace/)**
 
 ```java
 @RestClient
