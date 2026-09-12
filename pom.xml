@@ -30,6 +30,13 @@
 	<name>rest-in-peace-parent</name>
 	<url>http://maven.apache.org</url>
 
+	<scm>
+		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
+		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
+		<url>https://github.com/shrinivas93/REST-in-peace</url>
+		<tag>HEAD</tag>
+	</scm>
+
 	<modules>
 		<module>core</module>
 		<module>spring-boot-starter</module>

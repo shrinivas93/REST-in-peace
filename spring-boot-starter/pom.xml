@@ -25,14 +25,8 @@
 		rest-in-peace library itself stays on Java 8.
 	</description>
 
-	<!-- Version, distributionManagement, and release-plugin config are all
-	     inherited from the parent - see pom.xml's own comment for why. -->
-	<scm>
-		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
-		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
-		<url>https://github.com/shrinivas93/REST-in-peace</url>
-		<tag>HEAD</tag>
-	</scm>
+	<!-- Version, scm, distributionManagement, and release-plugin config are
+	     all inherited from the parent - see pom.xml's own comment for why. -->
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
