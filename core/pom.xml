@@ -1,19 +1,18 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<!-- No <parent> here on purpose: the root pom.xml lists this directory
-	     under <modules> so `mvn` at the repo root still cascades into this
-	     build, but that listing alone is enough for reactor cascading - it
-	     doesn't require (or benefit from) this POM declaring the aggregator
-	     as its parent. A <parent> would make every consumer resolving this
-	     artifact's POM (a local install, a CI job, a real GitHub Packages
-	     consumer) also need to resolve rest-in-peace-parent's own POM from
-	     wherever they got this one, which is one more thing to keep
-	     published in sync for zero actual benefit, since nothing here
-	     inherits anything from the aggregator anyway. -->
-	<groupId>com.shri</groupId>
+	<!-- Inherits <version>/distributionManagement/release-plugin config from
+	     the parent so this artifact and rest-in-peace-spring-boot-starter's
+	     (its sibling module) always share one version, bumped together by a
+	     single release:prepare run at the root - see pom.xml's own comment. -->
+	<parent>
+		<groupId>com.shri</groupId>
+		<artifactId>rest-in-peace-parent</artifactId>
+		<version>1.0.0.36-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
 	<artifactId>rest-in-peace</artifactId>
-	<version>1.0.0.35-SNAPSHOT</version>
 	<packaging>jar</packaging>
 
 	<name>rest-in-peace</name>
@@ -84,14 +83,9 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>3.5.6</version>
 			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-release-plugin</artifactId>
-				<version>3.3.1</version>
-				<configuration>
-					<tagNameFormat>v@{project.version}</tagNameFormat>
-				</configuration>
-			</plugin>
+			<!-- maven-release-plugin's config (tagNameFormat, autoVersionSubmodules)
+			     lives only on the parent now - release:prepare runs from the repo
+			     root and covers this module and spring-boot-starter together. -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
@@ -107,13 +101,5 @@
 			</plugin>
 		</plugins>
 	</build>
-
-	<distributionManagement>
-		<repository>
-			<id>github</id>
-			<name>GitHub Packages</name>
-			<url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
-		</repository>
-	</distributionManagement>
 
 </project>

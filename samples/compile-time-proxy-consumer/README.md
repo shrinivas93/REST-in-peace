@@ -43,16 +43,20 @@ zero extra configuration.
 
 This library isn't published anywhere `mvn` looks by default yet (see the
 "Maven Central publishing" item in [`ROADMAP.md`](../../ROADMAP.md)), so
-you need a locally-installed build of it first:
+you need a locally-installed build of it first. core shares a parent POM
+([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
+non-recursive: just that one POM), since core's own published POM
+references it:
 
 ```sh
 # From the repository root:
-mvn install -DskipTests --file core/pom.xml
+mvn install -N
+mvn install -DskipTests -pl core
 
 # Then, from this directory:
 cd samples/compile-time-proxy-consumer
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
+  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace-parent</artifactId>' ../../pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 
@@ -63,12 +67,11 @@ VERIFICATION PASSED: compile-time proxy generation works for a real downstream c
 ```
 
 `-Drest-in-peace.version=...` overrides this pom.xml's own
-`<rest-in-peace.version>` default with whatever `core/pom.xml`'s
-`<version>` actually is right now - they're two independent
-projects, so nothing keeps the two in sync automatically, and the core
-version does change over time (each release bumps it). Omitting the flag
-falls back to the hardcoded default, which will fail to resolve once it
-drifts from whatever you just installed.
+`<rest-in-peace.version>` default with whatever core's actual version is
+right now - they're two independent projects, so nothing keeps the two in
+sync automatically, and core's version does change over time (each release
+bumps it). Omitting the flag falls back to the hardcoded default, which
+will fail to resolve once it drifts from whatever you just installed.
 
 ### Running the native-image smoke test
 
@@ -77,12 +80,13 @@ of an ordinary JDK 8:
 
 ```sh
 # From the repository root, using a GraalVM JDK:
-mvn install -DskipTests --file core/pom.xml
+mvn install -N
+mvn install -DskipTests -pl core
 
 # Then, from this directory:
 cd samples/compile-time-proxy-consumer
 mvn -Pnative package \
-  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
+  -Drest-in-peace.version=$(grep -A1 -F '<artifactId>rest-in-peace-parent</artifactId>' ../../pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
 ./target/compile-time-proxy-consumer
 ```
 

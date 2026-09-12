@@ -2,23 +2,29 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<!--
-	Reactor aggregator only - no source of its own, never itself released or
-	published, and deliberately not a <parent> of core/pom.xml (core has no
-	<parent> at all - see the comment there for why). This listing under
-	<modules> exists solely so `mvn` at the repo root cascades into core/
-	too; core's own build/version/release cadence is entirely independent
-	of this file.
+	Real parent of core/ and spring-boot-starter/ - both inherit their
+	<version> from here rather than declaring their own, so a single
+	release:prepare run at this root bumps both together and they can never
+	drift out of sync. distributionManagement and the release-plugin config
+	live here for the same reason: one release, one tag, one publish
+	covering both artifacts.
 
-	spring-boot-starter/ and samples/* are deliberately NOT modules here -
-	both are standalone Maven projects that depend on the core artifact as
-	an ordinary external dependency, the same way a real downstream consumer
-	would, rather than resolving it through this reactor. See
-	docs/design/spring-boot-starter.md §3 and
+	This POM itself also gets installed/published alongside them (a
+	pom-packaging project's own "artifact" is just its POM) - anything that
+	resolves core's or the starter's published POM externally (a fresh
+	local install, CI, a real GitHub Packages consumer) needs to resolve
+	this <parent> too, the same as any other real multi-module Maven
+	project's parent POM.
+
+	samples/* are deliberately NOT modules here - both are standalone Maven
+	projects that depend on the published/installed artifacts as an
+	ordinary external dependency, the same way a real downstream consumer
+	would, rather than resolving them through this reactor. See
 	docs/design/compile-time-proxy-generation.md for why that's intentional.
 	-->
 	<groupId>com.shri</groupId>
 	<artifactId>rest-in-peace-parent</artifactId>
-	<version>1-SNAPSHOT</version>
+	<version>1.0.0.36-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>
@@ -26,6 +32,33 @@
 
 	<modules>
 		<module>core</module>
+		<module>spring-boot-starter</module>
 	</modules>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-release-plugin</artifactId>
+				<version>3.3.1</version>
+				<configuration>
+					<tagNameFormat>v@{project.version}</tagNameFormat>
+					<!-- Both modules inherit this project's version rather than
+					     declaring their own, so there's only ever one version to
+					     bump - autoVersionSubmodules skips the per-module prompt
+					     that assumes otherwise. -->
+					<autoVersionSubmodules>true</autoVersionSubmodules>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+	<distributionManagement>
+		<repository>
+			<id>github</id>
+			<name>GitHub Packages</name>
+			<url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
+		</repository>
+	</distributionManagement>
 
 </project>

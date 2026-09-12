@@ -273,6 +273,12 @@ being conflated as one, worth separating up front:
 
 ### 4.1 New standalone project, not a reactor module
 
+> **Superseded (post-chunk-8, see §8.1):** this module is now a reactor
+> sibling of `core/` under a shared parent POM, sharing its version. It
+> still resolves `com.shri:rest-in-peace` as an ordinary Maven dependency
+> though, exactly as described below - only the versioning/release
+> relationship changed, not how the dependency itself is declared.
+
 ```
 REST-in-peace/
 ├── pom.xml                        # unchanged - still packages the core jar
@@ -513,3 +519,25 @@ No release of the starter has happened yet as of chunk 8 landing - this
 section documents the decision and the infrastructure to act on it, not
 an announcement that a release occurred. The starter's version stays
 `0.1.0-SNAPSHOT` until a maintainer explicitly decides to cut `0.1.0`.
+
+### 8.1 Superseded: independent versioning (post-chunk-8)
+
+The independent-versioning decision above was reversed before any release
+of the starter ever happened. `core` and `spring-boot-starter` are now
+sibling Maven modules under a shared parent POM (the repo root's
+`pom.xml`), inheriting one version from it instead of declaring their
+own - so they're always released, tagged, and published together as a
+single version, never independently. `spring-boot-starter-release.yml` and
+`spring-boot-starter-maven-publish.yml` were deleted; `release.yml` and
+`maven-publish.yml` now cover both artifacts (plus the parent POM itself,
+which needs publishing too so downstream consumers can resolve it) in one
+run. The starter's version reset from its independent `0.1.0` line to
+match core's `1.0.0.N` line at the point of the merge.
+
+This leaves §8's "different Java floors, different audiences" reasoning
+moot for versioning purposes (a shared version doesn't force a shared
+Java floor or audience - each module still declares its own
+`maven.compiler.source`/`target`), and removes the manual
+"pin `<rest-in-peace.version>` to a real release before releasing the
+starter" step entirely, since there is no longer a separate starter
+release to prepare for.

@@ -1406,10 +1406,9 @@ it.
 
 ```text
 REST-in-peace/
-├── pom.xml                               # reactor aggregator only - lists core/ as its one module;
-│                                          # never itself released or published (see core/pom.xml)
-├── core/                                 # the actual rest-in-peace artifact - independently
-│   │                                      # versioned/released, own 1.0.0.N cadence
+├── pom.xml                               # parent of core/ and spring-boot-starter/ - both inherit
+│                                          # its version, so a single release bumps them together
+├── core/                                 # the rest-in-peace artifact
 │   ├── pom.xml
 │   ├── src/main/java/com/shri/restinpeace/
 │   │   ├── RIP.java                  # entry point: RIP.getClient(...)
@@ -1444,7 +1443,7 @@ REST-in-peace/
 │       ├── AbstractRipIntegrationTest.java   # shared local-server fixture
 │       └── Rip*IntegrationTest.java          # one class per feature area
 ├── spring-boot-starter/                  # optional Spring Boot 4.x/Java 17 auto-configuration -
-│                                          # standalone project, not a reactor module (see below)
+│                                          # sibling module of core/, same version, own pom.xml
 ├── samples/compile-time-proxy-consumer/  # standalone downstream-consumer sample
 ├── samples/spring-boot-consumer/         # standalone downstream-consumer sample (Spring Boot)
 ├── docs/design/                          # design write-ups (compile-time codegen, ...)
@@ -1453,15 +1452,14 @@ REST-in-peace/
 └── README.md
 ```
 
-`core/` is its own Maven module so its build/release/versioning is fully
-self-contained, but `spring-boot-starter/` and `samples/*` are deliberately
-**not** reactor modules — both resolve the core artifact as an ordinary
-external Maven dependency, the same way a real downstream consumer would,
-rather than through reactor resolution. See
-[`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md)
-and
+`core/` and `spring-boot-starter/` are sibling Maven modules under the root
+`pom.xml` - both inherit their version from it, so they're always released
+and published together as one version, never independently. `samples/*`
+are deliberately **not** modules — each resolves the artifacts it needs as
+an ordinary external Maven dependency, the same way a real downstream
+consumer would, rather than through reactor resolution. See
 [`docs/design/compile-time-proxy-generation.md`](docs/design/compile-time-proxy-generation.md)
-for why that's intentional.
+for why that's intentional for samples specifically.
 
 Every `annotation/*` subpackage is an `@interface` your code references
 directly; everything under `internal/` is package-private and never part of
@@ -1477,17 +1475,24 @@ cd REST-in-peace
 mvn clean test
 ```
 
-The repo root `pom.xml` is a reactor aggregator over `core/` (the actual
-`rest-in-peace` artifact) — running Maven from the root cascades into
-`core/` automatically, so the command above is all you need day to day.
-
-If your local JDK is newer than 8 (likely), also run this before pushing —
-CI enforces it, and it's the only way to actually catch a post-8 API
-slipping in (a plain `mvn test` silently compiles against your local JDK's
-own class library):
+`mvn` at the repo root cascades into every module — `core/` and
+`spring-boot-starter/` — so the command above builds and tests both. To
+work on just one, scope with `-pl` (`-am` also builds any reactor modules
+it depends on):
 
 ```bash
-mvn -Dmaven.compiler.release=8 clean test
+mvn test -pl core                    # core only
+mvn test -pl spring-boot-starter -am # the starter, and core since it depends on it
+```
+
+If your local JDK is newer than 8 (likely), also run this before pushing —
+CI enforces it for `core` specifically, and it's the only way to actually
+catch a post-8 API slipping in (a plain `mvn test` silently compiles
+against your local JDK's own class library). This only applies to `core` —
+`spring-boot-starter` targets Java 17:
+
+```bash
+mvn -Dmaven.compiler.release=8 clean test -pl core
 ```
 
 To check the generated API docs build cleanly (zero warnings is the bar CI
@@ -1510,11 +1515,16 @@ mvn javadoc:javadoc --file core/pom.xml
 
 ### Running the sample consumer locally
 
+core's published POM references the shared parent POM (`pom.xml`), so
+install that too (`-N`, non-recursive: just that one POM) before core
+itself:
+
 ```bash
-mvn install -DskipTests --file core/pom.xml   # install this library's current commit locally
+mvn install -N                                # install the parent POM locally
+mvn install -DskipTests -pl core              # install this library's current commit locally
 cd samples/compile-time-proxy-consumer
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-    -Drest-in-peace.version="$(grep -A1 -F '<artifactId>rest-in-peace</artifactId>' ../../core/pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')"
+    -Drest-in-peace.version="$(grep -A1 -F '<artifactId>rest-in-peace-parent</artifactId>' ../../pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')"
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 
@@ -1542,7 +1552,10 @@ Versions follow `1.0.0.N` — an auto-incrementing build counter via
 `maven-release-plugin`, not semantic versioning; check
 [`CHANGELOG.md`](CHANGELOG.md) for what actually changed in a given release,
 and look for a `**Breaking:**` note called out explicitly when a release
-does contain a breaking change. Every release is tagged, published to
+does contain a breaking change. `rest-in-peace` and
+`rest-in-peace-spring-boot-starter` share one version — both inherit it from
+their common parent POM, so a single release bumps them together and they
+can never drift out of sync. Every release is tagged, published to
 [GitHub Packages](https://github.com/shrinivas93/REST-in-peace/packages),
 and listed on the [Releases page](https://github.com/shrinivas93/REST-in-peace/releases)
 with auto-generated notes linking back to the merged PRs it contains.
