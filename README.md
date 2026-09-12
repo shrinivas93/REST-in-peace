@@ -1278,9 +1278,10 @@ whatever container your app already uses.
 For **Spring Boot 4.x on Java 17+**, the optional
 `rest-in-peace-spring-boot-starter` module (see
 [`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md)
-for the full design) auto-registers every `@RestClient` interface on the
-classpath as a Spring bean, removing the one-`@Bean`-per-interface
-boilerplate entirely:
+for the full design; [Javadoc](https://shrinivas93.github.io/REST-in-peace/spring-boot-starter/apidocs/)
+hosted separately from core's) auto-registers every `@RestClient`
+interface on the classpath as a Spring bean, removing the
+one-`@Bean`-per-interface boilerplate entirely:
 
 ```java
 @RestClient(baseUrlProperty = "user-api.base-url")

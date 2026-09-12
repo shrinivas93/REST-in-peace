@@ -1,6 +1,9 @@
 # Design: Spring Boot starter module
 
-Status: **all 8 chunks landed - functionally complete, not yet released**.
+Status: **all 8 chunks landed, released as of `v1.0.0.35`** (see §8.1 -
+versioning changed from the independent scheme §8 originally describes to
+a shared version with core, before any release under the old scheme ever
+happened).
 Chunk 1 (this doc), then chunk 2
 (standalone project scaffolding, targeting **Spring Boot 4.x** rather than
 3.x - 3.x reached its own open-source end of life shortly after this doc's
