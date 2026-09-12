@@ -21,5 +21,8 @@ jobs:
           java-version: '8'
           distribution: 'temurin'
           cache: maven
+      # Scoped to core specifically: the reactor also includes
+      # spring-boot-starter, which targets Java 17 and won't build under
+      # this job's JDK 8.
       - name: Run tests
-        run: mvn -B test --file pom.xml
+        run: mvn -B test -pl core

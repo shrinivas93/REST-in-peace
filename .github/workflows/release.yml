@@ -23,10 +23,14 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Set up JDK 8
+      # spring-boot-starter targets Java 17 and is now part of this reactor
+      # (release:prepare's default preparationGoals build+test everything),
+      # so this needs a JDK new enough for it - which also compiles core's
+      # own -source/-target 8 code without issue.
+      - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
-          java-version: '8'
+          java-version: '17'
           distribution: 'temurin'
           cache: maven
 
@@ -35,6 +39,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Run from the repo root, covering the whole reactor: core and
+      # spring-boot-starter share one version via their common parent
+      # (pom.xml), so autoVersionSubmodules (configured there) bumps both
+      # together in one release:prepare run - no per-module release process
+      # anymore.
       - name: Prepare release
         env:
           RELEASE_VERSION: ${{ github.event.inputs.releaseVersion }}
@@ -79,3 +88,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
         run: gh workflow run javadoc.yml --ref master -f ref="$RELEASE_TAG"
+
+      # "Prepare release" above pushed two new commits directly to master
+      # (the version bump + tag, then the next-dev-snapshot bump) - nothing
+      # else ever brings those back down to develop, which is exactly how
+      # the two branches drift apart, release after release, with nobody
+      # noticing until it's a large, awkward merge. Merge master back into
+      # develop immediately, in this same run, so they can never diverge
+      # this way again. A real conflict here (extremely unlikely for a pure
+      # version-bump commit) fails this step loudly for a maintainer to
+      # resolve by hand - never auto-resolved or force-pushed.
+      - name: Sync master back into develop
+        run: |
+          git fetch origin develop
+          git checkout -B develop origin/develop
+          git merge origin/master --no-edit
+          git push origin develop

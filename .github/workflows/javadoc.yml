@@ -43,13 +43,16 @@ jobs:
           java-version: '8'
           distribution: temurin
           cache: maven
+      # core/ is the actual rest-in-peace artifact - the repo root pom.xml
+      # is just a reactor aggregator with no javadoc plugin config of its
+      # own.
       - name: Generate Javadoc
-        run: mvn -B javadoc:javadoc
+        run: mvn -B javadoc:javadoc --file core/pom.xml
       - name: Assemble site
         run: |
           mkdir -p target/site
           cp docs/getting-started.html target/site/index.html
-          cp -r target/reports/apidocs target/site/apidocs
+          cp -r core/target/reports/apidocs target/site/apidocs
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site

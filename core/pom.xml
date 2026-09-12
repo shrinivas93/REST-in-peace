@@ -1,0 +1,105 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<!-- Inherits <version>/distributionManagement/release-plugin config from
+	     the parent so this artifact and rest-in-peace-spring-boot-starter's
+	     (its sibling module) always share one version, bumped together by a
+	     single release:prepare run at the root - see pom.xml's own comment. -->
+	<parent>
+		<groupId>com.shri</groupId>
+		<artifactId>rest-in-peace-parent</artifactId>
+		<version>1.0.0.35-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
+	<artifactId>rest-in-peace</artifactId>
+	<packaging>jar</packaging>
+
+	<name>rest-in-peace</name>
+	<url>http://maven.apache.org</url>
+
+	<scm>
+		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
+		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
+		<url>https://github.com/shrinivas93/REST-in-peace</url>
+		<tag>HEAD</tag>
+	</scm>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<maven.compiler.source>1.8</maven.compiler.source>
+		<maven.compiler.target>1.8</maven.compiler.target>
+		<unirest.version>3.14.5</unirest.version>
+		<junit.version>5.14.4</junit.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.konghq</groupId>
+			<artifactId>unirest-java</artifactId>
+			<version>${unirest.version}</version>
+		</dependency>
+		<dependency>
+			<!-- provided, not test: MockRestServerExtension (main source) implements
+			     JUnit 5 extension interfaces, so this needs to be on the main
+			     compile classpath too, not just test. provided is still
+			     non-transitive - consumers who never reference that class see no
+			     dependency change; using it just requires junit-jupiter-api on
+			     their own test classpath, which a JUnit 5 project already has. -->
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${junit.version}</version>
+			<scope>provided</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.13.0</version>
+				<executions>
+					<!-- Annotation processing is disabled for this module's own main-source
+					     compile only: RestClientProcessor is compiled here as ordinary source,
+					     and can't discover itself via SPI within the same javac invocation
+					     that's still compiling it. test-compile (a later, separate invocation)
+					     has this module's already-built main classes - including the
+					     compiled processor - on its classpath, so it runs the processor
+					     normally against test sources (see GeneratedApiTest). A downstream
+					     consumer depending on the published jar hits neither constraint,
+					     since our processor is already-built bytecode on their classpath
+					     from the start of their own, entirely separate build. -->
+					<execution>
+						<id>default-compile</id>
+						<configuration>
+							<proc>none</proc>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>3.5.6</version>
+			</plugin>
+			<!-- maven-release-plugin's config (tagNameFormat, autoVersionSubmodules)
+			     lives only on the parent now - release:prepare runs from the repo
+			     root and covers this module and spring-boot-starter together. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.12.0</version>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>
