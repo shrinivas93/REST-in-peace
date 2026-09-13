@@ -11,13 +11,15 @@ import kong.unirest.ObjectMapper;
 /**
  * Per-client settings for {@link RIP#getClient(Class, RipClientConfig)} -
  * base URL, connect/read timeout, proxy, JSON {@code ObjectMapper}, cache,
- * and interceptors - for a {@code @RestClient} whose environment differs
- * from every other client's,
+ * interceptors, and a default retry policy - for a {@code @RestClient}
+ * whose environment differs from every other client's,
  * since {@code kong.unirest.Unirest}'s own global config is shared by every
  * RIP client that doesn't ask for its own. A method's {@link
  * com.shri.restinpeace.annotation.timeout.Timeout @Timeout} overrides this
  * config's timeout when both are present, the same way an absolute method
- * URL overrides {@link #getBaseUrl()}.
+ * URL overrides {@link #getBaseUrl()}; a method's (or its interface's)
+ * {@link com.shri.restinpeace.annotation.retry.Retry @Retry} wins over this
+ * config's {@link #getRetry()} the same way.
  *
  * <pre>
  * UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
@@ -45,6 +47,7 @@ public final class RipClientConfig {
 	private final ObjectMapper objectMapper;
 	private final Cache cache;
 	private final List<RequestInterceptor> interceptors;
+	private final RetryConfig retry;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -57,6 +60,7 @@ public final class RipClientConfig {
 		this.objectMapper = builder.objectMapper;
 		this.cache = builder.cache;
 		this.interceptors = builder.interceptors;
+		this.retry = builder.retry;
 	}
 
 	/**
@@ -168,6 +172,17 @@ public final class RipClientConfig {
 		return interceptors;
 	}
 
+	/**
+	 * Returns this client's default retry policy.
+	 *
+	 * @return this client's default retry policy, applied to a call whose
+	 *         method (and interface) has no {@code @Retry} of its own, or
+	 *         {@code null} for no retrying at all in that case
+	 */
+	public RetryConfig getRetry() {
+		return retry;
+	}
+
 	/** Builds a {@link RipClientConfig}. */
 	public static final class Builder {
 
@@ -181,6 +196,7 @@ public final class RipClientConfig {
 		private ObjectMapper objectMapper;
 		private Cache cache;
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
+		private RetryConfig retry;
 
 		private Builder() {
 		}
@@ -297,6 +313,20 @@ public final class RipClientConfig {
 		 */
 		public Builder interceptors(List<RequestInterceptor> interceptors) {
 			this.interceptors = interceptors == null ? Collections.emptyList() : interceptors;
+			return this;
+		}
+
+		/**
+		 * Sets this client's default retry policy - applied to a call whose
+		 * method (and interface) has no {@code @Retry} of its own, which
+		 * always wins over this when present. See {@link RetryConfig}.
+		 *
+		 * @param retry this client's default retry policy, or {@code null}
+		 *              for no retrying at all in that case
+		 * @return this builder
+		 */
+		public Builder retry(RetryConfig retry) {
+			this.retry = retry;
 			return this;
 		}
 

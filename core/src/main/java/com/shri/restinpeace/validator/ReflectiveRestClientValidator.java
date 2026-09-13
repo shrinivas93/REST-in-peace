@@ -180,6 +180,9 @@ public class ReflectiveRestClientValidator {
 	private static void validateTimeout(Method method, ValidationResult validationResult) {
 		Timeout timeout = method.getAnnotation(Timeout.class);
 		if (timeout == null) {
+			timeout = method.getDeclaringClass().getAnnotation(Timeout.class);
+		}
+		if (timeout == null) {
 			return;
 		}
 		if (timeout.connectMillis() < -1) {
@@ -329,6 +332,9 @@ public class ReflectiveRestClientValidator {
 
 	private static void validateRetry(Method method, ValidationResult validationResult) {
 		Retry retry = method.getAnnotation(Retry.class);
+		if (retry == null) {
+			retry = method.getDeclaringClass().getAnnotation(Retry.class);
+		}
 		if (retry == null) {
 			return;
 		}

@@ -28,6 +28,7 @@ class RipClientConfigTest {
 		assertNull(config.getObjectMapper());
 		assertNull(config.getCache());
 		assertTrue(config.getInterceptors().isEmpty());
+		assertNull(config.getRetry());
 	}
 
 	@Test
@@ -36,9 +37,10 @@ class RipClientConfigTest {
 		InMemoryCache cache = new InMemoryCache();
 		RequestInterceptor interceptor = new RequestInterceptor() {
 		};
+		RetryConfig retry = RetryConfig.builder().times(5).build();
 		RipClientConfig config = RipClientConfig.builder().baseUrl("https://api.example.com").connectTimeoutMillis(1_000)
 				.readTimeoutMillis(5_000).proxy("proxy.example.com", 8080, "user", "pass").objectMapper(objectMapper)
-				.cache(cache).interceptors(Collections.singletonList(interceptor)).build();
+				.cache(cache).interceptors(Collections.singletonList(interceptor)).retry(retry).build();
 
 		assertEquals("https://api.example.com", config.getBaseUrl());
 		assertEquals(1_000, config.getConnectTimeoutMillis());
@@ -50,6 +52,7 @@ class RipClientConfigTest {
 		assertEquals(objectMapper, config.getObjectMapper());
 		assertEquals(cache, config.getCache());
 		assertEquals(Collections.singletonList(interceptor), config.getInterceptors());
+		assertEquals(retry, config.getRetry());
 	}
 
 	@Test

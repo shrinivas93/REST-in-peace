@@ -237,16 +237,31 @@ public class RestClientProcessor extends AbstractProcessor {
 				errorTypeClassName, isMultipart, isFormUrlEncoded, isNoCache);
 	}
 
+	/**
+	 * The method's own {@code @Timeout} if present, otherwise its declaring
+	 * interface's - mirroring {@code @Timeout}'s own documented
+	 * interface-level-default shape (see {@code @BaseUrl}'s, the pattern
+	 * this generalizes) so a generated implementation honors an
+	 * interface-level {@code @Timeout} exactly like the reflective proxy
+	 * does (see {@code RequestExecutor.applyTimeout}).
+	 */
 	private TimeoutModel timeoutModelOf(ExecutableElement methodElement) {
 		Timeout timeout = methodElement.getAnnotation(Timeout.class);
+		if (timeout == null) {
+			timeout = methodElement.getEnclosingElement().getAnnotation(Timeout.class);
+		}
 		if (timeout == null) {
 			return new TimeoutModel(-1, -1);
 		}
 		return new TimeoutModel(timeout.connectMillis(), timeout.readMillis());
 	}
 
+	/** The method's own {@code @Retry} if present, otherwise its declaring interface's - see {@link #timeoutModelOf}. */
 	private RetryModel retryModelOf(ExecutableElement methodElement) {
 		Retry retry = methodElement.getAnnotation(Retry.class);
+		if (retry == null) {
+			retry = methodElement.getEnclosingElement().getAnnotation(Retry.class);
+		}
 		if (retry == null) {
 			return new RetryModel(false, 0, 0L, 1.0, 0.0, new int[0], false);
 		}
@@ -741,7 +756,7 @@ public class RestClientProcessor extends AbstractProcessor {
 			return;
 		case BODY:
 			out.append("\t\t__ripRequest = this.ripProcessor.applyGeneratedBodyIfPresent(__ripRequest, ")
-					.append(param.javaParamName).append(");\n");
+					.append(param.javaParamName).append(", __ripContext);\n");
 			return;
 		case PART:
 			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)

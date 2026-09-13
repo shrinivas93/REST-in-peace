@@ -16,6 +16,7 @@ public final class CachedResponse {
 	private final String body;
 	private final long freshUntilEpochMillis;
 	private final Map<String, String> varyRequestHeaders;
+	private final long storedAtEpochMillis;
 
 	/**
 	 * Creates a cached entry with no {@code Vary} header - equivalent to
@@ -63,6 +64,7 @@ public final class CachedResponse {
 		this.body = body;
 		this.freshUntilEpochMillis = freshUntilEpochMillis;
 		this.varyRequestHeaders = varyRequestHeaders;
+		this.storedAtEpochMillis = System.currentTimeMillis();
 	}
 
 	/**
@@ -131,6 +133,25 @@ public final class CachedResponse {
 	 */
 	public Map<String, String> getVaryRequestHeaders() {
 		return varyRequestHeaders;
+	}
+
+	/**
+	 * Returns when this entry was constructed - at initial storage, or the
+	 * moment a stale entry was last successfully revalidated (a fresh
+	 * {@link CachedResponse} instance is created either way; this class is
+	 * immutable). A distinct notion of time from {@link #getFreshUntilEpochMillis()}:
+	 * this is "how long has RIP been holding onto this at all" (what a
+	 * {@link Cache} implementation wanting to bound its own memory use, like
+	 * {@link InMemoryCache}'s optional max-entry-age, would check), not "is
+	 * it still safe to serve without asking the server" - an entry stored
+	 * for revalidation only (e.g. {@code Cache-Control: no-cache}) is stale
+	 * from the moment it's stored, by design, but its stored time still
+	 * starts counting fresh here.
+	 *
+	 * @return the epoch millisecond this entry was created
+	 */
+	public long getStoredAtEpochMillis() {
+		return storedAtEpochMillis;
 	}
 
 }

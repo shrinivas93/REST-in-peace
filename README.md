@@ -72,11 +72,13 @@ test server for unit tests.
 - [Async](#async)
 - [Retries](#retries)
   - [Idempotency keys](#idempotency-keys)
+  - [Interface-level and client-wide defaults](#interface-level-and-client-wide-defaults)
 - [Timeouts](#timeouts)
 - [Per-client configuration: timeout and proxy](#per-client-configuration-timeout-and-proxy)
   - [JSON `ObjectMapper`](#json-objectmapper)
 - [Response caching](#response-caching)
   - [`@NoCache`](#nocache)
+  - [Time-based and manual eviction](#time-based-and-manual-eviction)
 - [Interceptors](#interceptors)
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
@@ -180,18 +182,25 @@ for what actually happens under `getUser(...)`.
   `Idempotency-Key` header held identical across every attempt, so a
   server that honors idempotency keys (Stripe, PayPal, Adyen, Square) can
   treat a retried `POST`/`PATCH` as the same logical request instead of
-  executing it twice
+  executing it twice. `@Retry`/`@Timeout` can also be declared once on the
+  `@RestClient` interface as a default every method without its own falls
+  back to, same as `@BaseUrl`; a `RetryConfig` on `RipClientConfig` sets a
+  client-wide default below that
 - `@Timeout` overrides the connect/read timeout for one method;
   `RipClientConfig` overrides base URL, timeout, proxy, cache, JSON
-  `ObjectMapper`, and interceptors for one client (e.g. one per deployment
-  environment). `RIP.setObjectMapper(...)` sets a custom mapper (Jackson, a
-  configured Gson, ...) for the shared client
+  `ObjectMapper`, retry policy, and interceptors for one client (e.g. one
+  per deployment environment). `RIP.setObjectMapper(...)` sets a custom
+  mapper (Jackson, a configured Gson, ...) for the shared client
 - Response caching honors the server's own `Cache-Control`/`ETag`/
   `Last-Modified` headers for `GET` requests — a fresh entry is served with
   zero network call, a stale revalidatable one sends
   `If-None-Match`/`If-Modified-Since` automatically. `Vary`-aware, with
   `@NoCache` to opt a single method out even when its client has a cache
-  configured
+  configured. `InMemoryCache` also supports a max-age constructor for
+  time-based eviction regardless of server freshness, plus manual eviction
+  of one entry via the public `Cache.key(...)` formula
+- `RestInPeaceHttpException.isClientError()`/`isServerError()`/`is(int)`
+  for branching on a status range in a `catch` block
 - Global interceptors for cross-cutting concerns (auth headers, logging,
   metrics) without touching individual `@RestClient` interfaces;
   `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
@@ -864,6 +873,21 @@ a timeout) throws the underlying transport exception directly, not
 `RestInPeaceHttpException`, which specifically means "the server answered,
 and the answer was an error."
 
+`isClientError()` (400–499), `isServerError()` (500–599), and `is(int
+status)` are small convenience checks on the exception itself, for when a
+`catch` block only needs to branch on the status range rather than compare
+`getStatus()` to specific numbers:
+
+```java
+catch (RestInPeaceHttpException e) {
+    if (e.isServerError()) {
+        scheduleRetryLater();
+    } else if (e.isClientError()) {
+        throw new IllegalArgumentException("Bad request: " + e.getRawBody());
+    }
+}
+```
+
 ## Async
 
 Return `CompletableFuture<T>` instead of `T` to fire the request without
@@ -968,6 +992,40 @@ attempt as the same logical request instead of a new one. Default `false` —
 harmless (but redundant) to set on `GET`/`PUT`/`DELETE`, most meaningful on
 `POST`/`PATCH`.
 
+### Interface-level and client-wide defaults
+
+Put `@Retry` on the `@RestClient` interface itself instead of repeating it
+on every method — a method with its own `@Retry` uses that one *in full*
+instead (the two are never merged field-by-field), same as `@BaseUrl`:
+
+```java
+@RestClient
+@Retry(times = 3, delayMillis = 200, retryOnStatus = { 503 })
+public interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);   // uses the interface's @Retry
+
+    @GET("/users/{id}/avatar")
+    @Retry(times = 1)
+    byte[] getAvatar(@PathParam("id") String id);   // its own @Retry wins instead
+}
+```
+
+For a default that applies across every interface a given client talks to,
+pass a `RetryConfig` on `RipClientConfig` instead — this is the lowest
+priority of the three: a method's own `@Retry` wins over the interface's,
+which wins over the client's `RetryConfig`:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retry(RetryConfig.builder().times(3).delayMillis(200).retryOnStatus(503).build())
+        .build());
+```
+
+`RetryConfig.builder()` exposes the same fields as `@Retry`
+(`times`/`delayMillis`/`backoffMultiplier`/`jitterFactor`/`retryOnStatus`/
+`idempotent`), with the same defaults and validation.
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for
@@ -983,10 +1041,15 @@ String exportReport();
 
 `connectMillis` and `readMillis` are independent — set one, both, or
 neither — and both default to `-1`, meaning "leave this one at whatever it
-would otherwise be." `@Timeout` takes priority over a
+would otherwise be." `@Timeout` can also be declared on the `@RestClient`
+interface itself as a default every method without its own `@Timeout` falls
+back to, the same interface-level pattern `@Retry` supports above — a
+method's own `@Timeout` is still used in full instead of the interface's.
+Precedence overall: a method's own `@Timeout`, then the interface's
+`@Timeout`, then a
 [`RipClientConfig`](#per-client-configuration-timeout-and-proxy)'s timeout,
-which in turn takes priority over the shared client's own configured
-default. A negative value other than `-1` fails validation.
+then the shared client's own configured default. A negative value other
+than `-1` fails validation.
 
 ## Per-client configuration: timeout and proxy
 
@@ -1105,6 +1168,37 @@ Price getLivePrice(@PathParam("symbol") String symbol);
 Response caching is scoped to `String`/POJO `GET` responses for now — not
 `byte[]`/`File` downloads.
 
+### Time-based and manual eviction
+
+Everything above is about *freshness* — whether a cached entry is safe to
+serve without asking the server again. Separately, `InMemoryCache` can also
+cap how long it holds on to an entry at all, regardless of freshness, via an
+optional max-age constructor argument:
+
+```java
+RIP.setCache(new InMemoryCache(TimeUnit.MINUTES.toMillis(10)));   // evict anything older than 10 minutes
+```
+
+An entry older than that is dropped the next time it's looked up (no
+background thread) — the default no-arg `InMemoryCache()` never ages
+entries out this way, relying solely on `Cache-Control`/`ETag` freshness.
+
+To evict a specific entry on demand — after a write your code knows should
+invalidate a particular cached `GET`, for instance — compute the same key
+`CacheCoordinator` uses internally with the public `Cache.key(...)` helper
+and pass it to `evict(...)`:
+
+```java
+cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42"));
+```
+
+The key is `"<HTTP method> <full URL, including any query string>"` — RIP
+deliberately does *not* auto-invalidate cached `GET`s when a `POST`/`PUT`/
+`DELETE` call is made to a related-looking URL, since guessing which cached
+entries a given write should invalidate is a heuristic that's wrong in
+either direction (URLs that look related but aren't, and unrelated-looking
+URLs that actually are). `cache.clear()` drops every entry unconditionally.
+
 ## Interceptors
 
 Register a global hook that runs on every request/response made through
@@ -1128,7 +1222,14 @@ Both methods are observers: `beforeRequest` can add headers or abort the
 call by throwing, and `afterResponse` sees the status and response body (a
 `String`, a deserialized object, or `null` for `void` methods) once the
 response is back — but neither can cause a request to be re-sent on its
-own; see [`@Retry`](#retries) above for that. On an error response,
+own; see [`@Retry`](#retries) above for that. `beforeRequest` can also
+inspect the outgoing request body via `context.getBody()` — the raw string
+for a `@Body String` method, or the JSON it'll be serialized to for a POJO
+`@Body`; `null` for a method with no `@Body` at all (a `@FormUrlEncoded`/
+`@Multipart` body isn't captured this way). It's read-only in effect —
+calling `context.setBody(...)` from an interceptor doesn't change what's
+actually sent, since the request is already built by the time interceptors
+run. On an error response,
 `afterResponse` still runs and sees the same body a catch block would get
 from [`RestInPeaceHttpException.getErrorBody()`](#error-handling) - the raw
 body, or the `@ErrorType`-deserialized one if the method declares it - the

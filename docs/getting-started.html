@@ -233,6 +233,7 @@
 
         <div class="group-title">Caching</div>
         <a href="#caching">Response caching</a>
+        <a href="#cache-eviction">Time-based &amp; manual eviction</a>
 
         <div class="group-title">Interceptors</div>
         <a href="#interceptors-global">Global &amp; per-client</a>
@@ -664,6 +665,13 @@ catch (RestInPeaceHttpException e) {
     System.out.println(error.code);
 }</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · status-range helpers</span></div>
+            <pre><code class="language-java">catch (RestInPeaceHttpException e) {
+    if (e.isServerError()) { scheduleRetryLater(); }        // 500-599
+    else if (e.isClientError()) { throw new IllegalArgumentException(); }  // 400-499
+}</code></pre>
+          </div>
         </div>
       </div>
 
@@ -694,18 +702,44 @@ User getUser(@PathParam("id") String id);</code></pre>
 @Retry(times = 3, delayMillis = 200, idempotent = true)
 String createCharge(@Body Charge charge);</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · interface-level default</span>
+              <span class="snippet-caption">like @BaseUrl — a method's own @Retry still wins over this</span></div>
+            <pre><code class="language-java">@RestClient
+@Retry(times = 3, delayMillis = 200, retryOnStatus = { 503 })
+public interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);   // uses the interface's @Retry
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · client-wide default</span>
+              <span class="snippet-caption">lowest priority: method @Retry &gt; interface @Retry &gt; RetryConfig</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retry(RetryConfig.builder().times(3).delayMillis(200).retryOnStatus(503).build())
+        .build());</code></pre>
+          </div>
         </div>
       </div>
 
       <div class="feature" id="timeout">
         <h3>@Timeout</h3>
-        <p class="blurb">Overrides connect/read timeout for one method only. Priority: <code>@Timeout</code> &gt; <code>RipClientConfig</code> &gt; shared client default.</p>
+        <p class="blurb">Overrides connect/read timeout for one method only. Priority: method <code>@Timeout</code> &gt; interface-level <code>@Timeout</code> &gt; <code>RipClientConfig</code> &gt; shared client default.</p>
         <div class="snippets">
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
             <pre><code class="language-java">@GET("https://api.example.com/reports/export")
 @Timeout(readMillis = 120_000)
 String exportReport();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · interface-level default</span></div>
+            <pre><code class="language-java">@RestClient
+@Timeout(readMillis = 50)
+public interface SlowApi {
+    @GET("/slow/{id}")
+    String getSlow(@PathParam("id") String id);   // uses the interface's @Timeout
+}</code></pre>
           </div>
         </div>
       </div>
@@ -811,6 +845,23 @@ Cache userApiCache() { return new InMemoryCache(); }</code></pre>
           </div>
         </div>
       </div>
+
+      <div class="feature" id="cache-eviction">
+        <h3>Time-based &amp; manual eviction</h3>
+        <p class="blurb">Separate from server-driven freshness: how long an entry is held at all, and forcing one out on demand.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · max-age eviction</span>
+              <span class="snippet-caption">checked lazily on the next get() for that key, no background thread</span></div>
+            <pre><code class="language-java">RIP.setCache(new InMemoryCache(TimeUnit.MINUTES.toMillis(10)));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · manual eviction</span>
+              <span class="snippet-caption">Cache.key(...) computes the same key CacheCoordinator uses internally</span></div>
+            <pre><code class="language-java">cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42"));</code></pre>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ INTERCEPTORS ============ -->
@@ -833,6 +884,13 @@ Cache userApiCache() { return new InMemoryCache(); }</code></pre>
 });
 
 RIP.clearInterceptors();   // removes everything registered</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · inspect the outgoing body</span>
+              <span class="snippet-caption">raw string for @Body String, serialized JSON for a POJO @Body; null if no @Body</span></div>
+            <pre><code class="language-java">public void beforeRequest(RequestContext ctx) {
+    String body = ctx.getBody();   // read-only — setting it here has no effect
+}</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · scoped to one client</span></div>

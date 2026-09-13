@@ -195,4 +195,33 @@ class ResponseCachingTest {
 		assertEquals(1, server.requestCount());
 	}
 
+	@Test
+	void differentQueryStrings_onTheSamePath_areNeverConflated() {
+		server.on(HTTPMethod.GET, "/search", MockResponse.ok("{\"page\":1}").header("Cache-Control", "max-age=60"));
+
+		String page1First = api.search("1");
+		String page2 = api.search("2");
+		String page1Second = api.search("1");
+
+		assertEquals("{\"page\":1}", page1First);
+		assertEquals("{\"page\":1}", page2);
+		assertEquals("{\"page\":1}", page1Second);
+		// 1 real request for page=1, 1 for page=2 (a different cache key), and the
+		// second page=1 call is a cache hit - 2 total, not 1 (which is what a cache
+		// key blind to the query string would produce, wrongly serving page=2's
+		// call - or any call at all after the first - out of page=1's own entry).
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void manualEviction_viaThePubliclyComputableKey_forcesTheNextCallBackToTheNetwork() {
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=60"));
+
+		api.getItem("42");
+		cache.evict(com.shri.restinpeace.cache.Cache.key(HTTPMethod.GET, server.baseUrl() + "/items/42"));
+		api.getItem("42");
+
+		assertEquals(2, server.requestCount());
+	}
+
 }

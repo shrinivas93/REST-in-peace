@@ -8,6 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `InMemoryCache(long maxEntryAgeMillis)` evicts an entry once it's older
+  than that, independent of server-driven `Cache-Control`/`ETag` freshness -
+  checked lazily on the next `get()` for that key, no background thread.
+  The existing no-arg `InMemoryCache()` is unaffected (no age-based eviction).
+- `Cache.key(HTTPMethod, String url)` exposes the exact formula
+  `CacheCoordinator` uses internally, so application code can compute a
+  cache key and call the already-public `Cache.evict(key)` to manually
+  invalidate one entry (e.g. right after a write that makes a specific
+  cached `GET` stale) - RIP deliberately does not auto-invalidate cached
+  `GET`s on a write to a related-looking URL; see the
+  [Response caching](README.md#time-based-and-manual-eviction) docs for why.
+- `RetryConfig` + `RipClientConfig.Builder.retry(RetryConfig)` set a
+  client-wide default retry policy for every method with no `@Retry` of its
+  own, below a method's own `@Retry` and an interface-level `@Retry` in
+  precedence.
+- `@Retry`/`@Timeout` can now be declared on the `@RestClient` interface
+  itself (`@Target` now includes `TYPE`) as a default every method without
+  its own annotation falls back to, mirroring `@BaseUrl`'s existing
+  interface-level-default pattern. A method's own `@Retry`/`@Timeout` is
+  still used in full instead of the interface's - the two are never merged
+  field-by-field.
+- `RequestContext.getBody()` exposes the outgoing request body to
+  `beforeRequest` - the raw string for a `@Body String` method, the
+  serialized JSON for a POJO `@Body`, `null` for a method with no `@Body`
+  (a `@FormUrlEncoded`/`@Multipart` body isn't captured this way).
+- `RestInPeaceHttpException.isClientError()`/`isServerError()`/`is(int)`
+  convenience checks for branching on a status range in a `catch` block.
 - `@Retry` honors a failed response's own `Retry-After` header (delta-seconds
   or an HTTP-date) for that attempt's wait instead of the computed
   `delayMillis`/`backoffMultiplier` one, and gained `jitterFactor` (default
@@ -25,6 +52,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Response caching's key now includes the request's query string -
+  previously it was computed from the pre-`@QueryParam`/`@QueryMap` URL, so
+  e.g. `GET /items?page=1` and `GET /items?page=2` collided on the same
+  cache entry and the second call wrongly got back the first page's cached
+  body.
 - `@HeaderMap`'s value now repeats once per element for a `Collection`
   value, matching `@QueryParam`/`@QueryMap`/`@Field`/`@FieldMap`'s existing
   behavior - previously it sent one header with a single mangled

@@ -32,7 +32,6 @@ import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.QueryMap;
 import com.shri.restinpeace.annotation.request.QueryParam;
-import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 import com.shri.restinpeace.cache.Cache;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -132,7 +131,7 @@ public class RequestExecutor {
 		this.urlResolver = new UrlResolver(baseUrlOverride);
 		this.responseDecoder = new ResponseDecoder(unirestInstance);
 		this.interceptorDispatcher = new InterceptorDispatcher(config.getInterceptors(), responseDecoder);
-		this.retryExecutor = new RetryExecutor(interceptorDispatcher);
+		this.retryExecutor = new RetryExecutor(interceptorDispatcher, config.getRetry());
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
@@ -261,7 +260,7 @@ public class RequestExecutor {
 		applyTimeout(request, method);
 		applyFixedHeaders(request, method);
 		applyIdempotencyKeyIfNeeded(request, method);
-		request = applyParams(request, method, args);
+		request = applyParams(request, method, args, context);
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		applyDownloadMonitor(request, resolveDownloadProgressListener(method, args));
 
@@ -416,14 +415,17 @@ public class RequestExecutor {
 	 *
 	 * @param request the request to apply the body to
 	 * @param value   the {@code @Body} parameter's argument value, or {@code null}
+	 * @param context this call's context - the body, once known, is stashed
+	 *                on it via {@link RequestContext#setBody} for an
+	 *                interceptor to read
 	 * @return {@code request}, with the body applied if {@code value} was non-{@code null}
 	 */
-	public HttpRequest<?> applyGeneratedBodyIfPresent(HttpRequest<?> request, Object value) {
+	public HttpRequest<?> applyGeneratedBodyIfPresent(HttpRequest<?> request, Object value, RequestContext context) {
 		if (value == null) {
 			return request;
 		}
 		return applyBody(request, value,
-				"A @Body request was attempted on an HTTP method that does not support a request body.");
+				"A @Body request was attempted on an HTTP method that does not support a request body.", context);
 	}
 
 	/**
@@ -864,6 +866,9 @@ public class RequestExecutor {
 	private void applyTimeout(HttpRequest<?> request, Method method) {
 		Timeout timeout = method.getAnnotation(Timeout.class);
 		if (timeout == null) {
+			timeout = method.getDeclaringClass().getAnnotation(Timeout.class);
+		}
+		if (timeout == null) {
 			return;
 		}
 		applyTimeout(request, timeout.connectMillis(), timeout.readMillis());
@@ -902,8 +907,7 @@ public class RequestExecutor {
 	}
 
 	private void applyIdempotencyKeyIfNeeded(HttpRequest<?> request, Method method) {
-		Retry retry = method.getAnnotation(Retry.class);
-		applyIdempotencyKeyIfNeeded(request, retry != null && retry.idempotent());
+		applyIdempotencyKeyIfNeeded(request, retryExecutor.isIdempotent(method));
 	}
 
 	/**
@@ -1012,7 +1016,7 @@ public class RequestExecutor {
 		return destination;
 	}
 
-	private HttpRequest<?> applyParams(HttpRequest<?> request, Method method, Object[] args) {
+	private HttpRequest<?> applyParams(HttpRequest<?> request, Method method, Object[] args, RequestContext context) {
 		Parameter[] parameters = method.getParameters();
 
 		MultipartBody multipartBody = null;
@@ -1086,7 +1090,7 @@ public class RequestExecutor {
 
 			Body body = parameter.getAnnotation(Body.class);
 			if (body != null && argValue != null) {
-				request = applyBody(request, method, argValue);
+				request = applyBody(request, method, argValue, context);
 			}
 		}
 		if (formFields != null) {
@@ -1234,29 +1238,33 @@ public class RequestExecutor {
 		});
 	}
 
-	private HttpRequest<?> applyBody(HttpRequest<?> request, Method method, Object value) {
+	private HttpRequest<?> applyBody(HttpRequest<?> request, Method method, Object value, RequestContext context) {
 		return applyBody(request, value, String.format(
 				"The method %s is annotated with @Body but its HTTP method does not support a request body.",
-				method));
+				method), context);
 	}
 
 	/**
 	 * Applies {@code value} as the request's body - a {@code String} value
-	 * verbatim, anything else through the configured {@code ObjectMapper}.
-	 * Only defaults the {@code Content-Type} to {@code application/json} for
-	 * a non-{@code String} value when the request doesn't already carry an
+	 * verbatim, anything else through the configured {@code ObjectMapper} -
+	 * and stashes the exact body string on {@code context} via
+	 * {@link RequestContext#setBody} for an interceptor to read. Only
+	 * defaults the {@code Content-Type} to {@code application/json} for a
+	 * non-{@code String} value when the request doesn't already carry an
 	 * <em>explicit</em> one - {@link #applyFixedHeaders} runs before this, so
 	 * a method combining a {@code @Headers({"Content-Type: ..."})} entry
 	 * (e.g. for a non-JSON-serializing custom {@code ObjectMapper}) with a
 	 * {@code @Body} parameter has its explicit choice honored instead of
 	 * silently overwritten by this default.
 	 */
-	private HttpRequest<?> applyBody(HttpRequest<?> request, Object value, String unsupportedMessage) {
+	private HttpRequest<?> applyBody(HttpRequest<?> request, Object value, String unsupportedMessage,
+			RequestContext context) {
 		if (!(request instanceof HttpRequestWithBody)) {
 			throw new RestInPeaceException(unsupportedMessage);
 		}
 		HttpRequestWithBody bodyRequest = (HttpRequestWithBody) request;
 		if (value instanceof String) {
+			context.setBody((String) value);
 			return bodyRequest.body((String) value);
 		}
 		// Read before body(value), not after - unlike a header that was actually
@@ -1273,7 +1281,17 @@ public class RequestExecutor {
 		if (!hasExplicitContentType) {
 			bodyEntity = bodyEntity.contentType("application/json");
 		}
+		// The exact same ObjectMapper Unirest just used internally for body(value)
+		// above, called a second time purely to capture the resulting JSON for
+		// RequestContext - deliberately not restructured into a single
+		// serialize-once-then-body(String) call, to avoid any risk of behaving
+		// differently from Unirest's own established body(Object) handling.
+		context.setBody(resolveObjectMapper().writeValue(value));
 		return bodyEntity;
+	}
+
+	private kong.unirest.ObjectMapper resolveObjectMapper() {
+		return unirestInstance != null ? unirestInstance.config().getObjectMapper() : Unirest.config().getObjectMapper();
 	}
 
 }

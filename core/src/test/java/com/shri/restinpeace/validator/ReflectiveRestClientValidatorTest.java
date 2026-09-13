@@ -187,6 +187,20 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	@Retry(times = 3)
+	public interface ValidInterfaceLevelRetry {
+		@GET("http://example.com")
+		String foo();
+	}
+
+	@RestClient
+	@Retry(jitterFactor = 1.5)
+	public interface InvalidInterfaceLevelRetry {
+		@GET("http://example.com")
+		String foo();
+	}
+
+	@RestClient
 	public interface ValidTimeout {
 		@GET("http://example.com")
 		@Timeout(connectMillis = 1_000, readMillis = 5_000)
@@ -197,6 +211,20 @@ class ReflectiveRestClientValidatorTest {
 	public interface InvalidTimeoutConnectMillis {
 		@GET("http://example.com")
 		@Timeout(connectMillis = -5)
+		String foo();
+	}
+
+	@RestClient
+	@Timeout(readMillis = 5_000)
+	public interface ValidInterfaceLevelTimeout {
+		@GET("http://example.com")
+		String foo();
+	}
+
+	@RestClient
+	@Timeout(connectMillis = -5)
+	public interface InvalidInterfaceLevelTimeout {
+		@GET("http://example.com")
 		String foo();
 	}
 
@@ -697,8 +725,34 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@Test
+	void validate_validInterfaceLevelRetry_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidInterfaceLevelRetry.class));
+	}
+
+	@Test
+	void validate_invalidInterfaceLevelRetry_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(InvalidInterfaceLevelRetry.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("jitterFactor must be between 0.0 and 1.0 inclusive"));
+	}
+
+	@Test
 	void validate_validTimeout_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidTimeout.class));
+	}
+
+	@Test
+	void validate_validInterfaceLevelTimeout_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidInterfaceLevelTimeout.class));
+	}
+
+	@Test
+	void validate_invalidInterfaceLevelTimeout_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(InvalidInterfaceLevelTimeout.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("connectMillis must be -1 (unset) or a non-negative number of milliseconds"));
 	}
 
 	@Test
