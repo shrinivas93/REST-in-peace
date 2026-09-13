@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RipClientConfig.Builder.cacheKeyIncludesQueryString(boolean)` (per client)
+  and `RIP.setCacheKeyIncludesQueryString(boolean)` (shared default) let the
+  cache key's query string be turned off - `true` by default, matching
+  RIP's existing behavior of keying `/items?page=1` and `/items?page=2`
+  separately; turning it off collapses every query-string variant of a path
+  onto one cache entry, for an endpoint whose query params don't affect the
+  response.
 - `InMemoryCache(long maxEntryAgeMillis)` evicts an entry once it's older
   than that, independent of server-driven `Cache-Control`/`ETag` freshness -
   checked lazily on the next `get()` for that key, no background thread.

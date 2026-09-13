@@ -79,6 +79,7 @@ test server for unit tests.
 - [Response caching](#response-caching)
   - [`@NoCache`](#nocache)
   - [Time-based and manual eviction](#time-based-and-manual-eviction)
+  - [Query string in the cache key](#query-string-in-the-cache-key)
 - [Interceptors](#interceptors)
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
@@ -198,7 +199,9 @@ for what actually happens under `getUser(...)`.
   `@NoCache` to opt a single method out even when its client has a cache
   configured. `InMemoryCache` also supports a max-age constructor for
   time-based eviction regardless of server freshness, plus manual eviction
-  of one entry via the public `Cache.key(...)` formula
+  of one entry via the public `Cache.key(...)` formula. Whether the cache
+  key includes the query string is configurable per client or as a shared
+  default via `cacheKeyIncludesQueryString(...)`
 - `RestInPeaceHttpException.isClientError()`/`isServerError()`/`is(int)`
   for branching on a status range in a `catch` block
 - Global interceptors for cross-cutting concerns (auth headers, logging,
@@ -1198,6 +1201,31 @@ deliberately does *not* auto-invalidate cached `GET`s when a `POST`/`PUT`/
 entries a given write should invalidate is a heuristic that's wrong in
 either direction (URLs that look related but aren't, and unrelated-looking
 URLs that actually are). `cache.clear()` drops every entry unconditionally.
+
+### Query string in the cache key
+
+By default the cache key includes the query string, so `/items?page=1` and
+`/items?page=2` are cached under separate entries — the right default for
+an endpoint whose query params change what comes back. For one whose query
+params don't (an analytics/tracking param, say, that the server ignores
+when producing the response), that's wasted cache misses: turn it off per
+client, or as a shared default:
+
+```java
+RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .cacheKeyIncludesQueryString(false)   // this client only
+        .build());
+
+RIP.setCacheKeyIncludesQueryString(false);   // shared default for every client without its own setting
+```
+
+With it off, every query-string variant of the same path shares one cache
+entry instead — trading that precision for a higher hit rate. It has no
+effect on a client with no `Cache` configured at all, and (per the
+per-client/shared-default precedence every other `RipClientConfig` setting
+follows) a client's own `cacheKeyIncludesQueryString(...)` wins over
+`RIP.setCacheKeyIncludesQueryString(...)`.
 
 ## Interceptors
 

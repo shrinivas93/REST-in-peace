@@ -214,6 +214,23 @@ class ResponseCachingTest {
 	}
 
 	@Test
+	void cacheKeyIncludesQueryStringDisabled_conflatesDifferentQueryStringsOnTheSamePath() {
+		CacheTestApi noQueryStringKeyApi = RIP.getClient(CacheTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).cache(cache).cacheKeyIncludesQueryString(false).build());
+		server.on(HTTPMethod.GET, "/search", MockResponse.ok("{\"page\":1}").header("Cache-Control", "max-age=60"));
+
+		String page1 = noQueryStringKeyApi.search("1");
+		String page2 = noQueryStringKeyApi.search("2");
+
+		assertEquals("{\"page\":1}", page1);
+		// Same entry as page1's - the opt-out deliberately collapses every query
+		// string variant of /search onto one cache key, so this is a cache hit
+		// (still page 1's stored body) rather than a second real request.
+		assertEquals("{\"page\":1}", page2);
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
 	void manualEviction_viaThePubliclyComputableKey_forcesTheNextCallBackToTheNetwork() {
 		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=60"));
 

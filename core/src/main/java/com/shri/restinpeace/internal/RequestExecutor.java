@@ -106,7 +106,7 @@ public class RequestExecutor {
 	public RequestExecutor(String baseUrlOverride) {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
-		this.cacheCoordinator = new CacheCoordinator(null);
+		this.cacheCoordinator = new CacheCoordinator(null, null);
 		this.urlResolver = new UrlResolver(baseUrlOverride);
 		this.responseDecoder = new ResponseDecoder(null);
 		this.interceptorDispatcher = new InterceptorDispatcher(Collections.emptyList(), responseDecoder);
@@ -127,7 +127,7 @@ public class RequestExecutor {
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
-		this.cacheCoordinator = new CacheCoordinator(config.getCache());
+		this.cacheCoordinator = new CacheCoordinator(config.getCache(), config.getCacheKeyIncludesQueryString());
 		this.urlResolver = new UrlResolver(baseUrlOverride);
 		this.responseDecoder = new ResponseDecoder(unirestInstance);
 		this.interceptorDispatcher = new InterceptorDispatcher(config.getInterceptors(), responseDecoder);
@@ -222,6 +222,16 @@ public class RequestExecutor {
 	 */
 	public static void setDefaultCache(Cache cache) {
 		CacheCoordinator.setDefaultCache(cache);
+	}
+
+	/**
+	 * Sets whether the cache key includes the request's query string. See
+	 * {@link com.shri.restinpeace.RIP#setCacheKeyIncludesQueryString(boolean)}.
+	 *
+	 * @param includeQueryString whether the cache key includes the query string
+	 */
+	public static void setDefaultCacheKeyIncludesQueryString(boolean includeQueryString) {
+		CacheCoordinator.setDefaultCacheKeyIncludesQueryString(includeQueryString);
 	}
 
 	/**

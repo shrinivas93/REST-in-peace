@@ -194,6 +194,10 @@ abstract class AbstractRipIntegrationTest {
 		@NoCache
 		String getCacheableNoCache(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/cacheable/{id}")
+		String getCacheableWithQuery(@PathParam("port") int port, @PathParam("id") String id,
+				@QueryParam("v") String v);
+
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMultiValueQuery(@PathParam("port") int port, @PathParam("id") String id,
 				@QueryParam("tag") List<String> tags);
