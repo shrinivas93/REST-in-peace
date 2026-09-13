@@ -24,7 +24,7 @@
 	-->
 	<groupId>com.shri</groupId>
 	<artifactId>rest-in-peace-parent</artifactId>
-	<version>1.0.0.37-SNAPSHOT</version>
+	<version>1.0.0.37</version>
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>
@@ -34,7 +34,7 @@
 		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
 		<developerConnection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</developerConnection>
 		<url>https://github.com/shrinivas93/REST-in-peace</url>
-		<tag>HEAD</tag>
+		<tag>v1.0.0.37</tag>
 	</scm>
 
 	<modules>
