@@ -11,7 +11,10 @@ import java.lang.annotation.Target;
  * refused, a timeout) or with one of {@link #retryOnStatus()}, up to
  * {@link #times()} attempts total, waiting {@link #delayMillis()} between
  * attempts and multiplying that wait by {@link #backoffMultiplier()} after
- * each one.
+ * each one - unless the failed response itself carries a {@code Retry-After}
+ * header, which takes priority over the computed delay for that one wait
+ * (see {@link #delayMillis()}), and {@link #jitterFactor()} randomizes each
+ * computed delay to avoid many callers retrying in lockstep.
  *
  * <p>
  * Works on both a synchronous return type and a {@code CompletableFuture}
@@ -46,7 +49,12 @@ public @interface Retry {
 	int times() default 3;
 
 	/**
-	 * How long to wait before the first retry, in milliseconds.
+	 * How long to wait before the first retry, in milliseconds - overridden
+	 * for that one wait whenever the response being retried carries a
+	 * {@code Retry-After} header (as a delta-seconds value or an HTTP-date),
+	 * since the server's own stated wait time is more authoritative than a
+	 * value fixed at compile time. A transport failure (no response at all)
+	 * has no header to read, so it always falls back to this value.
 	 *
 	 * @return the initial delay in milliseconds
 	 */
@@ -55,10 +63,28 @@ public @interface Retry {
 	/**
 	 * The factor the delay is multiplied by after each retry - {@code 1.0}
 	 * for a fixed delay, greater than {@code 1.0} for exponential backoff.
+	 * Applied to the previous attempt's own delay, whether that delay came
+	 * from this computation or from a {@code Retry-After} header.
 	 *
 	 * @return the backoff multiplier
 	 */
 	double backoffMultiplier() default 2.0;
+
+	/**
+	 * Randomizes each computed delay (not one taken from a
+	 * {@code Retry-After} header, which is already an explicit server
+	 * instruction) by up to this fraction in either direction, so that many
+	 * callers who all started retrying at the same moment - e.g. every
+	 * replica of a horizontally-scaled service hitting the same downstream -
+	 * don't retry in exact lockstep. {@code 0.0} (the default) applies no
+	 * jitter, exactly reproducing the delay sequence
+	 * {@link #delayMillis()}/{@link #backoffMultiplier()} alone would
+	 * produce; {@code 1.0} allows the delay to be scaled anywhere from zero
+	 * to double. Must be between {@code 0.0} and {@code 1.0} inclusive.
+	 *
+	 * @return the jitter fraction
+	 */
+	double jitterFactor() default 0.0;
 
 	/**
 	 * The HTTP status codes that count as a failure worth retrying. A

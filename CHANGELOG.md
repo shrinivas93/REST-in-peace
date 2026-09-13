@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `@Retry` honors a failed response's own `Retry-After` header (delta-seconds
+  or an HTTP-date) for that attempt's wait instead of the computed
+  `delayMillis`/`backoffMultiplier` one, and gained `jitterFactor` (default
+  `0.0`, no behavior change) to randomize each computed delay by up to that
+  fraction, avoiding many callers retrying in lockstep.
+- `@Field`/`@Part` gained `defaultValue()`, matching `@QueryParam`/
+  `@HeaderParam`'s existing `required`/`defaultValue` semantics.
+- `RIP.removeInterceptor(RequestInterceptor)` removes one previously
+  registered global interceptor by identity, without wiping out every other
+  registered interceptor the way `clearInterceptors()` does.
+- A `default`/`static` method on a `@RestClient` interface is now supported
+  by the reflective proxy - invoked as ordinary Java (delegating to its own
+  real implementation), never as an HTTP call, letting you add ergonomic
+  wrapper methods directly on the interface.
+
+### Fixed
+
+- `@HeaderMap`'s value now repeats once per element for a `Collection`
+  value, matching `@QueryParam`/`@QueryMap`/`@Field`/`@FieldMap`'s existing
+  behavior - previously it sent one header with a single mangled
+  `toString()` value.
+- A non-`String` `@Body` value no longer overwrites an explicit
+  `Content-Type` already set via `@Headers` (e.g. for a non-JSON-serializing
+  custom `ObjectMapper`) with the `application/json` default.
+- `RIP.useDaemonThreadsForAsync()` now also covers a `RipClientConfig`-backed
+  client's own dedicated Unirest instance (constructed after the call),
+  not just the shared static client - previously such a client's async
+  calls could still hang a short-lived program's shutdown.
+- Declaring a `default`/`static` method on a `@RestClient` interface used to
+  fail `RIP.getClient(...)` (and, for a compile-time-generated interface,
+  the build itself) outright with "not annotated with any of the HTTP
+  method annotations" - both validators now exempt default/static methods
+  instead.
+- The Spring Boot starter's auto-configuration now deregisters exactly the
+  global interceptor beans it registered when its `ApplicationContext`
+  closes, instead of leaking them into RIP's shared, JVM-static interceptor
+  registry forever - previously more than one context in the same JVM
+  (an uncached parameterized `@SpringBootTest`, a multi-tenant host) would
+  accumulate every closed context's interceptors indefinitely.
+- `ReflectiveRestClientValidator`/`CompileTimeRestClientValidator` now also
+  flag a `@PathParam` whose name never appears in its method's URL template
+  (a stale annotation left over from an edited URL, or a typo) - previously
+  the value was silently dropped from the request instead of failing
+  validation, and a `@PathParam` combined with `@Url` (which ignores it
+  entirely) is now itself a validation error.
+
 ### Changed
 
 - **Breaking (build layout, not runtime API):** `core/` and

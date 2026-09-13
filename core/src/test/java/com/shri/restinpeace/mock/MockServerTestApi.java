@@ -12,7 +12,9 @@ import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Field;
 import com.shri.restinpeace.annotation.request.FieldMap;
 import com.shri.restinpeace.annotation.request.FormUrlEncoded;
+import com.shri.restinpeace.annotation.request.HeaderMap;
 import com.shri.restinpeace.annotation.request.HeaderParam;
+import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
@@ -74,5 +76,37 @@ public interface MockServerTestApi {
 	@POST("/charges")
 	@Retry(times = 3, delayMillis = 1, idempotent = true, retryOnStatus = { 503 })
 	CompletableFuture<String> createChargeAsync(@Body String payload);
+
+	@POST("/rate-limited")
+	@Retry(times = 2, delayMillis = 5000, retryOnStatus = { 503 })
+	String createWithRetryAfter(@Body String payload);
+
+	@POST("/xml-orders")
+	@Headers({ "Content-Type: application/xml" })
+	String createXmlOrder(@Body XmlPayload payload);
+
+	@GET("/orders/{id}")
+	String getOrderWithHeaderMap(@PathParam("id") String id, @HeaderMap Map<String, Object> headers);
+
+	@POST("/upload")
+	@Multipart
+	String uploadWithDefaultCaption(@Part(value = "caption", defaultValue = "untitled") String caption,
+			@Part(value = "file", fileName = "data.bin") byte[] file);
+
+	@POST("/oauth/token")
+	@FormUrlEncoded
+	String getTokenWithDefaultScope(@Field("grant_type") String grantType,
+			@Field(value = "scope", defaultValue = "read") String scope);
+
+	final class XmlPayload {
+		public String sku;
+
+		public XmlPayload() {
+		}
+
+		public XmlPayload(String sku) {
+			this.sku = sku;
+		}
+	}
 
 }

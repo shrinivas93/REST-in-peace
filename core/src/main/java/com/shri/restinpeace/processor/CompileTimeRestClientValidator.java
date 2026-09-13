@@ -107,6 +107,15 @@ final class CompileTimeRestClientValidator {
 				continue;
 			}
 			ExecutableElement method = (ExecutableElement) enclosed;
+			// A default or static interface method carries no HTTP method annotation by
+			// design and isn't dispatched as an HTTP call at all (see
+			// ReflectiveRestClientValidator.validate and RestClientProcessor's own
+			// default/static skip before codegen) - exempt from every check below
+			// instead of failing compilation outright.
+			if (method.getModifiers().contains(javax.lang.model.element.Modifier.DEFAULT)
+					|| method.getModifiers().contains(javax.lang.model.element.Modifier.STATIC)) {
+				continue;
+			}
 			HttpMethodAndUrl httpMethodAndUrl = validateHttpMethodAnnotation(method, reporter);
 			if (httpMethodAndUrl != null) {
 				validateUrlParam(method, httpMethodAndUrl.urlTemplate, reporter);
@@ -178,8 +187,16 @@ final class CompileTimeRestClientValidator {
 
 	private static void validateRetry(ExecutableElement method, Reporter reporter) {
 		Retry retry = method.getAnnotation(Retry.class);
-		if (retry != null && retry.times() < 1) {
+		if (retry == null) {
+			return;
+		}
+		if (retry.times() < 1) {
 			reporter.error(String.format("The method %s is annotated with @Retry but times must be at least 1.",
+					qualifiedName(method)), method);
+		}
+		if (retry.jitterFactor() < 0.0 || retry.jitterFactor() > 1.0) {
+			reporter.error(String.format(
+					"The method %s is annotated with @Retry but jitterFactor must be between 0.0 and 1.0 inclusive.",
 					qualifiedName(method)), method);
 		}
 	}
@@ -454,6 +471,11 @@ final class CompileTimeRestClientValidator {
 			reporter.error(String.format("The method %s has both a @Url parameter and a static URL '%s' - remove "
 					+ "one or the other.", qualifiedName(method), url), method);
 		}
+		boolean hasPathParam = method.getParameters().stream().anyMatch(p -> p.getAnnotation(PathParam.class) != null);
+		if (!urlParams.isEmpty() && hasPathParam) {
+			reporter.error(String.format("The method %s has both a @Url parameter and a @PathParam parameter - "
+					+ "@PathParam has no effect when @Url is used.", qualifiedName(method)), method);
+		}
 	}
 
 	private static void validateUrl(ExecutableElement method, String url, Reporter reporter) {
@@ -474,6 +496,12 @@ final class CompileTimeRestClientValidator {
 			if (!methodPathParams.contains(urlPathParam)) {
 				reporter.error(String.format("The method %s has path param '%s' in its URL that is not annotated "
 						+ "on any parameter with @PathParam.", qualifiedName(method), urlPathParam), method);
+			}
+		}
+		for (String methodPathParam : methodPathParams) {
+			if (!urlPathParams.contains(methodPathParam)) {
+				reporter.error(String.format("The method %s has a @PathParam('%s') that does not appear as '{%s}' "
+						+ "in its URL.", qualifiedName(method), methodPathParam, methodPathParam), method);
 			}
 		}
 	}
