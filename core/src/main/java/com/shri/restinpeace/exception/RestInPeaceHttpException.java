@@ -52,6 +52,40 @@ public class RestInPeaceHttpException extends RestInPeaceException {
 	}
 
 	/**
+	 * Whether the response's status is in the {@code 4xx} range - the
+	 * request itself was the problem (bad input, missing auth, not found),
+	 * as opposed to {@link #isServerError()}.
+	 *
+	 * @return {@code true} for a {@code 4xx} status
+	 */
+	public boolean isClientError() {
+		return status >= 400 && status < 500;
+	}
+
+	/**
+	 * Whether the response's status is in the {@code 5xx} range - the
+	 * server itself failed, as opposed to {@link #isClientError()}. Often
+	 * the signal to retry (see {@code @Retry}'s default {@code retryOnStatus})
+	 * rather than surface the error as the caller's own mistake.
+	 *
+	 * @return {@code true} for a {@code 5xx} status
+	 */
+	public boolean isServerError() {
+		return status >= 500 && status < 600;
+	}
+
+	/**
+	 * Whether the response's status is exactly {@code status} - a shorthand
+	 * for {@code getStatus() == status} at a call site (e.g. {@code e.is(404)}).
+	 *
+	 * @param status the status to compare against
+	 * @return {@code true} if this exception's status equals {@code status}
+	 */
+	public boolean is(int status) {
+		return this.status == status;
+	}
+
+	/**
 	 * Returns the response's raw body, regardless of whether the method
 	 * declared an {@code @ErrorType}.
 	 *

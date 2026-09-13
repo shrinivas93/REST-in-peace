@@ -237,6 +237,9 @@ abstract class AbstractRipIntegrationTest {
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 }, idempotent = true)
 		String getFlakyIdempotent(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/flaky/{id}")
+		String getFlakyWithNoRetryAnnotation(@PathParam("port") int port, @PathParam("id") String id);
+
 		@GET("http://localhost:{port}/always-503/{id}")
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
 		String getAlwaysFailingWithRetry(@PathParam("port") int port, @PathParam("id") String id);

@@ -360,4 +360,53 @@ class RipInterceptorIntegrationTest extends AbstractRipIntegrationTest {
 		assertTrue(bodies.get(0) instanceof ApiError);
 	}
 
+	@Test
+	void beforeRequest_seesTheExactRawStringBody_forAStringBodyMethod() {
+		AtomicReference<String> seenBody = new AtomicReference<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void beforeRequest(RequestContext context) {
+				seenBody.set(context.getBody());
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.post(port, "x", "raw-body-content");
+
+		assertEquals("raw-body-content", seenBody.get());
+	}
+
+	@Test
+	void beforeRequest_seesTheSerializedJson_forAPojoBodyMethod() {
+		AtomicReference<String> seenBody = new AtomicReference<>();
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void beforeRequest(RequestContext context) {
+				seenBody.set(context.getBody());
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.put(port, "x", new Payload("Shrinivas", 1993));
+
+		assertTrue(seenBody.get().contains("\"name\":\"Shrinivas\""));
+		assertTrue(seenBody.get().contains("\"age\":1993"));
+	}
+
+	@Test
+	void beforeRequest_seesNoBody_forAMethodWithoutABodyParameter() {
+		AtomicReference<String> seenBody = new AtomicReference<>("not-set");
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public void beforeRequest(RequestContext context) {
+				seenBody.set(context.getBody());
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		api.get(port, "x", 1, "custom");
+
+		assertNull(seenBody.get());
+	}
+
 }

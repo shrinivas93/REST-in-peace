@@ -188,6 +188,9 @@ final class CompileTimeRestClientValidator {
 	private static void validateRetry(ExecutableElement method, Reporter reporter) {
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
+			retry = method.getEnclosingElement().getAnnotation(Retry.class);
+		}
+		if (retry == null) {
 			return;
 		}
 		if (retry.times() < 1) {
@@ -203,6 +206,9 @@ final class CompileTimeRestClientValidator {
 
 	private static void validateTimeout(ExecutableElement method, Reporter reporter) {
 		Timeout timeout = method.getAnnotation(Timeout.class);
+		if (timeout == null) {
+			timeout = method.getEnclosingElement().getAnnotation(Timeout.class);
+		}
 		if (timeout == null) {
 			return;
 		}

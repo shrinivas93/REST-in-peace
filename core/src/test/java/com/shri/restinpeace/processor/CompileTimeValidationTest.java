@@ -160,6 +160,40 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void invalidInterfaceLevelRetryJitterFactor_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("InvalidInterfaceLevelRetryJitterFactor", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.retry.Retry;\n" //
+				+ "@RestClient\n" //
+				+ "@Retry(jitterFactor = 1.5)\n" //
+				+ "public interface InvalidInterfaceLevelRetryJitterFactor {\n" //
+				+ "  @GET(\"http://localhost/items\")\n" //
+				+ "  String getItem();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with @Retry but jitterFactor must be between 0.0 and 1.0 inclusive");
+	}
+
+	@Test
+	void validInterfaceLevelRetry_compilesCleanAndGeneratesImplHonoringIt() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ValidInterfaceLevelRetry", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.retry.Retry;\n" //
+				+ "@RestClient\n" //
+				+ "@Retry(times = 3)\n" //
+				+ "public interface ValidInterfaceLevelRetry {\n" //
+				+ "  @GET(\"http://localhost/items\")\n" //
+				+ "  String getItem();\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertTrue(Files.exists(outputDir.resolve("ValidInterfaceLevelRetry_RipImpl.class")),
+				"Expected ValidInterfaceLevelRetry_RipImpl.class to be generated, found: " + list(outputDir));
+	}
+
+	@Test
 	void interfaceWithDefaultMethod_compilesCleanWithoutDisqualifyingTheWholeInterfaceAtCompileTime() throws IOException {
 		// The default method itself still disqualifies codegen for this whole
 		// interface (RestClientProcessor.processRestClient falls back to the

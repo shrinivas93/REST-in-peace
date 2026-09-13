@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
+import com.shri.restinpeace.RetryConfig;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.interceptor.RequestContext;
@@ -53,15 +54,28 @@ final class RetryExecutor {
 	});
 
 	private final InterceptorDispatcher interceptorDispatcher;
+	private final RetryConfig configuredRetry;
 
 	RetryExecutor(InterceptorDispatcher interceptorDispatcher) {
+		this(interceptorDispatcher, null);
+	}
+
+	/**
+	 * @param configuredRetry a {@link com.shri.restinpeace.RipClientConfig}'s
+	 *                        default retry policy, applied to any call whose
+	 *                        method (and interface) has no {@code @Retry} of
+	 *                        its own, or {@code null} for no retrying at all
+	 *                        in that case - see {@link RetryConfig}
+	 */
+	RetryExecutor(InterceptorDispatcher interceptorDispatcher, RetryConfig configuredRetry) {
 		this.interceptorDispatcher = interceptorDispatcher;
+		this.configuredRetry = configuredRetry;
 	}
 
 	<B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
-		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
+		Retry retry = method == null ? null : resolveRetry(method);
 		if (retry == null) {
 			return executeSyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, 0.0, EMPTY_STATUS_CODES);
 		}
@@ -80,6 +94,11 @@ final class RetryExecutor {
 	<B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Class<?> returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call, boolean hasRetry, int times, long delayMillis, double backoffMultiplier,
 			double jitterFactor, int[] retryOnStatus) {
+		if (!hasRetry && configuredRetry != null) {
+			return executeSyncWithRetry(errorType, returnType, context, call, true, configuredRetry.getTimes(),
+					configuredRetry.getDelayMillis(), configuredRetry.getBackoffMultiplier(),
+					configuredRetry.getJitterFactor(), configuredRetry.getRetryOnStatus());
+		}
 		if (!hasRetry) {
 			HttpResponse<B> response = call.get();
 			interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
@@ -112,7 +131,7 @@ final class RetryExecutor {
 	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
-		Retry retry = method.getAnnotation(Retry.class);
+		Retry retry = resolveRetry(method);
 		if (retry == null) {
 			return executeAsyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, 0.0, EMPTY_STATUS_CODES);
 		}
@@ -129,6 +148,11 @@ final class RetryExecutor {
 	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Class<?> returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call, boolean hasRetry, int times,
 			long delayMillis, double backoffMultiplier, double jitterFactor, int[] retryOnStatus) {
+		if (!hasRetry && configuredRetry != null) {
+			return executeAsyncWithRetry(errorType, returnType, context, call, true, configuredRetry.getTimes(),
+					configuredRetry.getDelayMillis(), configuredRetry.getBackoffMultiplier(),
+					configuredRetry.getJitterFactor(), configuredRetry.getRetryOnStatus());
+		}
 		if (!hasRetry) {
 			return call.get().thenApply(response -> {
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
@@ -172,6 +196,37 @@ final class RetryExecutor {
 					waitMillis, TimeUnit.MILLISECONDS);
 		});
 		return result;
+	}
+
+	/**
+	 * Resolves the effective {@code @Retry} for {@code method} - the
+	 * method's own if present, otherwise its declaring interface's (see
+	 * {@code @Retry}'s own javadoc for the interface-level-default shape,
+	 * mirroring {@code @BaseUrl}'s), otherwise {@code null} if neither has
+	 * one. Also used directly by
+	 * {@code RequestExecutor.applyIdempotencyKeyIfNeeded}, so every
+	 * reflective-path call site answering "does this call have a
+	 * {@code @Retry}, and if so which" agrees on where to look.
+	 */
+	static Retry resolveRetry(Method method) {
+		Retry retry = method.getAnnotation(Retry.class);
+		return retry != null ? retry : method.getDeclaringClass().getAnnotation(Retry.class);
+	}
+
+	/**
+	 * Whether a stable {@code Idempotency-Key} should be sent for a call to
+	 * {@code method} - {@code @Retry}'s (method's, then interface's)
+	 * {@code idempotent()} if either is present, otherwise this instance's
+	 * {@link #configuredRetry}'s, for a call driven entirely by the
+	 * client's default retry policy rather than any {@code @Retry}
+	 * annotation at all.
+	 */
+	boolean isIdempotent(Method method) {
+		Retry retry = resolveRetry(method);
+		if (retry != null) {
+			return retry.idempotent();
+		}
+		return configuredRetry != null && configuredRetry.isIdempotent();
 	}
 
 	private static boolean isRetryableStatus(int status, int[] retryOnStatus) {

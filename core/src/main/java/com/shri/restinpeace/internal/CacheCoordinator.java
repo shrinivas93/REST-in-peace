@@ -91,7 +91,7 @@ final class CacheCoordinator {
 		if (!isCacheable(cache, context)) {
 			return call;
 		}
-		String key = cacheKey(context);
+		String key = cacheKey(context, request);
 		return () -> {
 			CachedResponse cached = cache.get(key);
 			boolean sameVariant = cached != null && matchesVary(cached, request);
@@ -124,7 +124,7 @@ final class CacheCoordinator {
 		if (!isCacheable(cache, context)) {
 			return call;
 		}
-		String key = cacheKey(context);
+		String key = cacheKey(context, request);
 		return () -> {
 			CachedResponse cached = cache.get(key);
 			boolean sameVariant = cached != null && matchesVary(cached, request);
@@ -146,8 +146,19 @@ final class CacheCoordinator {
 				&& !Boolean.TRUE.equals(context.getAttribute(NO_CACHE_ATTRIBUTE));
 	}
 
-	private static String cacheKey(RequestContext context) {
-		return context.getHttpMethod() + " " + context.getUrl();
+	/**
+	 * Computes the cache key for this call, via {@link Cache#key} - reading
+	 * the URL off {@code request} rather than {@code context.getUrl()},
+	 * since the latter is only the path-template-resolved URL captured
+	 * before {@code @QueryParam}/{@code @QueryMap} are applied
+	 * (see {@code RequestExecutor.processRestRequest}), while {@code request}
+	 * (already fully built by the time this runs) reflects the exact URL,
+	 * query string included, that will actually go out on the wire. Two
+	 * calls to the same path differing only by query string must not
+	 * collide on one cache entry.
+	 */
+	private static String cacheKey(RequestContext context, HttpRequest<?> request) {
+		return Cache.key(context.getHttpMethod(), request.getUrl());
 	}
 
 	private static void applyRevalidationHeaders(HttpRequest<?> request, CachedResponse cached) {
