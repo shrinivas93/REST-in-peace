@@ -40,11 +40,14 @@ final class CacheCoordinator {
 	static final String NO_CACHE_ATTRIBUTE = "__ripNoCache";
 
 	private static volatile Cache DEFAULT_CACHE;
+	private static volatile boolean DEFAULT_CACHE_KEY_INCLUDES_QUERY_STRING = true;
 
 	private final Cache configuredCache;
+	private final Boolean configuredCacheKeyIncludesQueryString;
 
-	CacheCoordinator(Cache configuredCache) {
+	CacheCoordinator(Cache configuredCache, Boolean configuredCacheKeyIncludesQueryString) {
 		this.configuredCache = configuredCache;
+		this.configuredCacheKeyIncludesQueryString = configuredCacheKeyIncludesQueryString;
 	}
 
 	/**
@@ -58,6 +61,19 @@ final class CacheCoordinator {
 	}
 
 	/**
+	 * Sets whether the cache key includes the request's query string, for
+	 * every client not built with a {@link com.shri.restinpeace.RipClientConfig}
+	 * that sets its own via
+	 * {@link com.shri.restinpeace.RipClientConfig.Builder#cacheKeyIncludesQueryString(boolean)}.
+	 * See {@link com.shri.restinpeace.RIP#setCacheKeyIncludesQueryString(boolean)}.
+	 *
+	 * @param includeQueryString whether the cache key includes the query string
+	 */
+	static void setDefaultCacheKeyIncludesQueryString(boolean includeQueryString) {
+		DEFAULT_CACHE_KEY_INCLUDES_QUERY_STRING = includeQueryString;
+	}
+
+	/**
 	 * Returns the cache this instance's calls should use - its own, from a
 	 * {@link com.shri.restinpeace.RipClientConfig}, if one was set, otherwise
 	 * the shared default, read dynamically so a later
@@ -66,6 +82,18 @@ final class CacheCoordinator {
 	 */
 	private Cache getCache() {
 		return configuredCache != null ? configuredCache : DEFAULT_CACHE;
+	}
+
+	/**
+	 * Returns whether this instance's calls should key their cache entries by
+	 * query string - this client's own choice, if one was set, otherwise the
+	 * shared default, read dynamically so a later {@link
+	 * com.shri.restinpeace.RIP#setCacheKeyIncludesQueryString(boolean)} call
+	 * still takes effect for an already-built client that never set its own.
+	 */
+	private boolean cacheKeyIncludesQueryString() {
+		return configuredCacheKeyIncludesQueryString != null ? configuredCacheKeyIncludesQueryString
+				: DEFAULT_CACHE_KEY_INCLUDES_QUERY_STRING;
 	}
 
 	/**
@@ -147,18 +175,25 @@ final class CacheCoordinator {
 	}
 
 	/**
-	 * Computes the cache key for this call, via {@link Cache#key} - reading
-	 * the URL off {@code request} rather than {@code context.getUrl()},
-	 * since the latter is only the path-template-resolved URL captured
-	 * before {@code @QueryParam}/{@code @QueryMap} are applied
-	 * (see {@code RequestExecutor.processRestRequest}), while {@code request}
+	 * Computes the cache key for this call, via {@link Cache#key}. By
+	 * default, reads the URL off {@code request} rather than
+	 * {@code context.getUrl()}, since the latter is only the
+	 * path-template-resolved URL captured before {@code @QueryParam}/
+	 * {@code @QueryMap} are applied (see
+	 * {@code RequestExecutor.processRestRequest}), while {@code request}
 	 * (already fully built by the time this runs) reflects the exact URL,
-	 * query string included, that will actually go out on the wire. Two
-	 * calls to the same path differing only by query string must not
-	 * collide on one cache entry.
+	 * query string included, that will actually go out on the wire - so two
+	 * calls to the same path differing only by query string don't collide on
+	 * one cache entry. When {@link #cacheKeyIncludesQueryString()} is
+	 * {@code false}, deliberately keys on {@code context.getUrl()} instead -
+	 * every query string variant of the same path then shares one entry, for
+	 * an endpoint whose query params don't affect the response (e.g. an
+	 * analytics/tracking param) and whose caller would rather trade that
+	 * precision for a higher hit rate.
 	 */
-	private static String cacheKey(RequestContext context, HttpRequest<?> request) {
-		return Cache.key(context.getHttpMethod(), request.getUrl());
+	private String cacheKey(RequestContext context, HttpRequest<?> request) {
+		String url = cacheKeyIncludesQueryString() ? request.getUrl() : context.getUrl();
+		return Cache.key(context.getHttpMethod(), url);
 	}
 
 	private static void applyRevalidationHeaders(HttpRequest<?> request, CachedResponse cached) {

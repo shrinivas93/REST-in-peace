@@ -46,6 +46,7 @@ public final class RipClientConfig {
 	private final String proxyPassword;
 	private final ObjectMapper objectMapper;
 	private final Cache cache;
+	private final Boolean cacheKeyIncludesQueryString;
 	private final List<RequestInterceptor> interceptors;
 	private final RetryConfig retry;
 
@@ -59,6 +60,7 @@ public final class RipClientConfig {
 		this.proxyPassword = builder.proxyPassword;
 		this.objectMapper = builder.objectMapper;
 		this.cache = builder.cache;
+		this.cacheKeyIncludesQueryString = builder.cacheKeyIncludesQueryString;
 		this.interceptors = builder.interceptors;
 		this.retry = builder.retry;
 	}
@@ -162,6 +164,19 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns whether this client's cache key includes the request's query
+	 * string.
+	 *
+	 * @return whether this client's cache key includes the query string, or
+	 *         {@code null} to fall back to the shared default set via
+	 *         {@link RIP#setCacheKeyIncludesQueryString(boolean)} (which
+	 *         itself defaults to {@code true} if never called)
+	 */
+	public Boolean getCacheKeyIncludesQueryString() {
+		return cacheKeyIncludesQueryString;
+	}
+
+	/**
 	 * Returns this client's own interceptors.
 	 *
 	 * @return this client's own interceptors, run in addition to (not instead
@@ -195,6 +210,7 @@ public final class RipClientConfig {
 		private String proxyPassword;
 		private ObjectMapper objectMapper;
 		private Cache cache;
+		private Boolean cacheKeyIncludesQueryString;
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
 		private RetryConfig retry;
 
@@ -294,6 +310,28 @@ public final class RipClientConfig {
 		 */
 		public Builder cache(Cache cache) {
 			this.cache = cache;
+			return this;
+		}
+
+		/**
+		 * Sets whether this client's cache key includes the request's query
+		 * string, overriding the shared default set via
+		 * {@link RIP#setCacheKeyIncludesQueryString(boolean)} (itself
+		 * {@code true} by default, matching RIP's own established behavior)
+		 * for this client only. Turn this off for an endpoint whose query
+		 * params don't affect the response (e.g. an analytics/tracking
+		 * param), so every query-string variant of the same path shares one
+		 * cache entry instead of each getting its own - trading precision
+		 * for a higher hit rate. Has no effect unless this client also has a
+		 * {@link Cache} configured (its own via {@link #cache(Cache)}, or
+		 * the shared default).
+		 *
+		 * @param cacheKeyIncludesQueryString whether this client's cache key
+		 *                                    includes the query string
+		 * @return this builder
+		 */
+		public Builder cacheKeyIncludesQueryString(boolean cacheKeyIncludesQueryString) {
+			this.cacheKeyIncludesQueryString = cacheKeyIncludesQueryString;
 			return this;
 		}
 

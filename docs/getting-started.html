@@ -234,6 +234,7 @@
         <div class="group-title">Caching</div>
         <a href="#caching">Response caching</a>
         <a href="#cache-eviction">Time-based &amp; manual eviction</a>
+        <a href="#cache-key-query-string">Query string in the cache key</a>
 
         <div class="group-title">Interceptors</div>
         <a href="#interceptors-global">Global &amp; per-client</a>
@@ -859,6 +860,25 @@ Cache userApiCache() { return new InMemoryCache(); }</code></pre>
             <div class="snippet-head"><span class="snippet-tag">Alternate · manual eviction</span>
               <span class="snippet-caption">Cache.key(...) computes the same key CacheCoordinator uses internally</span></div>
             <pre><code class="language-java">cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42"));</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="cache-key-query-string">
+        <h3>Query string in the cache key</h3>
+        <p class="blurb">On by default — /items?page=1 and ?page=2 cache separately. Turn it off for a query param that doesn't affect the response.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · per client</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .cacheKeyIncludesQueryString(false)
+        .build());</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · shared default</span>
+              <span class="snippet-caption">a client's own setting still wins over this</span></div>
+            <pre><code class="language-java">RIP.setCacheKeyIncludesQueryString(false);</code></pre>
           </div>
         </div>
       </div>

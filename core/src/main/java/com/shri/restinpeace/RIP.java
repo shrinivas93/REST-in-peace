@@ -202,6 +202,26 @@ public class RIP {
 	}
 
 	/**
+	 * Sets whether the cache key includes the request's query string, for
+	 * every client not built with a {@link RipClientConfig} that sets its
+	 * own via
+	 * {@link RipClientConfig.Builder#cacheKeyIncludesQueryString(boolean)}.
+	 * Defaults to {@code true} - {@code /items?page=1} and
+	 * {@code /items?page=2} are cached separately, matching today's
+	 * behavior. Turn this off for an endpoint whose query params don't
+	 * affect the response (e.g. an analytics/tracking param), so every
+	 * query-string variant of the same path shares one cache entry instead -
+	 * trading that precision for a higher hit rate. Has no effect on a
+	 * client with no {@link Cache} configured at all.
+	 *
+	 * @param includeQueryString whether the cache key includes the query
+	 *                           string
+	 */
+	public static void setCacheKeyIncludesQueryString(boolean includeQueryString) {
+		RequestExecutor.setDefaultCacheKeyIncludesQueryString(includeQueryString);
+	}
+
+	/**
 	 * Registers a global hook into every request/response made through RIP -
 	 * see {@link RequestInterceptor} for what it can and can't do.
 	 *

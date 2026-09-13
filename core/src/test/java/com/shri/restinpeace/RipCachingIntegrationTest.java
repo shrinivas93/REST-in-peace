@@ -32,4 +32,24 @@ class RipCachingIntegrationTest extends AbstractRipIntegrationTest {
 		assertEquals(2, CACHEABLE_HITS.get());
 	}
 
+	@Test
+	void responseCache_globalCacheKeyIncludesQueryStringDisabled_conflatesDifferentQueryStrings() {
+		RIP.setCacheKeyIncludesQueryString(false);
+		try {
+			LocalApi api = RIP.getClient(LocalApi.class);
+
+			String first = api.getCacheableWithQuery(port, "42", "v1");
+			String second = api.getCacheableWithQuery(port, "42", "v2");
+
+			assertEquals("cached-value", first);
+			// Same entry as the v1 call's - the disabled global default collapses
+			// every query string variant of this path onto one cache key, so this
+			// is a cache hit rather than a second real request.
+			assertEquals("cached-value", second);
+			assertEquals(1, CACHEABLE_HITS.get());
+		} finally {
+			RIP.setCacheKeyIncludesQueryString(true); // restore the default for every other test
+		}
+	}
+
 }
