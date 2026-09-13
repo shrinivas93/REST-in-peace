@@ -78,6 +78,23 @@ public class RestInPeaceHttpException extends RestInPeaceException {
 	 * Whether the response's status is exactly {@code status} - a shorthand
 	 * for {@code getStatus() == status} at a call site (e.g. {@code e.is(404)}).
 	 *
+	 * <p>
+	 * <b>Ordering pitfall:</b> in an if/else chain, check {@code is(specific
+	 * status)} <em>before</em> {@link #isClientError()}/{@link
+	 * #isServerError()}, not after - since every status those two cover
+	 * already falls in their range, a branch for one specific status placed
+	 * after either check is unreachable dead code:
+	 *
+	 * <pre>
+	 * if (e.isClientError()) { ... }   // matches 429 too - reached first
+	 * else if (e.is(429)) { ... }      // dead code: 429 already handled above
+	 * </pre>
+	 *
+	 * <pre>
+	 * if (e.is(429)) { ... }           // specific case checked first
+	 * else if (e.isClientError()) { ... }   // the rest of 4xx
+	 * </pre>
+	 *
 	 * @param status the status to compare against
 	 * @return {@code true} if this exception's status equals {@code status}
 	 */

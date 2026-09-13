@@ -673,6 +673,17 @@ catch (RestInPeaceHttpException e) {
     else if (e.isClientError()) { throw new IllegalArgumentException(); }  // 400-499
 }</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · order is(status) before the range checks</span>
+              <span class="snippet-caption">a specific-status branch after isClientError()/isServerError() is unreachable - that status is already inside the range</span></div>
+            <pre><code class="language-java">// Wrong - e.is(429) never runs
+if (e.isClientError()) { ... }
+else if (e.is(429)) { ... }
+
+// Right - check the specific case first
+if (e.is(429)) { ... }
+else if (e.isClientError()) { ... }</code></pre>
+          </div>
         </div>
       </div>
 

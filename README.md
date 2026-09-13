@@ -891,6 +891,21 @@ catch (RestInPeaceHttpException e) {
 }
 ```
 
+**Ordering pitfall:** check `is(specificStatus)` *before* `isClientError()`/
+`isServerError()`, not after — every status either of those two covers
+already falls in its range, so a specific-status branch placed after one is
+unreachable dead code:
+
+```java
+// Wrong - e.is(429) never runs, since isClientError() already matched it
+if (e.isClientError()) { ... }
+else if (e.is(429)) { ... }
+
+// Right - the specific case is checked first
+if (e.is(429)) { ... }
+else if (e.isClientError()) { ... }
+```
+
 ## Async
 
 Return `CompletableFuture<T>` instead of `T` to fire the request without
