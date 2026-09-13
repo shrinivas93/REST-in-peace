@@ -46,6 +46,22 @@ final class InterceptorDispatcher {
 		INTERCEPTORS.add(interceptor);
 	}
 
+	/**
+	 * Removes one previously registered global interceptor by identity, for
+	 * an embedder that needs to reverse exactly what it added rather than
+	 * every globally registered interceptor (see
+	 * {@link com.shri.restinpeace.RIP#removeInterceptor(RequestInterceptor)}) -
+	 * e.g. a Spring context that registered its own beans on startup and
+	 * must undo only those on shutdown, since another context's interceptors
+	 * sharing this same static registry may still be live.
+	 *
+	 * @param interceptor the interceptor instance to remove; a no-op if it
+	 *                     was never registered (or already removed)
+	 */
+	static void removeInterceptor(RequestInterceptor interceptor) {
+		INTERCEPTORS.remove(interceptor);
+	}
+
 	/** Removes all registered interceptors. */
 	static void clearInterceptors() {
 		INTERCEPTORS.clear();

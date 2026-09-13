@@ -8,6 +8,7 @@ import java.lang.annotation.Target;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPRequestParamMarker;
 import com.shri.restinpeace.constant.HTTPRequestParam;
+import com.shri.restinpeace.constant.RIPConstants;
 
 /**
  * One name/value pair of a {@link FormUrlEncoded @FormUrlEncoded} method's
@@ -31,10 +32,17 @@ public @interface Field {
 	String value();
 
 	/**
-	 * If true, a {@code null} argument throws a
-	 * {@link com.shri.restinpeace.exception.RestInPeaceException} at call time.
+	 * If true, a {@code null} argument with no {@link #defaultValue()} throws
+	 * a {@link com.shri.restinpeace.exception.RestInPeaceException} at call time.
 	 *
 	 * @return whether the field is required
 	 */
 	boolean required() default false;
+
+	/**
+	 * Value used when the argument is {@code null}.
+	 *
+	 * @return the default value
+	 */
+	String defaultValue() default RIPConstants.DEFAULT;
 }

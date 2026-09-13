@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.InputStream;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -119,7 +120,13 @@ public class ReflectiveRestClientValidator {
 
 		Method[] methods = restClient.getMethods();
 
-		Stream.of(methods).forEach(method -> {
+		// A default or static interface method (e.g. a convenience wrapper calling
+		// another method on the same interface) carries no HTTP method annotation
+		// by design and isn't dispatched as an HTTP call at all - see
+		// RestClientInvocationHandler.invoke - so it's exempt from every check
+		// below rather than disqualifying the whole interface.
+		Stream.of(methods).filter(method -> !method.isDefault() && !Modifier.isStatic(method.getModifiers()))
+				.forEach(method -> {
 			long httpMethodAnnotationCount = Stream.of(method.getAnnotations())
 					.filter(annotation -> annotation.annotationType().getAnnotation(HTTPMethodMarker.class) != null)
 					.count();
@@ -322,9 +329,17 @@ public class ReflectiveRestClientValidator {
 
 	private static void validateRetry(Method method, ValidationResult validationResult) {
 		Retry retry = method.getAnnotation(Retry.class);
-		if (retry != null && retry.times() < 1) {
+		if (retry == null) {
+			return;
+		}
+		if (retry.times() < 1) {
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with @Retry but times must be at least 1.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+		if (retry.jitterFactor() < 0.0 || retry.jitterFactor() > 1.0) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Retry but jitterFactor must be between 0.0 and 1.0 inclusive.",
 					method.getDeclaringClass().getName(), method.getName()));
 		}
 	}
@@ -426,6 +441,19 @@ public class ReflectiveRestClientValidator {
 			validationResult.addError(String.format(
 					"The method %s.%s has both a @Url parameter and a static URL '%s' - remove one or the other.",
 					method.getDeclaringClass().getName(), method.getName(), url));
+		}
+
+		// A @Url method bypasses @BaseUrl/a runtime base URL/@PathParam entirely -
+		// there's no URL template left for @PathParam to apply to (see
+		// UrlResolver.resolveUrl) - so a @PathParam alongside @Url is always
+		// silently ignored at runtime rather than doing anything. Catch it here
+		// instead of leaving it a confusing, silently-dead annotation.
+		if (!urlParams.isEmpty() && Stream.of(method.getParameters())
+				.anyMatch(parameter -> parameter.getAnnotation(PathParam.class) != null)) {
+			validationResult.addError(String.format(
+					"The method %s.%s has both a @Url parameter and a @PathParam parameter - @PathParam has no "
+							+ "effect when @Url is used.",
+					method.getDeclaringClass().getName(), method.getName()));
 		}
 	}
 
@@ -559,6 +587,18 @@ public class ReflectiveRestClientValidator {
 				.forEach(urlPathParam -> validationResult.addError(String.format(
 						"The method %s.%s has path param '%s' in its URL that is not annotated on any parameter with @PathParam.",
 						method.getDeclaringClass().getName(), method.getName(), urlPathParam)));
+
+		// The reverse direction: a @PathParam whose name doesn't appear in the URL
+		// at all (a stale annotation left over from a renamed/edited URL template, or
+		// a case-sensitive typo) is never substituted - resolvePathParams's
+		// url.replace("{" + pathParam.value() + "}", ...) is then a silent no-op,
+		// so the literal, unresolved "{name}" token goes out on the wire instead of
+		// the intended value. Caught here instead of only surfacing as a broken
+		// request at call time.
+		methodPathParams.stream().filter(methodPathParam -> !urlPathParams.contains(methodPathParam))
+				.forEach(methodPathParam -> validationResult.addError(String.format(
+						"The method %s.%s has a @PathParam('%s') that does not appear as '{%s}' in its URL.",
+						method.getDeclaringClass().getName(), method.getName(), methodPathParam, methodPathParam)));
 	}
 
 	private static boolean isAbsoluteUrl(String url) {

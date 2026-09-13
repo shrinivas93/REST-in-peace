@@ -256,6 +256,24 @@ class RestInPeaceClientBeanWiringTest {
 		}
 	}
 
+	@Test
+	void closingTheContext_removesItsGloballyRegisteredInterceptor_leavingItOffForCallsMadeAfterward() {
+		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(
+				GlobalInterceptorConfig.class)) {
+			context.getBean(WiringApi.class).getData(port);
+			assertEquals("true", lastRequestHeaders.get().getFirst("X-Global"),
+					"sanity check - the interceptor should still apply while the context is open");
+		}
+		// Context closed above - RestInPeaceAutoConfiguration.destroy() should have
+		// removed exactly the interceptor bean it registered from RIP's shared,
+		// JVM-static interceptor registry (previously it never did, so this
+		// interceptor - and every other closed context's own - would have kept
+		// applying to every RIP client for the rest of the JVM's life).
+		com.shri.restinpeace.RIP.getClient(WiringApi.class).getData(port);
+
+		assertEquals(null, lastRequestHeaders.get().getFirst("X-Global"));
+	}
+
 	@Configuration
 	@EnableRestInPeaceClients(basePackages = "com.shri.restinpeace.spring.beanwiring")
 	static class QualifiedCacheConfig {

@@ -15,6 +15,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
+import org.apache.http.impl.nio.client.HttpAsyncClients;
+
 import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
@@ -46,6 +49,7 @@ import kong.unirest.HttpRequest;
 import kong.unirest.HttpRequestWithBody;
 import kong.unirest.HttpResponse;
 import kong.unirest.MultipartBody;
+import kong.unirest.RequestBodyEntity;
 import kong.unirest.Unirest;
 import kong.unirest.UnirestInstance;
 
@@ -150,7 +154,39 @@ public class RequestExecutor {
 		if (config.getObjectMapper() != null) {
 			instance.config().setObjectMapper(config.getObjectMapper());
 		}
+		if (daemonThreadsForAsync) {
+			configureDaemonAsyncClient(instance.config());
+		}
 		return instance;
+	}
+
+	private static volatile boolean daemonThreadsForAsync = false;
+
+	/**
+	 * The non-{@code RIP}-facing half of {@link com.shri.restinpeace.RIP#useDaemonThreadsForAsync()} -
+	 * living here (rather than directly in {@code RIP}) so the daemon-thread
+	 * setting can also be applied to a {@link RipClientConfig}-backed
+	 * client's own dedicated {@code UnirestInstance} in {@link #buildInstance},
+	 * not just the shared static {@code Unirest} client. Sets a static flag
+	 * first so every {@code RequestExecutor(RipClientConfig)} constructed
+	 * from this point on picks it up in {@link #buildInstance} too - a
+	 * config'd client built *before* this is called keeps its own async
+	 * client as constructed, the same "call once at startup, before building
+	 * any client" requirement every other global RIP setting already has.
+	 */
+	public static void useDaemonThreadsForAsync() {
+		daemonThreadsForAsync = true;
+		configureDaemonAsyncClient(Unirest.config());
+	}
+
+	private static void configureDaemonAsyncClient(kong.unirest.Config unirestConfig) {
+		CloseableHttpAsyncClient client = HttpAsyncClients.custom().setThreadFactory(runnable -> {
+			Thread thread = new Thread(runnable, "rip-async-client");
+			thread.setDaemon(true);
+			return thread;
+		}).build();
+		client.start();
+		unirestConfig.asyncClient(client);
 	}
 
 	/**
@@ -162,6 +198,16 @@ public class RequestExecutor {
 	 */
 	public static void addInterceptor(RequestInterceptor interceptor) {
 		InterceptorDispatcher.addInterceptor(interceptor);
+	}
+
+	/**
+	 * Removes one previously registered global interceptor by identity. See
+	 * {@link com.shri.restinpeace.RIP#removeInterceptor(RequestInterceptor)}.
+	 *
+	 * @param interceptor the interceptor to remove
+	 */
+	public static void removeInterceptor(RequestInterceptor interceptor) {
+		InterceptorDispatcher.removeInterceptor(interceptor);
 	}
 
 	/** Removes all registered interceptors. */
@@ -399,17 +445,19 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return the decoded body, or {@code null} for a {@code void} method
 	 */
 	public Object finishGeneratedSync(HttpRequest<?> request, RequestContext context, Class<?> returnType,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, returnType, context,
 				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
-				retryBackoffMultiplier, retryOnStatus);
+				retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return responseDecoder.decodeOrThrow(response, errorType, returnType);
 	}
 
@@ -427,16 +475,18 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return the response body's raw bytes
 	 */
 	public byte[] finishGeneratedSyncBytes(HttpRequest<?> request, RequestContext context, Class<?> errorType,
 			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
-			int[] retryOnStatus) {
+			double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 	}
 
@@ -455,16 +505,18 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return {@code destination}, with the response body written into it
 	 */
 	public File finishGeneratedSyncFile(HttpRequest<?> request, RequestContext context, File destination,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 		return writeToFile(destination, bytes);
 	}
@@ -488,17 +540,19 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return the response wrapped with its status code and headers
 	 */
 	public RipResponse<?> finishGeneratedSyncRipResponse(HttpRequest<?> request, RequestContext context,
 			Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, innerType, context,
 				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
-				retryBackoffMultiplier, retryOnStatus);
+				retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return (RipResponse<?>) ResponseDecoder.wrapResponse(response,
 				responseDecoder.decodeOrThrow(response, errorType, innerType));
 	}
@@ -517,16 +571,18 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return the response's raw bytes, wrapped with its status code and headers
 	 */
 	public RipResponse<byte[]> finishGeneratedSyncRipResponseBytes(HttpRequest<?> request, RequestContext context,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus);
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		@SuppressWarnings("unchecked")
 		RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
 				responseDecoder.decodeOrThrow(response, errorType, byte[].class));
@@ -549,17 +605,19 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return a future of the decoded body, or of {@code null} for a {@code void} method
 	 */
 	public CompletableFuture<?> finishGeneratedAsync(HttpRequest<?> request, RequestContext context,
 			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, returnType, context,
 				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, returnType));
 	}
 
@@ -577,16 +635,18 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return a future of the response body's raw bytes
 	 */
 	public CompletableFuture<byte[]> finishGeneratedAsyncBytes(HttpRequest<?> request, RequestContext context,
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class));
 	}
 
@@ -605,16 +665,18 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return a future of {@code destination}, with the response body written into it
 	 */
 	public CompletableFuture<File> finishGeneratedAsyncFile(HttpRequest<?> request, RequestContext context,
 			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> writeToFile(destination, (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
 	}
 
@@ -637,17 +699,19 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return a future of the response wrapped with its status code and headers
 	 */
 	public CompletableFuture<RipResponse<?>> finishGeneratedAsyncRipResponse(HttpRequest<?> request,
 			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
-			long retryDelayMillis, double retryBackoffMultiplier, int[] retryOnStatus) {
+			long retryDelayMillis, double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, innerType, context,
 				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus)
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> (RipResponse<?>) ResponseDecoder.wrapResponse(response,
 						responseDecoder.decodeOrThrow(response, errorType, innerType)));
 	}
@@ -666,16 +730,18 @@ public class RequestExecutor {
 	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryBackoffMultiplier {@code @Retry}'s {@code backoffMultiplier},
 	 *                              meaningless if {@code hasRetry} is {@code false}
+	 * @param retryJitterFactor     {@code @Retry}'s {@code jitterFactor}, meaningless
+	 *                              if {@code hasRetry} is {@code false}
 	 * @param retryOnStatus         {@code @Retry}'s {@code retryOnStatus}, meaningless
 	 *                              if {@code hasRetry} is {@code false}
 	 * @return a future of the response's raw bytes, wrapped with its status code and headers
 	 */
 	public CompletableFuture<RipResponse<byte[]>> finishGeneratedAsyncRipResponseBytes(HttpRequest<?> request,
 			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
-			double retryBackoffMultiplier, int[] retryOnStatus) {
+			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryOnStatus).thenApply(response -> {
+				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus).thenApply(response -> {
 					@SuppressWarnings("unchecked")
 					RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
 							responseDecoder.decodeOrThrow(response, errorType, byte[].class));
@@ -992,7 +1058,7 @@ public class RequestExecutor {
 
 			Part part = parameter.getAnnotation(Part.class);
 			if (part != null) {
-				Object value = resolveValue(argValue, part.required(), RIPConstants.DEFAULT, part.value());
+				Object value = resolveValue(argValue, part.required(), part.defaultValue(), part.value());
 				if (value != null) {
 					applyPartValue(multipartBody, part.value(), part.fileName(), value);
 				}
@@ -1008,7 +1074,7 @@ public class RequestExecutor {
 
 			Field field = parameter.getAnnotation(Field.class);
 			if (field != null) {
-				Object value = resolveValue(argValue, field.required(), RIPConstants.DEFAULT, field.value());
+				Object value = resolveValue(argValue, field.required(), field.defaultValue(), field.value());
 				if (value != null) {
 					appendFormField(formFields, field.value(), value);
 				}
@@ -1141,11 +1207,28 @@ public class RequestExecutor {
 	 *
 	 * @param request   the request to add headers to
 	 * @param headerMap the {@code @HeaderMap} parameter's argument value; a
-	 *                  {@code null}-valued entry is skipped
+	 *                  {@code null}-valued entry is skipped. A {@code Collection}
+	 *                  value adds one header per element under the same name,
+	 *                  matching {@link #applyQueryValue}'s own handling of a
+	 *                  {@code Collection} value, instead of one header with a
+	 *                  single mangled {@code toString()} value.
 	 */
 	public void applyHeaderMap(HttpRequest<?> request, Map<?, ?> headerMap) {
 		headerMap.forEach((name, value) -> {
-			if (value != null) {
+			if (value == null) {
+				return;
+			}
+			if (value instanceof Collection) {
+				boolean first = true;
+				for (Object element : (Collection<?>) value) {
+					if (first) {
+						request.headerReplace(String.valueOf(name), String.valueOf(element));
+						first = false;
+					} else {
+						request.header(String.valueOf(name), String.valueOf(element));
+					}
+				}
+			} else {
 				request.headerReplace(String.valueOf(name), String.valueOf(value));
 			}
 		});
@@ -1157,6 +1240,17 @@ public class RequestExecutor {
 				method));
 	}
 
+	/**
+	 * Applies {@code value} as the request's body - a {@code String} value
+	 * verbatim, anything else through the configured {@code ObjectMapper}.
+	 * Only defaults the {@code Content-Type} to {@code application/json} for
+	 * a non-{@code String} value when the request doesn't already carry an
+	 * <em>explicit</em> one - {@link #applyFixedHeaders} runs before this, so
+	 * a method combining a {@code @Headers({"Content-Type: ..."})} entry
+	 * (e.g. for a non-JSON-serializing custom {@code ObjectMapper}) with a
+	 * {@code @Body} parameter has its explicit choice honored instead of
+	 * silently overwritten by this default.
+	 */
 	private HttpRequest<?> applyBody(HttpRequest<?> request, Object value, String unsupportedMessage) {
 		if (!(request instanceof HttpRequestWithBody)) {
 			throw new RestInPeaceException(unsupportedMessage);
@@ -1165,7 +1259,21 @@ public class RequestExecutor {
 		if (value instanceof String) {
 			return bodyRequest.body((String) value);
 		}
-		return bodyRequest.body(value).contentType("application/json");
+		// Read before body(value), not after - unlike a header that was actually
+		// never set (Unirest's own Headers.getFirst(...) returns "" rather than
+		// null for one that's absent, so an emptiness check, not just a null
+		// check, is what "no explicit Content-Type" actually looks like here),
+		// applyFixedHeaders (a @Headers entry) is the only thing that could have
+		// set one by this point - reading any later, after body(value) itself
+		// runs, risks seeing whatever Unirest's own RequestBodyEntity defaults
+		// it to internally and wrongly treating that as "explicit".
+		String existingContentType = request.getHeaders().getFirst("Content-Type");
+		boolean hasExplicitContentType = existingContentType != null && !existingContentType.isEmpty();
+		RequestBodyEntity bodyEntity = bodyRequest.body(value);
+		if (!hasExplicitContentType) {
+			bodyEntity = bodyEntity.contentType("application/json");
+		}
+		return bodyEntity;
 	}
 
 }
