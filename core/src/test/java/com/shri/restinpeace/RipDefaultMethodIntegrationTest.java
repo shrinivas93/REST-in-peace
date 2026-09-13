@@ -21,7 +21,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 class RipDefaultMethodIntegrationTest extends AbstractRipIntegrationTest {
 
 	@RestClient
-	private interface ApiWithDefaultMethod {
+	public interface ApiWithDefaultMethod {
 		@GET("http://localhost:{port}/items/{id}")
 		String get(@PathParam("port") int port, @PathParam("id") String id);
 

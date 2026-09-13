@@ -106,13 +106,24 @@ public class RestClientInvocationHandler implements InvocationHandler {
 	 * A {@link MethodHandles.Lookup} with {@code PRIVATE}-mode access to
 	 * {@code declaringClass}, needed by {@link MethodHandles.Lookup#unreflectSpecial}
 	 * to invoke a default method as the interface's own code would. Prefers
-	 * {@link #PRIVATE_LOOKUP_IN} (Java 9+, always works for an exported,
-	 * non-sealed interface like every {@code @RestClient} - no
-	 * {@code --add-opens} needed); falls back to directly instantiating
-	 * {@code Lookup} via its non-public constructor otherwise, for an
-	 * actual Java 8 runtime - a trick whose exact constructor signature has
-	 * changed across JDK versions since, so it's deliberately only reached
-	 * when the Java 9+ API isn't available at all.
+	 * {@link #PRIVATE_LOOKUP_IN} (Java 9+, always works regardless of
+	 * {@code declaringClass}'s own visibility - no {@code --add-opens}
+	 * needed); falls back to directly instantiating {@code Lookup} via its
+	 * non-public constructor otherwise, for an actual Java 8 runtime.
+	 *
+	 * <p>
+	 * On that Java 8 fallback specifically, {@code declaringClass} (the
+	 * {@code @RestClient} interface declaring the default method) must
+	 * itself be {@code public} - verified directly against a real Java 8
+	 * runtime; a package-private/private interface throws
+	 * {@code IllegalAccessException: class is not public} from
+	 * {@code unreflectSpecial} despite the {@code PRIVATE}-mode lookup,
+	 * seemingly a Java-8-specific quirk of this constructor trick (every
+	 * {@code @RestClient} interface in this library's own docs/samples is
+	 * already {@code public}, the normal shape for an interface
+	 * {@code RIP.getClient(...)} is called on from arbitrary caller
+	 * packages). Not a concern on Java 9+, where {@link #PRIVATE_LOOKUP_IN}
+	 * is used instead and has no such requirement.
 	 */
 	private static MethodHandles.Lookup createPrivateLookup(Class<?> declaringClass) {
 		try {
