@@ -399,6 +399,26 @@ that buys you and how to opt in.
 Marks an interface as a REST client. Required on every interface passed to
 `RIP.getClient(...)`.
 
+A `default` (or `static`) method on the interface is exempt from every rule
+below and is never dispatched as an HTTP call — it's invoked as ordinary
+Java, letting you add ergonomic wrappers directly on the interface:
+
+```java
+@RestClient
+interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);
+
+    default Optional<User> tryGetUser(String id) {
+        try {
+            return Optional.of(getUser(id));
+        } catch (RestInPeaceHttpException e) {
+            return Optional.empty();
+        }
+    }
+}
+```
+
 ### `@BaseUrl`
 
 Declares the base URL once on the interface, so methods can use a relative
@@ -550,8 +570,9 @@ User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHea
 parameters on the same method — the fixed ones for names you always know,
 the map for everything else. At most one parameter per method may be
 annotated `@QueryMap`, and at most one `@HeaderMap`. Like `@QueryParam`, a
-`@QueryMap` entry whose value is a `Collection` is repeated once per
-element.
+`@QueryMap`/`@HeaderMap` entry whose value is a `Collection` is repeated
+once per element under the same name, instead of one entry with a single
+mangled `toString()` value.
 
 ### `@Headers`
 
@@ -604,9 +625,10 @@ String uploadAvatar(@PathParam("id") String id, @Part("caption") String caption,
 `String` is sent as a plain form field; `File`, `byte[]`, and `InputStream`
 are all sent as a file part. A method can't combine `@Multipart` with a
 `@Body` parameter, and needs at least one `@Part`/`@PartMap` to be worth
-declaring multipart at all. `@Part`'s `required` works the same as
-`@QueryParam`'s — `false` by default, silently skipping a `null` argument;
-`true` throws at call time instead.
+declaring multipart at all. `@Part`'s `required`/`defaultValue` work the
+same as `@QueryParam`'s — a `null` argument falls back to `defaultValue`
+if set, is silently skipped if `required` is `false` (the default), or
+throws at call time if `required` is `true`.
 
 A `byte[]`/`InputStream` part has no filename of its own, so the multipart
 field needs one from somewhere — `@Part`'s `fileName` supplies it (also
@@ -684,10 +706,12 @@ String getToken(@Field("grant_type") String grantType, @Field("client_id") Strin
 
 `@FormUrlEncoded` goes on the method (same HTTP methods `@Body` supports);
 `@Field` goes on each parameter, encoding it as one `name=value` pair, with
-the same `required` semantics as `@QueryParam`/`@Part` (`false` by default,
-silently skipping a `null` argument; `true` throws at call time instead). A
-`Collection` value repeats the key once per element (`tag=a&tag=b`), the
-same convention `@QueryParam` uses. A method can't combine `@FormUrlEncoded`
+the same `required`/`defaultValue` semantics as `@QueryParam`/`@Part` (a
+`null` argument falls back to `defaultValue` if set, is silently skipped if
+`required` is `false` — the default — or throws at call time if `required`
+is `true`). A `Collection` value repeats the key once per element
+(`tag=a&tag=b`), the same convention `@QueryParam` uses. A method can't
+combine `@FormUrlEncoded`
 with `@Body` or `@Multipart` — a method has exactly one body-encoding
 strategy, if any.
 
@@ -866,8 +890,12 @@ own afterward. Two ways to deal with that:
 
 - Call `RIP.useDaemonThreadsForAsync()` once at startup, before making any
   async call — daemon threads don't keep the JVM alive, so your program
-  exits normally once its own work is done. Not the default, since it
-  reconfigures Unirest's shared global client; skip this if your app
+  exits normally once its own work is done. Covers every client sharing the
+  app-wide static Unirest client *and* every `RipClientConfig`-backed
+  client (its own dedicated Unirest instance) constructed after this call —
+  a config'd client already built before this runs keeps whatever async
+  client it was constructed with, so call this first. Not the default,
+  since it reconfigures Unirest's shared global client; skip this if your app
   already configures Unirest's async client itself.
 - Or call `kong.unirest.Unirest.shutDown()` when you're done making
   requests.
@@ -891,6 +919,26 @@ is what that delay is multiplied by after each attempt (default 2.0 - use
 controls which HTTP status codes count as retryable (default `429, 502, 503,
 504`) - a transport error is always retried regardless of this list. `times`
 must be at least 1, or the method fails validation.
+
+If the failed response itself carries a `Retry-After` header (delta-seconds
+or an HTTP-date), that value is used for the next wait instead of the
+computed `delayMillis`/`backoffMultiplier` one - a server that tells you how
+long to back off (common on `429`/`503`) is more authoritative than a value
+fixed at compile time. `backoffMultiplier` still applies on top of it for
+any further retry, so a run of `Retry-After`-guided waits keeps growing if
+the server keeps asking for longer ones. A transport failure has no
+response to read a header from, so it always falls back to `delayMillis`.
+
+`jitterFactor` (default `0.0`, must be between `0.0` and `1.0`) randomizes
+each *computed* delay (never a `Retry-After` one, which is already an
+explicit server instruction) by up to that fraction in either direction -
+`delay * (1 ± jitterFactor)` - so that many callers who all started
+retrying at the same moment (every replica of a horizontally-scaled service
+hitting the same downstream) don't retry in exact lockstep:
+
+```java
+@Retry(times = 3, delayMillis = 200, backoffMultiplier = 2.0, jitterFactor = 0.2)
+```
 
 `@Retry` works on both a synchronous return type and a `CompletableFuture`
 one - retrying an async call schedules the next attempt on a background
@@ -986,6 +1034,18 @@ If no mapper ends up configured at all (only possible by explicitly
 clearing one with `setObjectMapper(null)`), RIP fails with a
 `RestInPeaceException` naming the problem, rather than a bare Unirest
 exception with no mention of RIP.
+
+A non-`String` `@Body` value defaults its request's `Content-Type` to
+`application/json`, but only when nothing already set one explicitly —
+combine a non-JSON-serializing `ObjectMapper` (XML, CBOR, ...) with a
+matching `@Headers({"Content-Type: application/xml"})` entry on the same
+method and that explicit choice is honored instead of silently overwritten:
+
+```java
+@POST("https://api.example.com/orders")
+@Headers({ "Content-Type: application/xml" })
+String createOrder(@Body Order order);
+```
 
 For anything else `RipClientConfig` doesn't cover — TLS/mutual-TLS,
 connection pooling, cookies, compression, and everything else

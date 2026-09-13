@@ -74,6 +74,18 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface StalePathParam {
+		@GET("http://example.com/{id}")
+		String foo(@PathParam("id") String id, @PathParam("userId") String userId);
+	}
+
+	@RestClient
+	public interface UrlParamWithPathParam {
+		@GET
+		String foo(@Url String url, @PathParam("id") String id);
+	}
+
+	@RestClient
 	public interface BodyOnGet {
 		@GET("http://example.com")
 		String foo(@Body String body);
@@ -164,6 +176,13 @@ class ReflectiveRestClientValidatorTest {
 	public interface InvalidRetryTimes {
 		@GET("http://example.com")
 		@Retry(times = 0)
+		String foo();
+	}
+
+	@RestClient
+	public interface InvalidRetryJitterFactor {
+		@GET("http://example.com")
+		@Retry(jitterFactor = 1.5)
 		String foo();
 	}
 
@@ -578,6 +597,22 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@Test
+	void validate_stalePathParam_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(StalePathParam.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has a @PathParam('userId') that does not appear as '{userId}' in its URL"));
+	}
+
+	@Test
+	void validate_urlParamWithPathParam_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(UrlParamWithPathParam.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has both a @Url parameter and a @PathParam parameter"));
+	}
+
+	@Test
 	void validate_bodyOnGet_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(BodyOnGet.class));
@@ -651,6 +686,14 @@ class ReflectiveRestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(InvalidRetryTimes.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("times must be at least 1"));
+	}
+
+	@Test
+	void validate_retryWithOutOfRangeJitterFactor_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(InvalidRetryJitterFactor.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("jitterFactor must be between 0.0 and 1.0 inclusive"));
 	}
 
 	@Test

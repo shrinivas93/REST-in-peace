@@ -276,6 +276,17 @@ interface UserApi {
 
 UserApi api = RIP.getClient(UserApi.class);</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · default method</span>
+              <span class="snippet-caption">invoked as ordinary Java, never as an HTTP call</span></div>
+            <pre><code class="language-java">default Optional<User> tryGetUser(String id) {
+    try {
+        return Optional.of(getUser(id));
+    } catch (RestInPeaceHttpException e) {
+        return Optional.empty();
+    }
+}</code></pre>
+          </div>
         </div>
       </div>
 
@@ -407,7 +418,7 @@ String search(@HeaderParam(value = "Authorization", required = true) String toke
 
       <div class="feature" id="query-header-map">
         <h3>@QueryMap / @HeaderMap</h3>
-        <p class="blurb">For names not known until runtime — an open-ended filter set, caller-supplied headers. One entry becomes one param; <code>null</code> entries are skipped, not thrown.</p>
+        <p class="blurb">For names not known until runtime — an open-ended filter set, caller-supplied headers. One entry becomes one param; <code>null</code> entries are skipped, not thrown; a <code>Collection</code> entry value repeats the param once per element.</p>
         <div class="snippets">
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Basic · dynamic filters</span></div>
@@ -455,6 +466,13 @@ String createItem(@Body Item item);</code></pre>
             <div class="snippet-head"><span class="snippet-tag">Alternate · raw JSON string</span></div>
             <pre><code class="language-java">@POST("https://api.example.com/items/raw")
 String createRaw(@Body String rawJson);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · non-JSON body</span>
+              <span class="snippet-caption">an explicit Content-Type wins over the application/json default</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/orders")
+@Headers({ "Content-Type: application/xml" })
+String createOrder(@Body Order order);</code></pre>
           </div>
         </div>
       </div>
@@ -603,7 +621,7 @@ userApi.getUserAsync("42").thenAccept(user -> System.out.println(user.name));</c
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · keep the JVM exiting</span>
-              <span class="snippet-caption">not the default — reconfigures the shared client</span></div>
+              <span class="snippet-caption">not the default — call before building any client, covers RipClientConfig-backed ones too</span></div>
             <pre><code class="language-java">RIP.useDaemonThreadsForAsync();   // call once at startup, before any async call</code></pre>
           </div>
           <div class="snippet spring">
@@ -651,7 +669,7 @@ catch (RestInPeaceHttpException e) {
 
       <div class="feature" id="retry">
         <h3>@Retry &amp; idempotency keys</h3>
-        <p class="blurb">Retries on transport errors or a configurable status set; <code>idempotent=true</code> makes retrying a POST safe too.</p>
+        <p class="blurb">Retries on transport errors or a configurable status set; honors a response's own <code>Retry-After</code> header when present; <code>idempotent=true</code> makes retrying a POST safe too.</p>
         <div class="snippets">
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Basic</span>
@@ -663,6 +681,11 @@ User getUser(@PathParam("id") String id);</code></pre>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · fixed delay</span></div>
             <pre><code class="language-java">@Retry(times = 3, delayMillis = 500, backoffMultiplier = 1.0)   // no exponential backoff</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · jittered backoff</span>
+              <span class="snippet-caption">avoids many replicas retrying in lockstep; overridden per-attempt by a Retry-After header when the response has one</span></div>
+            <pre><code class="language-java">@Retry(times = 3, delayMillis = 200, backoffMultiplier = 2.0, jitterFactor = 0.2)</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · safe retry for POST</span>

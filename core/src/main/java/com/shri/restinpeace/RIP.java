@@ -3,9 +3,6 @@ package com.shri.restinpeace;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Proxy;
 
-import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
-import org.apache.http.impl.nio.client.HttpAsyncClients;
-
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.internal.RequestExecutor;
 import com.shri.restinpeace.cache.Cache;
@@ -155,17 +152,20 @@ public class RIP {
 	 * Unirest's async client, so a short-lived program can exit on its own
 	 * after an async call instead of hanging on non-daemon I/O threads. Not
 	 * the default, since it reconfigures Unirest's shared global client -
-	 * call this once at startup only if your app doesn't already configure
-	 * Unirest's async client itself.
+	 * call this once at startup, before building any client, only if your
+	 * app doesn't already configure Unirest's async client itself.
+	 *
+	 * <p>
+	 * Covers every client sharing the app-wide static {@code Unirest} client
+	 * <em>and</em> every {@link RipClientConfig}-backed client with its own
+	 * dedicated {@code UnirestInstance} constructed after this call - a
+	 * config'd client already built before this runs keeps whatever async
+	 * client it was constructed with, the same "call once at startup, before
+	 * building any client" requirement every other global RIP setting
+	 * ({@link #setObjectMapper}, {@link #setCache}) already has.
 	 */
 	public static void useDaemonThreadsForAsync() {
-		CloseableHttpAsyncClient client = HttpAsyncClients.custom().setThreadFactory(runnable -> {
-			Thread thread = new Thread(runnable, "rip-async-client");
-			thread.setDaemon(true);
-			return thread;
-		}).build();
-		client.start();
-		Unirest.config().asyncClient(client);
+		RequestExecutor.useDaemonThreadsForAsync();
 	}
 
 	/**
@@ -212,7 +212,28 @@ public class RIP {
 	}
 
 	/**
-	 * Removes all registered interceptors. Mainly useful for tests.
+	 * Removes one previously registered global interceptor by identity,
+	 * leaving every other registered interceptor - including other
+	 * instances of the same class - untouched. For an embedder (e.g. a
+	 * dependency-injection framework's auto-configuration) that registers
+	 * its own beans as global interceptors on startup and needs to reverse
+	 * exactly those on shutdown, since {@link #clearInterceptors()} would
+	 * also wipe out interceptors some other, still-live part of the same
+	 * JVM registered (this registry is shared process-wide, not scoped to
+	 * any one caller).
+	 *
+	 * @param interceptor the interceptor instance to remove; a no-op if it
+	 *                     was never registered (or already removed)
+	 */
+	public static void removeInterceptor(RequestInterceptor interceptor) {
+		RequestExecutor.removeInterceptor(interceptor);
+	}
+
+	/**
+	 * Removes all registered interceptors. Mainly useful for tests -
+	 * removes every interceptor registered by anyone, not just the caller's
+	 * own; see {@link #removeInterceptor(RequestInterceptor)} for a
+	 * narrower alternative.
 	 */
 	public static void clearInterceptors() {
 		RequestExecutor.clearInterceptors();

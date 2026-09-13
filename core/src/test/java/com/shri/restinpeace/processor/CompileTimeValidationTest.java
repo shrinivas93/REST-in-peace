@@ -113,6 +113,75 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void stalePathParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StalePathParam", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.PathParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StalePathParam {\n" //
+				+ "  @GET(\"http://localhost/items/{id}\")\n" //
+				+ "  String getItem(@PathParam(\"id\") String id, @PathParam(\"userId\") String userId);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "has a @PathParam('userId') that does not appear as '{userId}' in its URL");
+	}
+
+	@Test
+	void urlParamWithPathParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("UrlParamWithPathParam", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.PathParam;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Url;\n" //
+				+ "@RestClient\n" //
+				+ "public interface UrlParamWithPathParam {\n" //
+				+ "  @GET\n" //
+				+ "  String getItem(@Url String url, @PathParam(\"id\") String id);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "has both a @Url parameter and a @PathParam parameter");
+	}
+
+	@Test
+	void invalidRetryJitterFactor_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("InvalidRetryJitterFactor", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.retry.Retry;\n" //
+				+ "@RestClient\n" //
+				+ "public interface InvalidRetryJitterFactor {\n" //
+				+ "  @GET(\"http://localhost/items\")\n" //
+				+ "  @Retry(jitterFactor = 1.5)\n" //
+				+ "  String getItem();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with @Retry but jitterFactor must be between 0.0 and 1.0 inclusive");
+	}
+
+	@Test
+	void interfaceWithDefaultMethod_compilesCleanWithoutDisqualifyingTheWholeInterfaceAtCompileTime() throws IOException {
+		// The default method itself still disqualifies codegen for this whole
+		// interface (RestClientProcessor.processRestClient falls back to the
+		// reflective proxy entirely rather than generating for the one abstract
+		// method) - what this proves is only that CompileTimeRestClientValidator no
+		// longer fails the *build* over it, mirroring ReflectiveRestClientValidator's
+		// own exemption for a default/static method at runtime.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ApiWithDefaultMethod", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.PathParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ApiWithDefaultMethod {\n" //
+				+ "  @GET(\"http://localhost/items/{id}\")\n" //
+				+ "  String getItem(@PathParam(\"id\") String id);\n" //
+				+ "  default String greeting() { return \"hi\"; }\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
 	void bodyOnGet_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("BodyOnGet", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //

@@ -8,6 +8,7 @@ import java.lang.annotation.Target;
 
 import com.shri.restinpeace.annotation.method.meta.HTTPRequestParamMarker;
 import com.shri.restinpeace.constant.HTTPRequestParam;
+import com.shri.restinpeace.constant.RIPConstants;
 
 /**
  * One field of a {@link Multipart @Multipart} method's multipart body. Only
@@ -41,10 +42,18 @@ public @interface Part {
 	String fileName() default "";
 
 	/**
-	 * If true, a {@code null} argument throws a
-	 * {@link com.shri.restinpeace.exception.RestInPeaceException} at call time.
+	 * If true, a {@code null} argument with no {@link #defaultValue()} throws
+	 * a {@link com.shri.restinpeace.exception.RestInPeaceException} at call time.
 	 *
 	 * @return whether the part is required
 	 */
 	boolean required() default false;
+
+	/**
+	 * Value used when the argument is {@code null} - sent as a plain
+	 * {@code String} part, same as if it had been the argument itself.
+	 *
+	 * @return the default value
+	 */
+	String defaultValue() default RIPConstants.DEFAULT;
 }

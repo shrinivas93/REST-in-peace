@@ -81,7 +81,10 @@ import com.shri.restinpeace.constant.HTTPMethod;
  * (a {@code CompletableFuture} return type, ...) is silently skipped in its
  * entirety and left to the reflective proxy - generating a
  * partially-correct implementation would be worse than not generating one
- * at all.
+ * at all. A default method itself is fully supported by the reflective
+ * proxy it falls back to (see
+ * {@code com.shri.restinpeace.proxy.RestClientInvocationHandler}) - it's
+ * just not (yet) one this processor generates code for.
  *
  * <p>
  * Before any of that, every {@code @RestClient} interface this processor
@@ -245,10 +248,10 @@ public class RestClientProcessor extends AbstractProcessor {
 	private RetryModel retryModelOf(ExecutableElement methodElement) {
 		Retry retry = methodElement.getAnnotation(Retry.class);
 		if (retry == null) {
-			return new RetryModel(false, 0, 0L, 1.0, new int[0], false);
+			return new RetryModel(false, 0, 0L, 1.0, 0.0, new int[0], false);
 		}
 		return new RetryModel(true, retry.times(), retry.delayMillis(), retry.backoffMultiplier(),
-				retry.retryOnStatus(), retry.idempotent());
+				retry.jitterFactor(), retry.retryOnStatus(), retry.idempotent());
 	}
 
 	private String[] headerEntriesOf(ExecutableElement methodElement) {
@@ -455,8 +458,8 @@ public class RestClientProcessor extends AbstractProcessor {
 			return new ParamModel(ParamKind.BODY, "", javaParamName, javaTypeName, false, "", "");
 		}
 		if (part != null) {
-			return new ParamModel(ParamKind.PART, part.value(), javaParamName, javaTypeName, part.required(), "",
-					part.fileName());
+			return new ParamModel(ParamKind.PART, part.value(), javaParamName, javaTypeName, part.required(),
+					part.defaultValue(), part.fileName());
 		}
 		if (partMap != null) {
 			return isMapType(parameter.asType())
@@ -464,8 +467,8 @@ public class RestClientProcessor extends AbstractProcessor {
 					: null;
 		}
 		if (field != null) {
-			return new ParamModel(ParamKind.FIELD, field.value(), javaParamName, javaTypeName, field.required(), "",
-					"");
+			return new ParamModel(ParamKind.FIELD, field.value(), javaParamName, javaTypeName, field.required(),
+					field.defaultValue(), "");
 		}
 		if (fieldMap != null) {
 			return isMapType(parameter.asType())
@@ -647,7 +650,8 @@ public class RestClientProcessor extends AbstractProcessor {
 
 		String errorTypeLiteral = method.errorTypeClassName == null ? "null" : method.errorTypeClassName + ".class";
 		String retryArgsLiteral = method.retry.hasRetry + ", " + method.retry.times + ", " + method.retry.delayMillis
-				+ "L, " + method.retry.backoffMultiplier + ", " + intArrayLiteral(method.retry.retryOnStatus);
+				+ "L, " + method.retry.backoffMultiplier + ", " + method.retry.jitterFactor + ", "
+				+ intArrayLiteral(method.retry.retryOnStatus);
 		boolean async = method.returnModel.isAsync;
 
 		switch (method.returnModel.kind) {
@@ -741,9 +745,8 @@ public class RestClientProcessor extends AbstractProcessor {
 			return;
 		case PART:
 			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
-					.append(", ").append(param.required)
-					.append(", com.shri.restinpeace.constant.RIPConstants.DEFAULT, ")
-					.append(stringLiteral(param.name)).append(");\n");
+					.append(", ").append(param.required).append(", ").append(stringLiteral(param.defaultValue))
+					.append(", ").append(stringLiteral(param.name)).append(");\n");
 			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.applyPartValue(__ripMultipart, ")
 					.append(stringLiteral(param.name)).append(", ").append(stringLiteral(param.fileName))
 					.append(", __ripValue); }\n\t\t}\n");
@@ -760,9 +763,8 @@ public class RestClientProcessor extends AbstractProcessor {
 			return;
 		case FIELD:
 			out.append("\t\t{\n\t\t\tObject __ripValue = this.ripProcessor.resolveValue(").append(param.javaParamName)
-					.append(", ").append(param.required)
-					.append(", com.shri.restinpeace.constant.RIPConstants.DEFAULT, ")
-					.append(stringLiteral(param.name)).append(");\n");
+					.append(", ").append(param.required).append(", ").append(stringLiteral(param.defaultValue))
+					.append(", ").append(stringLiteral(param.name)).append(");\n");
 			out.append("\t\t\tif (__ripValue != null) { this.ripProcessor.appendFormField(__ripFormFields, ")
 					.append(stringLiteral(param.name)).append(", __ripValue); }\n\t\t}\n");
 			return;
@@ -951,15 +953,17 @@ public class RestClientProcessor extends AbstractProcessor {
 		final int times;
 		final long delayMillis;
 		final double backoffMultiplier;
+		final double jitterFactor;
 		final int[] retryOnStatus;
 		final boolean idempotent;
 
-		RetryModel(boolean hasRetry, int times, long delayMillis, double backoffMultiplier, int[] retryOnStatus,
-				boolean idempotent) {
+		RetryModel(boolean hasRetry, int times, long delayMillis, double backoffMultiplier, double jitterFactor,
+				int[] retryOnStatus, boolean idempotent) {
 			this.hasRetry = hasRetry;
 			this.times = times;
 			this.delayMillis = delayMillis;
 			this.backoffMultiplier = backoffMultiplier;
+			this.jitterFactor = jitterFactor;
 			this.retryOnStatus = retryOnStatus;
 			this.idempotent = idempotent;
 		}

@@ -449,6 +449,62 @@ class MockRestServerTest {
 	}
 
 	@Test
+	void retry_withRetryAfterHeader_waitsTheHeaderValueInsteadOfTheComputedDelay() {
+		server.onFlaky(HTTPMethod.POST, "/rate-limited", 1, MockResponse.status(503, "").header("Retry-After", "0"),
+				MockResponse.ok("ok"));
+
+		String result = api.createWithRetryAfter("{}");
+
+		assertEquals("ok", result);
+		List<RecordedRequest> requests = server.getRecordedRequests();
+		assertEquals(2, requests.size());
+		Duration gap = Duration.between(requests.get(0).getReceivedAt(), requests.get(1).getReceivedAt());
+		assertTrue(gap.toMillis() < 2000,
+				"Expected the Retry-After: 0 header to override the 5000ms configured delayMillis, waited "
+						+ gap.toMillis() + "ms");
+	}
+
+	@Test
+	void body_withExplicitContentTypeHeader_isNotOverriddenByTheJsonDefault() {
+		server.on(HTTPMethod.POST, "/xml-orders", MockResponse.ok("ok"));
+
+		api.createXmlOrder(new MockServerTestApi.XmlPayload("sku-1"));
+
+		RecordedRequest request = server.getRecordedRequests().get(0);
+		assertEquals("application/xml", request.getHeader("Content-Type"));
+	}
+
+	@Test
+	void headerMap_withCollectionValue_repeatsTheHeaderOncePerElement() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+
+		api.getOrderWithHeaderMap("abc123", singletonMap("X-Tag", Arrays.asList("a", "b")));
+
+		RecordedRequest request = server.getRecordedRequests().get(0);
+		assertEquals(Arrays.asList("a", "b"), request.getHeaders().get("X-Tag"));
+	}
+
+	@Test
+	void part_withNullArgumentAndDefaultValue_sendsTheDefault() {
+		server.on(HTTPMethod.POST, "/upload", MockResponse.ok("ok"));
+
+		api.uploadWithDefaultCaption(null, "file-bytes".getBytes());
+
+		RecordedRequest request = server.getRecordedRequests().get(0);
+		assertEquals("untitled", request.getParts().get(0).getContentAsString());
+	}
+
+	@Test
+	void field_withNullArgumentAndDefaultValue_sendsTheDefault() {
+		server.on(HTTPMethod.POST, "/oauth/token", MockResponse.ok("ok"));
+
+		api.getTokenWithDefaultScope("client_credentials", null);
+
+		RecordedRequest request = server.getRecordedRequests().get(0);
+		assertEquals(Arrays.asList("read"), request.getFormFields().get("scope"));
+	}
+
+	@Test
 	void idempotentRetry_sendsAnIdenticalIdempotencyKeyAcrossEveryAttempt() throws Exception {
 		server.onFlaky(HTTPMethod.POST, "/charges", 2, MockResponse.status(503, ""),
 				MockResponse.ok("{\"chargeId\":\"ch_1\"}"));
