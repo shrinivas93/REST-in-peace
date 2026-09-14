@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `MockRestServerExtension.reportUnhitRoutes()` opts into printing every
+  route still unhit (`MockRestServer.getUnhitRoutes()`) to `System.err` when
+  the test class finishes, turning dead route setup into a free signal
+  instead of requiring the coverage check to be called by hand. Only takes
+  effect with the `static @RegisterExtension` field style, since
+  `@ExtendWith(MockRestServerExtension.class)` has JUnit construct the
+  extension itself with no way to call `reportUnhitRoutes()` first; purely
+  a diagnostic, it never fails the test class either way.
 - `MockRestServer`'s unmatched-request failure message now names the closest
   registered route for the same HTTP method (by edit distance) when one
   exists - `"no response was queued or registered for POST /orders. Did

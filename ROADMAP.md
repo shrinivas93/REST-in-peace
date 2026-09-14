@@ -934,10 +934,16 @@ commitment.
       over the routes' stored path templates (no new dependency). No
       suggestion is added when no route at all is registered for that
       method, so the existing bare message is unchanged in that case.
-- [ ] **E4. Auto-report `getUnhitRoutes()` in `MockRestServerExtension`** —
-      the coverage-check method already exists but has to be called by
-      hand. An opt-in flag printing unhit routes at `afterAll` turns dead
-      test setup into a free signal.
+- [x] **E4. Auto-report `getUnhitRoutes()` in `MockRestServerExtension`** —
+      `reportUnhitRoutes()` opts into printing every unhit route to
+      `System.err` at `afterAll`, turning dead test setup into a free
+      signal instead of requiring `getUnhitRoutes()` to be called by hand.
+      Purely a diagnostic - never fails the test class. Only takes effect
+      with the `static @RegisterExtension` field style, since
+      `@ExtendWith(MockRestServerExtension.class)` has JUnit construct the
+      extension itself via the no-arg constructor with no way to call
+      `reportUnhitRoutes()` first - documented as a caveat alongside the
+      class's existing static-field registration note.
 
 **Medium features (new user-facing value):**
 

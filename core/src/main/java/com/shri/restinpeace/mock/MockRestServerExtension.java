@@ -1,5 +1,7 @@
 package com.shri.restinpeace.mock;
 
+import java.util.List;
+
 import org.junit.jupiter.api.extension.AfterAllCallback;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.BeforeEachCallback;
@@ -65,14 +67,53 @@ import org.junit.jupiter.api.extension.ParameterResolver;
  * a {@code provided}-scope dependency of this library, not a transitive
  * runtime one, so using this class is opt-in and costs a consumer who
  * doesn't nothing.
+ *
+ * <p>
+ * <b>Unhit-route reporting:</b> {@link #reportUnhitRoutes()} opts into
+ * printing every route ({@link MockRestServer#getUnhitRoutes()}) still
+ * unhit when the test class finishes - a route left registered after the
+ * code path that used to exercise it was removed otherwise causes no
+ * failure at all. This only works with the {@code static @RegisterExtension}
+ * field style, since {@code @ExtendWith(MockRestServerExtension.class)}
+ * has JUnit construct the extension itself via the no-arg constructor,
+ * with no way to call {@link #reportUnhitRoutes()} first:
+ *
+ * <pre>
+ * class OrderServiceTest {
+ *
+ *     {@literal @}RegisterExtension
+ *     static MockRestServerExtension extension = new MockRestServerExtension().reportUnhitRoutes();
+ *
+ *     {@literal @}Test
+ *     void placesAnOrder(MockRestServer server) {
+ *         server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+ *         // ... a test that never actually calls /orders/{id} prints a warning at afterAll
+ *     }
+ * }
+ * </pre>
  */
 public final class MockRestServerExtension
 		implements BeforeAllCallback, AfterAllCallback, BeforeEachCallback, ParameterResolver {
 
 	private MockRestServer server;
+	private boolean reportUnhitRoutes;
 
 	/** Creates the extension - register it via {@code @ExtendWith}, it needs no arguments. */
 	public MockRestServerExtension() {
+	}
+
+	/**
+	 * Opts into printing every unhit route to {@code System.err} at
+	 * {@code afterAll} - see this class's own javadoc for why this only
+	 * takes effect with the {@code static @RegisterExtension} field style.
+	 * Purely a diagnostic: it never fails the test class, whether or not
+	 * any route is left unhit.
+	 *
+	 * @return this extension, for chaining onto the {@code @RegisterExtension} field assignment
+	 */
+	public MockRestServerExtension reportUnhitRoutes() {
+		this.reportUnhitRoutes = true;
+		return this;
 	}
 
 	/**
@@ -101,6 +142,16 @@ public final class MockRestServerExtension
 
 	@Override
 	public void afterAll(ExtensionContext context) {
+		if (reportUnhitRoutes) {
+			List<String> unhit = server.getUnhitRoutes();
+			if (!unhit.isEmpty()) {
+				System.err.println(
+						"MockRestServerExtension: " + unhit.size() + " registered route(s) were never hit:");
+				for (String route : unhit) {
+					System.err.println("  - " + route);
+				}
+			}
+		}
 		server.close();
 	}
 
