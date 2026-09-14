@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `OpenApiClientGenerator` - the opposite direction of compile-time proxy
+  generation: reads an OpenAPI 3.x JSON document and generates a
+  `@RestClient` interface (annotations and all) instead of hand-writing
+  one. `servers[0].url` becomes `@BaseUrl`; each `get`/`post`/`put`/
+  `delete`/`patch` operation becomes a method (named from its own
+  `operationId` if present, otherwise synthesized from the HTTP method and
+  path, deduplicated on collision); a `parameters` entry with `in: path`/
+  `in: query` becomes a `@PathParam`/`@QueryParam`; any `requestBody`
+  becomes one `@Body` parameter. A skeleton generator, not a full
+  schema-to-POJO tool - every parameter and body is generated as `String`;
+  narrowing a type or replacing a body with your own POJO is a normal
+  hand-edit of the generated file afterward. Also runnable from the
+  command line (`java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator
+  <specFile> <outputDirectory> <packageName> <interfaceName>`). Backed by
+  Gson for JSON parsing - already an unconditional transitive compile-scope
+  dependency via `unirest-java`, now declared directly; adds no new jar to
+  any consumer's classpath.
 - `RipClientConfig.Builder#retryBudget(int maxRetries, long windowMillis)`
   caps the *total* number of retries a client performs across every call
   within a rolling window - not a per-call limit, which is still each

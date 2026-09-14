@@ -244,6 +244,7 @@
 
         <div class="group-title">Codegen &amp; testing</div>
         <a href="#codegen">Compile-time proxies</a>
+        <a href="#openapi-generator">OpenAPI → @RestClient generator</a>
         <a href="#testing">MockRestServer</a>
 
         <div class="group-title">Integration</div>
@@ -1096,6 +1097,35 @@ RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGener
     List&lt;User&gt; listUsers();        // not eligible — delegates internally to a lazily-built reflective proxy
 }
 // api.getClass() is still UserApi_RipImpl — one unsupported method no longer disqualifies the rest</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="openapi-generator">
+        <h3>OpenAPI → @RestClient generator</h3>
+        <p class="blurb">The opposite direction - reads an OpenAPI 3.x JSON document and generates the interface itself, instead of hand-writing one.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">OpenApiClientGenerator.generate(
+        new File("petstore-openapi.json"),   // spec - JSON, not YAML
+        new File("src/main/java"),
+        "com.example.client",
+        "PetStoreApi");
+// writes src/main/java/com/example/client/PetStoreApi.java</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · a skeleton generator, not full schema-to-POJO</span>
+              <span class="snippet-caption">every parameter and body is String - narrow types / swap in your own POJO by hand afterward</span></div>
+            <pre><code class="language-java">// servers[0].url -&gt; @BaseUrl; OpenAPI's own {name} path placeholder already
+// matches @PathParam's, so paths need no translation at all. header/cookie
+// parameters are skipped (not part of the interface shape); any requestBody
+// becomes one @Body String parameter regardless of its declared schema.</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Also runnable from the CLI</span></div>
+            <pre><code class="language-java">java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator \
+    petstore-openapi.json src/main/java com.example.client PetStoreApi</code></pre>
           </div>
         </div>
       </div>
