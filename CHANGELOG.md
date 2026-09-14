@@ -11,11 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `RequestContext.toCurlCommand()` / `toCurlCommand(RequestContext.CurlVerbosity)`
   render a call as a copy-pasteable `curl` command (method, URL, headers,
   body) for pasting into a bug report or reproducing a failure outside the
-  JVM - `CurlVerbosity.VERBOSE`/`TRACE` add `curl`'s own `-v`/
-  `--trace-ascii - --trace-time` flags for more wire-level detail
-  (`TRACE` also stamps each trace line with a timestamp, for a failure
-  where timing - a slow TLS handshake, a delayed response body - matters
-  as much as content).
+  JVM. `CurlVerbosity` has six levels: `NONE` (default, no extra flag),
+  `VERBOSE` (`-v`, request/response headers), `VV`/`VVV`/`VVVV` (repeated
+  `-v`, escalating through per-line timestamps, a raw hex-offset wire
+  dump, and finally `curl`'s own internal DNS/TCP/engine-state tracing -
+  verified this caps out at four repeats, a fifth adds nothing further),
+  and `TRACE` (`--trace-ascii - --trace-time`, a full, per-line-timestamped
+  trace of everything on the wire including both bodies). `VV`/`VVV`/`VVVV`
+  are real, reproducible behavior (verified against `curl 8.22.0`) but,
+  unlike every other level, aren't documented in `curl`'s own `--help`/man
+  page - `TRACE` is the stable alternative when that matters more than
+  matching what someone would type by hand.
 - `RipClientConfig.Builder.cacheKeyIncludesQueryString(boolean)` (per client)
   and `RIP.setCacheKeyIncludesQueryString(boolean)` (shared default) let the
   cache key's query string be turned off - `true` by default, matching

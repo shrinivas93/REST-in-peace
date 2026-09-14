@@ -56,6 +56,30 @@ class RequestContextTest {
 	}
 
 	@Test
+	void toCurlCommand_vv_addsTheDashVVFlagRightAfterTheMethod() {
+		RequestContext context = new RequestContext(HTTPMethod.GET, "https://api.example.com/users/42");
+
+		assertEquals("curl -X GET -vv 'https://api.example.com/users/42'",
+				context.toCurlCommand(RequestContext.CurlVerbosity.VV));
+	}
+
+	@Test
+	void toCurlCommand_vvv_addsTheDashVVVFlagRightAfterTheMethod() {
+		RequestContext context = new RequestContext(HTTPMethod.GET, "https://api.example.com/users/42");
+
+		assertEquals("curl -X GET -vvv 'https://api.example.com/users/42'",
+				context.toCurlCommand(RequestContext.CurlVerbosity.VVV));
+	}
+
+	@Test
+	void toCurlCommand_vvvv_addsTheDashVVVVFlagRightAfterTheMethod() {
+		RequestContext context = new RequestContext(HTTPMethod.GET, "https://api.example.com/users/42");
+
+		assertEquals("curl -X GET -vvvv 'https://api.example.com/users/42'",
+				context.toCurlCommand(RequestContext.CurlVerbosity.VVVV));
+	}
+
+	@Test
 	void toCurlCommand_trace_addsTheTraceAsciiAndTraceTimeFlagsRightAfterTheMethod() {
 		RequestContext context = new RequestContext(HTTPMethod.GET, "https://api.example.com/users/42");
 

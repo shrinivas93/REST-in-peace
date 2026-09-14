@@ -887,20 +887,36 @@ commitment.
       knows the method, URL, headers, and (since `RequestContext.getBody()`
       shipped above) the body. One method turns a failed call into a
       copy-pasteable `curl` repro for logs/bug reports. Shipped with a
-      verbosity option, `toCurlCommand(RequestContext.CurlVerbosity)` -
+      six-level verbosity option, `toCurlCommand(RequestContext.CurlVerbosity)`:
       `NONE` (default, no extra flag), `VERBOSE` (curl's own `-v`,
-      request/response headers), or `TRACE` (curl's own `--trace-ascii -
-      --trace-time`, a full, per-line-timestamped wire-level trace
-      including both bodies) - for when the plain reproduction doesn't
-      explain the failure. RIP doesn't invent its own verbosity scheme;
-      each level just picks which real, current `curl` flag(s) to include
-      - verified against both the sandbox's installed curl (8.5.0) and the
-      actual latest release (8.22.0) that none of `-v`/`--trace-ascii`/
-      `--trace-time` are deprecated or renamed. Deliberately does *not*
-      offer an `ssh`-style stacked `-v`/`-vv`/`-vvv` scheme - confirmed by
-      direct testing (identical output line count from `-v` and `-vvvv`
-      against the same request) that `curl`'s own `--verbose` is a plain
-      boolean with no such leveled behavior to mirror, unlike `ssh`.
+      request/response headers), `VV`/`VVV`/`VVVV` (repeated `-v`,
+      escalating through per-line timestamps + a transfer/connection id,
+      then a raw hex-offset dump of the header/body bytes on the wire, then
+      curl's own internal DNS/TCP/connection-pool/multi-handle engine
+      tracing), and `TRACE` (curl's own `--trace-ascii - --trace-time`, a
+      full, per-line-timestamped wire-level trace including both bodies).
+      RIP doesn't invent its own verbosity scheme; each level just picks
+      which real, current `curl` flag(s) to include.
+      **Revised mid-implementation** after direct testing turned up a real
+      surprise: an initial pass (verified only against the sandbox's then-
+      installed curl 8.5.0) concluded `curl`'s `--verbose` was a plain
+      boolean with no `ssh`-style leveled behavior at all - `-v` and
+      `-vvvv` produced byte-identical output on that version. After
+      upgrading the sandbox's `curl` to the actual latest release (8.22.0,
+      built from source since apt's repo only carried 8.5.0) and re-testing,
+      repeated `-v` turned out to genuinely scale verbosity on the current
+      release (27/31/116/215 output lines for `-v`/`-vv`/`-vvv`/`-vvvv`
+      against the same request, confirmed to cap at four repeats - a fifth
+      adds nothing further) - so the "no such levels exist" conclusion was
+      simply wrong for the version that matters. Added `VV`/`VVV`/`VVVV` to
+      cover it, but with an explicit javadoc/doc caveat: unlike `-v`/
+      `--trace-ascii`/`--trace-time`, this scaling behavior is **not**
+      documented in `curl`'s own `--help`/man page - most likely an
+      internal `curl_trc` debug counter responding to how many times `-v`
+      was given, not a committed CLI contract, so it could change or
+      disappear in a future `curl` release without notice. `TRACE` remains
+      the recommended choice over `VVVV` when that stability matters more
+      than matching exactly what someone would type by hand.
 - [ ] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
       — `isClientError()`/`isServerError()` cover 4xx/5xx; 3xx has no
       helper. `@Retry` already parses a response's own `Retry-After`

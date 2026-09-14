@@ -925,12 +925,18 @@ RIP.clearInterceptors();   // removes everything registered</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · reproduce a call with curl</span>
-              <span class="snippet-caption">CurlVerbosity.VERBOSE (-v) or .TRACE (--trace-ascii - --trace-time) for more wire-level detail</span></div>
+              <span class="snippet-caption">CurlVerbosity: NONE, VERBOSE (-v), VV (-vv), VVV (-vvv), VVVV (-vvvv), or TRACE (--trace-ascii - --trace-time)</span></div>
             <pre><code class="language-java">public void afterResponse(RequestContext ctx, int status, Object body) {
     if (status >= 400) {
         System.err.println("Reproduce with:\n" + ctx.toCurlCommand());
     }
 }</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · VV/VVV/VVVV are undocumented curl behavior</span>
+              <span class="snippet-caption">repeating -v scales verbosity (verified on curl 8.22.0) but isn't in curl's own --help/man page - prefer TRACE when stability matters</span></div>
+            <pre><code class="language-java">ctx.toCurlCommand(RequestContext.CurlVerbosity.VVVV);   // curl's own internal DNS/TCP/engine tracing - noisy, undocumented
+ctx.toCurlCommand(RequestContext.CurlVerbosity.TRACE);   // same ballpark of detail, but documented + stable</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · scoped to one client</span></div>
