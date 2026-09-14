@@ -71,6 +71,7 @@ test server for unit tests.
 - [Error handling](#error-handling)
 - [Async](#async)
 - [Retries](#retries)
+  - [Retry budget](#retry-budget)
   - [Idempotency keys](#idempotency-keys)
   - [Interface-level and client-wide defaults](#interface-level-and-client-wide-defaults)
 - [Timeouts](#timeouts)
@@ -190,7 +191,9 @@ for what actually happens under `getUser(...)`.
   executing it twice. `@Retry`/`@Timeout` can also be declared once on the
   `@RestClient` interface as a default every method without its own falls
   back to, same as `@BaseUrl`; a `RetryConfig` on `RipClientConfig` sets a
-  client-wide default below that
+  client-wide default below that. `retryBudget(maxRetries, windowMillis)`
+  caps the *total* retries a client performs across every call in a rolling
+  window, on top of each call's own `times()`
 - `@Timeout` overrides the connect/read timeout for one method;
   `RipClientConfig` overrides base URL, timeout, proxy, cache, JSON
   `ObjectMapper`, retry policy, and interceptors for one client (e.g. one
@@ -1069,6 +1072,30 @@ UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
 `RetryConfig.builder()` exposes the same fields as `@Retry`
 (`times`/`delayMillis`/`backoffMultiplier`/`jitterFactor`/`retryOnStatus`/
 `idempotent`), with the same defaults and validation.
+
+### Retry budget
+
+`@Retry#times()` (or a client's `RetryConfig`) caps how many attempts *one
+call* makes. `retryBudget` caps something different: the *total* number of
+retries the whole client performs across every call, in a rolling window —
+so many concurrently failing calls each retrying independently don't
+multiply an already-struggling downstream's request volume into a full
+retry storm:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retryBudget(50, TimeUnit.MINUTES.toMillis(1))   // at most 50 retries/minute, client-wide
+        .build());
+```
+
+Tokens refill continuously (a token bucket, not a once-a-minute burst):
+starting full at `maxRetries`, regaining `maxRetries / windowMillis` tokens
+per elapsed millisecond, capped at `maxRetries`. Once the budget is
+exhausted, a call that would otherwise retry instead returns (or throws)
+its current outcome immediately — exactly like reaching its own
+`@Retry#times()`, just for a different reason. Not called at all (the
+default) means no cap beyond each call's own `times()`, byte-for-byte
+today's behavior.
 
 ## Timeouts
 

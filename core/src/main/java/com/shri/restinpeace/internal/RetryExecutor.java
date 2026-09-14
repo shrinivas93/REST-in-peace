@@ -40,6 +40,12 @@ import kong.unirest.HttpResponse;
  * whichever wait was actually used for the previous attempt, so a run of
  * {@code Retry-After}-guided waits still keeps growing if the server keeps
  * asking for longer ones.
+ *
+ * <p>
+ * A configured {@link RetryBudget} additionally caps the *total* number of
+ * retries this instance (i.e. this client) performs across every call
+ * within a rolling window, regardless of any individual call's own
+ * {@code @Retry#times()} - see {@link RetryBudget}'s own javadoc.
  */
 final class RetryExecutor {
 
@@ -55,6 +61,7 @@ final class RetryExecutor {
 
 	private final InterceptorDispatcher interceptorDispatcher;
 	private final RetryConfig configuredRetry;
+	private final RetryBudget retryBudget;
 
 	RetryExecutor(InterceptorDispatcher interceptorDispatcher) {
 		this(interceptorDispatcher, null);
@@ -68,8 +75,23 @@ final class RetryExecutor {
 	 *                        in that case - see {@link RetryConfig}
 	 */
 	RetryExecutor(InterceptorDispatcher interceptorDispatcher, RetryConfig configuredRetry) {
+		this(interceptorDispatcher, configuredRetry, null);
+	}
+
+	/**
+	 * @param configuredRetry a {@link com.shri.restinpeace.RipClientConfig}'s
+	 *                        default retry policy - see the two-arg
+	 *                        constructor
+	 * @param retryBudget     a {@link com.shri.restinpeace.RipClientConfig}'s
+	 *                        total-retries-per-client budget (see
+	 *                        {@link com.shri.restinpeace.RipClientConfig.Builder#retryBudget(int, long)}),
+	 *                        or {@code null} for no cap beyond each call's own
+	 *                        {@code @Retry#times()}
+	 */
+	RetryExecutor(InterceptorDispatcher interceptorDispatcher, RetryConfig configuredRetry, RetryBudget retryBudget) {
 		this.interceptorDispatcher = interceptorDispatcher;
 		this.configuredRetry = configuredRetry;
+		this.retryBudget = retryBudget;
 	}
 
 	<B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
@@ -115,7 +137,7 @@ final class RetryExecutor {
 				failure = e;
 			}
 			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
-			if (!retryable || attempt >= times) {
+			if (!retryable || attempt >= times || (retryBudget != null && !retryBudget.tryConsume())) {
 				if (failure != null) {
 					throw failure;
 				}
@@ -172,7 +194,7 @@ final class RetryExecutor {
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 			}
 			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
-			if (!retryable || attempt >= times) {
+			if (!retryable || attempt >= times || (retryBudget != null && !retryBudget.tryConsume())) {
 				if (failure != null) {
 					result.completeExceptionally(failure);
 				} else {

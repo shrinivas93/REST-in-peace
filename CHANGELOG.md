@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RipClientConfig.Builder#retryBudget(int maxRetries, long windowMillis)`
+  caps the *total* number of retries a client performs across every call
+  within a rolling window - not a per-call limit, which is still each
+  call's own `@Retry#times()` (or the client's `RetryConfig` default).
+  Tokens refill continuously (a token bucket, not a once-per-window burst):
+  starting full at `maxRetries`, regaining `maxRetries / windowMillis`
+  tokens per elapsed millisecond, capped at `maxRetries`. Once exhausted, a
+  call that would otherwise retry instead returns (or throws) its current
+  outcome immediately, exactly as if it had reached its own `times()`.
+  Addresses a retry storm amplifying an outage: many concurrently failing
+  calls each retrying independently no longer multiply an
+  already-struggling downstream's request volume. Not called at all (the
+  default) means no cap beyond each call's own `times()`, byte-for-byte
+  today's behavior.
 - `RedactingLoggingInterceptor` - a `LoggingInterceptor`-style pre-built
   interceptor that also logs the request and response bodies, masking a
   configured set of field names (`password`, `token`, `secret`, `apiKey`,

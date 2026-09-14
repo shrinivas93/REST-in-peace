@@ -132,7 +132,10 @@ public class RequestExecutor {
 		this.urlResolver = new UrlResolver(baseUrlOverride);
 		this.responseDecoder = new ResponseDecoder(unirestInstance);
 		this.interceptorDispatcher = new InterceptorDispatcher(config.getInterceptors(), responseDecoder);
-		this.retryExecutor = new RetryExecutor(interceptorDispatcher, config.getRetry());
+		RetryBudget retryBudget = config.getRetryBudgetMaxRetries() != null
+				? new RetryBudget(config.getRetryBudgetMaxRetries(), config.getRetryBudgetWindowMillis())
+				: null;
+		this.retryExecutor = new RetryExecutor(interceptorDispatcher, config.getRetry(), retryBudget);
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
