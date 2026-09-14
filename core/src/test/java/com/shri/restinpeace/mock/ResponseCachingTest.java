@@ -241,4 +241,77 @@ class ResponseCachingTest {
 		assertEquals(2, server.requestCount());
 	}
 
+	@Test
+	void staleWhileRevalidate_servesTheStaleBodyImmediatelyThenRefreshesInTheBackground() throws InterruptedException {
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		String first = api.getItem("42"); // stores v1 - immediately stale, but now within its swr window
+
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":2}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		String second = api.getItem("42"); // still v1 - served from the stale entry, not blocked on a re-fetch
+
+		assertEquals("{\"v\":1}", first);
+		assertEquals("{\"v\":1}", second);
+		awaitCachedBody("/items/42", "{\"v\":2}"); // the background revalidation triggered by the second call
+
+		String third = api.getItem("42"); // the background refresh already replaced the entry with v2
+		assertEquals("{\"v\":2}", third);
+	}
+
+	@Test
+	void staleWhileRevalidate_pastItsOwnWindow_fallsBackToASynchronousRefetch() throws InterruptedException {
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0, stale-while-revalidate=1"));
+		api.getItem("42");
+
+		Thread.sleep(1100); // past both max-age=0 and the 1-second stale-while-revalidate window
+
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":2}").header("Cache-Control", "max-age=0, stale-while-revalidate=1"));
+		String second = api.getItem("42");
+
+		assertEquals("{\"v\":2}", second); // synchronous re-fetch, not the stale v1 body
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void staleWhileRevalidate_asyncCall_alsoServesTheStaleBodyImmediately()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":2}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		String second = api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+
+		assertEquals("{\"v\":1}", second);
+		awaitCachedBody("/items/42", "{\"v\":2}");
+
+		String third = api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+		assertEquals("{\"v\":2}", third);
+	}
+
+	/**
+	 * Polls the same {@link InMemoryCache} instance {@code api} is configured
+	 * with directly, rather than {@code server.requestCount()} - the
+	 * background revalidation's real network round trip completing (which is
+	 * what bumps the request count) and its {@code cache.put(...)} happen on
+	 * the same background thread but aren't the same instant, so polling the
+	 * cache itself is what actually avoids the race.
+	 */
+	private void awaitCachedBody(String path, String expectedBody) throws InterruptedException {
+		String key = com.shri.restinpeace.cache.Cache.key(HTTPMethod.GET, server.baseUrl() + path);
+		long deadline = System.currentTimeMillis() + 2000;
+		while (System.currentTimeMillis() < deadline) {
+			com.shri.restinpeace.cache.CachedResponse cached = cache.get(key);
+			if (cached != null && expectedBody.equals(cached.getBody())) {
+				return;
+			}
+			Thread.sleep(20);
+		}
+		throw new AssertionError("Cache never observed body " + expectedBody + " for key " + key);
+	}
+
 }

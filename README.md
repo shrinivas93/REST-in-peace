@@ -77,6 +77,7 @@ test server for unit tests.
 - [Per-client configuration: timeout and proxy](#per-client-configuration-timeout-and-proxy)
   - [JSON `ObjectMapper`](#json-objectmapper)
 - [Response caching](#response-caching)
+  - [Stale-while-revalidate](#stale-while-revalidate)
   - [`@NoCache`](#nocache)
   - [Time-based and manual eviction](#time-based-and-manual-eviction)
   - [Query string in the cache key](#query-string-in-the-cache-key)
@@ -197,9 +198,11 @@ for what actually happens under `getUser(...)`.
 - Response caching honors the server's own `Cache-Control`/`ETag`/
   `Last-Modified` headers for `GET` requests — a fresh entry is served with
   zero network call, a stale revalidatable one sends
-  `If-None-Match`/`If-Modified-Since` automatically. `Vary`-aware, with
-  `@NoCache` to opt a single method out even when its client has a cache
-  configured. `InMemoryCache` also supports a max-age constructor for
+  `If-None-Match`/`If-Modified-Since` automatically, and
+  `stale-while-revalidate=N` serves the stale entry immediately while
+  refreshing it in the background. `Vary`-aware, with `@NoCache` to opt a
+  single method out even when its client has a cache configured.
+  `InMemoryCache` also supports a max-age constructor for
   time-based eviction regardless of server freshness, plus manual eviction
   of one entry via the public `Cache.key(...)` formula. Whether the cache
   key includes the query string is configurable per client or as a shared
@@ -1184,11 +1187,45 @@ the server never asked for:
   from the one in force when it was stored, so a cache never serves the
   wrong language/format variant. `Vary: *` is never cached at all, same as
   `no-store`.
+- A response naming `Cache-Control: stale-while-revalidate=N` is, once
+  stale, still served immediately for up to `N` further seconds — the
+  network round trip happens in the background instead of blocking the
+  caller, and the entry is transparently refreshed for the *next* call. See
+  [Stale-while-revalidate](#stale-while-revalidate) below.
 
 `InMemoryCache` (a `ConcurrentHashMap`-backed, process-local store) ships as
 the default `Cache` implementation — zero new dependency. Implement `Cache`
 yourself (`get`/`put`/`evict`/`clear`) to back it with Redis, Caffeine, or
 anything else.
+
+### Stale-while-revalidate
+
+A stale entry normally blocks the caller on a synchronous revalidation
+round trip (or a full re-fetch). A response naming
+`Cache-Control: stale-while-revalidate=N` opts out of that: once stale, the
+entry is still served as-is for up to `N` further seconds, while the real
+network call happens in the background and refreshes the entry for the
+*next* call — this call never sees the new response at all, only ever the
+one already in hand:
+
+```java
+// Cache-Control: max-age=60, stale-while-revalidate=30
+Item item = api.getItem("42");   // fresh for 60s, then still instantly
+                                  // servable (stale) for 30s more while a
+                                  // background call refreshes the entry
+```
+
+For a synchronous (non-`CompletableFuture`) call, the background refresh
+runs on a small internal daemon-thread pool, created lazily on first use -
+a `CompletableFuture`-returning call needs no such pool at all, since it's
+already asynchronous; the refresh is simply chained onto the same future
+without blocking the response already being handed back. Either way, a
+failed background refresh (a thrown exception, a non-2xx/non-304 response
+with no caching headers) is silently swallowed - the stale entry just keeps
+being served until it ages out of its own stale-while-revalidate window
+too, exactly as if the background attempt had never run. Once a call
+arrives after that window has fully elapsed, caching falls back to the
+usual synchronous revalidation (or re-fetch) described above.
 
 ### `@NoCache`
 

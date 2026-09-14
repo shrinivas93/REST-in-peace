@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Response caching now honors `Cache-Control: stale-while-revalidate=N`: once
+  an entry goes stale, it's still served immediately for up to `N` further
+  seconds, refreshed in the background instead of blocking the caller on a
+  synchronous revalidation round trip. A synchronous (non-`CompletableFuture`)
+  call's background refresh runs on a small internal daemon-thread pool
+  (created lazily on first use); a `CompletableFuture`-returning call needs
+  none, since the refresh is simply chained onto the same future the caller
+  never blocks on. A failed background refresh is silently swallowed - the
+  stale entry keeps serving until it ages out of its own window too, exactly
+  as if the attempt had never run. `CachedResponse` gained a new six-arg
+  constructor carrying an explicit stale-while-revalidate deadline
+  (`getStaleWhileRevalidateUntilEpochMillis()`/`isWithinStaleWhileRevalidateWindow()`);
+  both existing constructors are unchanged and default to no window at all.
 - `MockRestServerExtension.reportUnhitRoutes()` opts into printing every
   route still unhit (`MockRestServer.getUnhitRoutes()`) to `System.err` when
   the test class finishes, turning dead route setup into a free signal

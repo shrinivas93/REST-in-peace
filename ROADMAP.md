@@ -947,11 +947,18 @@ commitment.
 
 **Medium features (new user-facing value):**
 
-- [ ] **E5. Stale-while-revalidate caching mode** — a stale-but-revalidatable
-      entry currently blocks on a synchronous `If-None-Match` round trip.
-      Since the `CompletableFuture` async plumbing already exists, this
-      mode could return the stale body immediately and revalidate in the
-      background.
+- [x] **E5. Stale-while-revalidate caching mode** — `Cache-Control:
+      stale-while-revalidate=N` now serves a stale entry immediately for up
+      to `N` further seconds instead of blocking on a synchronous
+      revalidation round trip, refreshing the entry in the background for
+      the next call. The async (`CompletableFuture`) path gets this for
+      free by chaining the refresh onto the same future, never blocking the
+      response already being returned; the sync path uses a small,
+      lazily-created internal daemon-thread pool instead. A failed
+      background refresh is silently swallowed - the stale entry just keeps
+      serving until it ages out of its own window too. `CachedResponse`
+      gained a new six-arg constructor carrying the deadline explicitly;
+      both existing constructors are unchanged and default to no window.
 - [ ] **E6. Negative caching** — cache a confirmed `404` for a short TTL, so
       a client stops hammering a downstream for a resource it already
       confirmed doesn't exist. Falls directly out of the `InMemoryCache`
