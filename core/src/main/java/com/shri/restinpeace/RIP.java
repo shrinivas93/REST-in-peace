@@ -222,6 +222,27 @@ public class RIP {
 	}
 
 	/**
+	 * Sets the shared default negative-cache TTL, for every client not built
+	 * with a {@link RipClientConfig} that sets its own via
+	 * {@link RipClientConfig.Builder#negativeCacheTtlMillis(long)}. A
+	 * confirmed {@code 404} is then stored for {@code ttlMillis}, regardless
+	 * of whether the response itself carries any {@code Cache-Control}/
+	 * {@code ETag}/{@code Last-Modified} at all - unlike every other cached
+	 * status, which is only ever stored when the server's own headers say
+	 * so - so a client stops hammering a downstream for a resource it
+	 * already confirmed doesn't exist. Not called at all (the default) means
+	 * no negative caching, byte-for-byte today's behavior. Has no effect on
+	 * a client with no {@link Cache} configured at all, and is skipped the
+	 * same way by {@code @NoCache}.
+	 *
+	 * @param ttlMillis how long a confirmed {@code 404} stays negatively
+	 *                  cached, in milliseconds; must be positive
+	 */
+	public static void setNegativeCacheTtlMillis(long ttlMillis) {
+		RequestExecutor.setDefaultNegativeCacheTtlMillis(ttlMillis);
+	}
+
+	/**
 	 * Registers a global hook into every request/response made through RIP -
 	 * see {@link RequestInterceptor} for what it can and can't do.
 	 *

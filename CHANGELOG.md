@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RipClientConfig.Builder#negativeCacheTtlMillis(long)` (and
+  `RIP.setNegativeCacheTtlMillis(long)` for a shared default) opts a client
+  into negatively caching a confirmed `404` for a fixed TTL, regardless of
+  whatever (if anything) the response's own `Cache-Control`/`ETag`/
+  `Last-Modified` say - unlike every other cached status, which is only
+  ever stored because the server's own headers say so - so a client that
+  already asked once for a resource that doesn't exist stops hammering the
+  downstream asking again. Has no effect on a client with no `Cache`
+  configured at all, and is skipped the same way as ordinary caching by
+  `@NoCache`. Not set at all (the default) means no negative caching,
+  byte-for-byte today's behavior.
 - Response caching now honors `Cache-Control: stale-while-revalidate=N`: once
   an entry goes stale, it's still served immediately for up to `N` further
   seconds, refreshed in the background instead of blocking the caller on a

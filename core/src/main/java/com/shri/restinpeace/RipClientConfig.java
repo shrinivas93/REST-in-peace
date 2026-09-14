@@ -47,6 +47,7 @@ public final class RipClientConfig {
 	private final ObjectMapper objectMapper;
 	private final Cache cache;
 	private final Boolean cacheKeyIncludesQueryString;
+	private final Long negativeCacheTtlMillis;
 	private final List<RequestInterceptor> interceptors;
 	private final RetryConfig retry;
 
@@ -61,6 +62,7 @@ public final class RipClientConfig {
 		this.objectMapper = builder.objectMapper;
 		this.cache = builder.cache;
 		this.cacheKeyIncludesQueryString = builder.cacheKeyIncludesQueryString;
+		this.negativeCacheTtlMillis = builder.negativeCacheTtlMillis;
 		this.interceptors = builder.interceptors;
 		this.retry = builder.retry;
 	}
@@ -177,6 +179,18 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns how long this client negatively caches a confirmed {@code 404}.
+	 *
+	 * @return the negative-cache TTL in milliseconds, or {@code null} to fall
+	 *         back to the shared default set via
+	 *         {@link RIP#setNegativeCacheTtlMillis(long)} (which itself
+	 *         defaults to no negative caching at all if never called)
+	 */
+	public Long getNegativeCacheTtlMillis() {
+		return negativeCacheTtlMillis;
+	}
+
+	/**
 	 * Returns this client's own interceptors.
 	 *
 	 * @return this client's own interceptors, run in addition to (not instead
@@ -211,6 +225,7 @@ public final class RipClientConfig {
 		private ObjectMapper objectMapper;
 		private Cache cache;
 		private Boolean cacheKeyIncludesQueryString;
+		private Long negativeCacheTtlMillis;
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
 		private RetryConfig retry;
 
@@ -332,6 +347,32 @@ public final class RipClientConfig {
 		 */
 		public Builder cacheKeyIncludesQueryString(boolean cacheKeyIncludesQueryString) {
 			this.cacheKeyIncludesQueryString = cacheKeyIncludesQueryString;
+			return this;
+		}
+
+		/**
+		 * Opts this client into negatively caching a confirmed {@code 404},
+		 * overriding the shared default set via
+		 * {@link RIP#setNegativeCacheTtlMillis(long)} for this client only -
+		 * so a client that already asked once for a resource that doesn't
+		 * exist stops hammering the downstream asking again, for
+		 * {@code ttlMillis} - regardless of whether the {@code 404} response
+		 * itself carries any {@code Cache-Control}/{@code ETag}/
+		 * {@code Last-Modified} at all (unlike every other cached status,
+		 * which is only ever stored when the server's own headers say so).
+		 * Has no effect unless this client also has a {@link Cache}
+		 * configured (its own via {@link #cache(Cache)}, or the shared
+		 * default), and is skipped the same way by {@code @NoCache}.
+		 *
+		 * @param ttlMillis how long a confirmed {@code 404} stays negatively
+		 *                  cached, in milliseconds; must be positive
+		 * @return this builder
+		 */
+		public Builder negativeCacheTtlMillis(long ttlMillis) {
+			if (ttlMillis <= 0) {
+				throw new IllegalArgumentException("ttlMillis must be positive.");
+			}
+			this.negativeCacheTtlMillis = ttlMillis;
 			return this;
 		}
 

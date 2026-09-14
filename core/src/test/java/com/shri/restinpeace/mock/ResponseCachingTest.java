@@ -1,6 +1,7 @@
 package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +17,7 @@ import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.cache.InMemoryCache;
 import com.shri.restinpeace.constant.HTTPMethod;
+import com.shri.restinpeace.exception.RestInPeaceHttpException;
 
 /**
  * Exercises response caching (see {@code com.shri.restinpeace.cache}) end to
@@ -312,6 +314,44 @@ class ResponseCachingTest {
 			Thread.sleep(20);
 		}
 		throw new AssertionError("Cache never observed body " + expectedBody + " for key " + key);
+	}
+
+	@Test
+	void negativeCaching_confirmedNotFound_isServedFromCacheWithoutHittingTheNetworkAgain() {
+		CacheTestApi negativeCachingApi = RIP.getClient(CacheTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).cache(cache).negativeCacheTtlMillis(60_000).build());
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{\"error\":\"not found\"}"));
+
+		RestInPeaceHttpException first = assertThrows(RestInPeaceHttpException.class,
+				() -> negativeCachingApi.getItem("42"));
+		RestInPeaceHttpException second = assertThrows(RestInPeaceHttpException.class,
+				() -> negativeCachingApi.getItem("42"));
+
+		assertEquals(404, first.getStatus());
+		assertEquals(404, second.getStatus());
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void withoutNegativeCachingConfigured_confirmedNotFound_isNeverCached() {
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{\"error\":\"not found\"}"));
+
+		assertThrows(RestInPeaceHttpException.class, () -> api.getItem("42"));
+		assertThrows(RestInPeaceHttpException.class, () -> api.getItem("42"));
+
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void negativeCaching_isSkippedByNoCacheTheSameWayAsOrdinaryCaching() {
+		CacheTestApi negativeCachingApi = RIP.getClient(CacheTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).cache(cache).negativeCacheTtlMillis(60_000).build());
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{}"));
+
+		assertThrows(RestInPeaceHttpException.class, () -> negativeCachingApi.getItemNoCache("42"));
+		assertThrows(RestInPeaceHttpException.class, () -> negativeCachingApi.getItemNoCache("42"));
+
+		assertEquals(2, server.requestCount());
 	}
 
 }

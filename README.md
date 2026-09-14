@@ -78,6 +78,7 @@ test server for unit tests.
   - [JSON `ObjectMapper`](#json-objectmapper)
 - [Response caching](#response-caching)
   - [Stale-while-revalidate](#stale-while-revalidate)
+  - [Negative caching](#negative-caching)
   - [`@NoCache`](#nocache)
   - [Time-based and manual eviction](#time-based-and-manual-eviction)
   - [Query string in the cache key](#query-string-in-the-cache-key)
@@ -200,10 +201,12 @@ for what actually happens under `getUser(...)`.
   zero network call, a stale revalidatable one sends
   `If-None-Match`/`If-Modified-Since` automatically, and
   `stale-while-revalidate=N` serves the stale entry immediately while
-  refreshing it in the background. `Vary`-aware, with `@NoCache` to opt a
-  single method out even when its client has a cache configured.
-  `InMemoryCache` also supports a max-age constructor for
-  time-based eviction regardless of server freshness, plus manual eviction
+  refreshing it in the background. `negativeCacheTtlMillis` opts a client
+  into caching a confirmed `404` too, regardless of its own headers.
+  `Vary`-aware, with `@NoCache` to opt a single method out even when its
+  client has a cache configured. `InMemoryCache` also supports a max-age
+  constructor for time-based eviction regardless of server freshness, plus
+  manual eviction
   of one entry via the public `Cache.key(...)` formula. Whether the cache
   key includes the query string is configurable per client or as a shared
   default via `cacheKeyIncludesQueryString(...)`
@@ -1226,6 +1229,30 @@ being served until it ages out of its own stale-while-revalidate window
 too, exactly as if the background attempt had never run. Once a call
 arrives after that window has fully elapsed, caching falls back to the
 usual synchronous revalidation (or re-fetch) described above.
+
+### Negative caching
+
+Every cached status above is only ever stored because the *server* said so
+via its own `Cache-Control`/`ETag`/`Last-Modified`. A confirmed `404` is
+different: `negativeCacheTtlMillis` opts a client into storing one anyway,
+for a fixed TTL, regardless of whatever (if anything) the `404` response's
+own headers say — so a client that already asked once for a resource that
+doesn't exist stops hammering the downstream asking again:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .negativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1))   // a confirmed 404 stays cached for 1 minute
+        .build());
+
+api.getUser("does-not-exist");   // throws RestInPeaceHttpException(404, ...) - one real network call
+api.getUser("does-not-exist");   // throws the same exception again - served from cache, zero network calls
+```
+
+Or as a shared default for every client without its own, via
+`RIP.setNegativeCacheTtlMillis(long)`. Has no effect on a client with no
+`Cache` configured at all, and is skipped the same way as ordinary caching
+by `@NoCache`.
 
 ### `@NoCache`
 

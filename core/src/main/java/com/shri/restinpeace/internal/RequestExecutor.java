@@ -106,7 +106,7 @@ public class RequestExecutor {
 	public RequestExecutor(String baseUrlOverride) {
 		this.baseUrlOverride = baseUrlOverride;
 		this.unirestInstance = null;
-		this.cacheCoordinator = new CacheCoordinator(null, null);
+		this.cacheCoordinator = new CacheCoordinator(null, null, null);
 		this.urlResolver = new UrlResolver(baseUrlOverride);
 		this.responseDecoder = new ResponseDecoder(null);
 		this.interceptorDispatcher = new InterceptorDispatcher(Collections.emptyList(), responseDecoder);
@@ -127,7 +127,8 @@ public class RequestExecutor {
 		boolean needsOwnInstance = config.getConnectTimeoutMillis() != null || config.getReadTimeoutMillis() != null
 				|| config.getProxyHost() != null || config.getObjectMapper() != null;
 		this.unirestInstance = needsOwnInstance ? buildInstance(config) : null;
-		this.cacheCoordinator = new CacheCoordinator(config.getCache(), config.getCacheKeyIncludesQueryString());
+		this.cacheCoordinator = new CacheCoordinator(config.getCache(), config.getCacheKeyIncludesQueryString(),
+				config.getNegativeCacheTtlMillis());
 		this.urlResolver = new UrlResolver(baseUrlOverride);
 		this.responseDecoder = new ResponseDecoder(unirestInstance);
 		this.interceptorDispatcher = new InterceptorDispatcher(config.getInterceptors(), responseDecoder);
@@ -232,6 +233,17 @@ public class RequestExecutor {
 	 */
 	public static void setDefaultCacheKeyIncludesQueryString(boolean includeQueryString) {
 		CacheCoordinator.setDefaultCacheKeyIncludesQueryString(includeQueryString);
+	}
+
+	/**
+	 * Sets the shared default negative-cache TTL. See
+	 * {@link com.shri.restinpeace.RIP#setNegativeCacheTtlMillis(long)}.
+	 *
+	 * @param ttlMillis how long a confirmed {@code 404} stays negatively
+	 *                  cached, in milliseconds; must be positive
+	 */
+	public static void setDefaultNegativeCacheTtlMillis(long ttlMillis) {
+		CacheCoordinator.setDefaultNegativeCacheTtlMillis(ttlMillis);
 	}
 
 	/**
