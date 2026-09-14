@@ -94,6 +94,10 @@ class GeneratedApiTest {
 			exchange.getResponseHeaders().set("Content-Type", "application/json");
 			respond(exchange, 422, "{\"code\":\"INVALID\",\"message\":\"nope\"}");
 		});
+		server.createContext("/string-list", exchange -> {
+			captureRequest(exchange);
+			respond(exchange, 200, "[\"a\",\"b\"]");
+		});
 		server.createContext("/binary", exchange -> {
 			exchange.sendResponseHeaders(200, BINARY_CONTENT.length);
 			try (OutputStream os = exchange.getResponseBody()) {
@@ -219,6 +223,44 @@ class GeneratedApiTest {
 
 		assertTrue(api.getClass().getName().contains("Proxy"),
 				"Expected the reflective proxy fallback, got " + api.getClass().getName());
+	}
+
+	@Test
+	void getClient_withPartiallySupportedInterface_stillGeneratesAnImplementation() {
+		GeneratedApiWithPartialSupport api = RIP.getClient(GeneratedApiWithPartialSupport.class);
+
+		assertTrue(api.getClass().getName().endsWith("_RipImpl"),
+				"Expected a real generated implementation despite the unsupported list method, got "
+						+ api.getClass().getName());
+	}
+
+	@Test
+	void getClient_withPartiallySupportedInterface_theSupportedMethodWorksNormally() {
+		GeneratedApiWithPartialSupport api = RIP.getClient(GeneratedApiWithPartialSupport.class);
+
+		assertEquals("path=/items/abc;query=null", api.get(port, "abc"));
+	}
+
+	@Test
+	void getClient_withPartiallySupportedInterface_theUnsupportedMethodStillIssuesTheRealCall() {
+		GeneratedApiWithPartialSupport api = RIP.getClient(GeneratedApiWithPartialSupport.class);
+
+		List<String> result = api.list(port);
+
+		assertEquals("/string-list", LAST_REQUEST.get().path);
+		assertEquals(Arrays.asList("a", "b"), result);
+	}
+
+	@Test
+	void getClient_withPartiallySupportedInterface_defaultMethodIsUnaffected() {
+		GeneratedApiWithPartialSupport api = RIP.getClient(GeneratedApiWithPartialSupport.class);
+
+		assertEquals("Hello, World!", api.greeting("World"));
+	}
+
+	@Test
+	void getClient_withPartiallySupportedInterface_staticMethodIsUnaffected() {
+		assertEquals("static-helper", GeneratedApiWithPartialSupport.staticHelper());
 	}
 
 	@Test

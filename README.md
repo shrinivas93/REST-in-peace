@@ -85,6 +85,7 @@ test server for unit tests.
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
 - [Compile-time proxy generation](#compile-time-proxy-generation)
+  - [Why isn't `List<User>` supported?](#why-isnt-listuser-supported)
 - [Testing with `MockRestServer`](#testing-with-mockrestserver)
   - [JUnit 5 extension](#junit-5-extension)
 - [Integrating with your project](#integrating-with-your-project)
@@ -1411,9 +1412,31 @@ You don't opt in to anything — if your build already runs annotation
 processing (the Maven/Gradle default for a dependency that ships one), the
 generated class exists on your classpath and is used automatically; there's
 nothing to configure and nothing changes about how you call the client. If
-a method's shape isn't yet covered by the processor, that one interface
-transparently falls back to the reflective proxy — same behavior, just
-without the compile-time class.
+a method's shape isn't yet covered by the processor (a generic collection
+return type like `List<User>`, say — see [below](#why-isnt-listuser-supported)
+for why), only *that* method falls back — internally, to a lazily-built
+reflective proxy sharing this same client's config — while every other
+method on the same interface still gets a real generated implementation.
+An interface with *no* codegen-eligible method at all still falls back to
+the plain reflective proxy in its entirety, the same as before.
+
+### Why isn't `List<User>` supported?
+
+Not (yet) a matter of the processor not getting around to it — decoding a
+JSON response needs a single concrete `Class<?>` to deserialize into
+(`User.class`, `String.class`, ...), and there's no such class for "a list
+of `User`" the way there is for a plain POJO. This isn't specific to
+compile-time codegen either: the reflective proxy resolves a method's
+return type via `Method.getReturnType()`, which erases `List<User>` down to
+the same bare `List.class` — RIP's response decoding is `Class<?>`-based
+everywhere, both dispatch paths, so a raw `List` return type isn't reliably
+decodable via either one today. A `RipResponse<List<User>>` or a nested
+`CompletableFuture<CompletableFuture<T>>` hit the same wall for the same
+reason. Resolving this for real needs generic `Type`-based decoding
+(`Method.getGenericReturnType()` instead of `getReturnType()`) threaded
+through response decoding on both paths — tracked as its own, separate
+roadmap item, since it's a deeper change than compile-time codegen alone
+can fix.
 
 This matters most for:
 

@@ -194,13 +194,14 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void interfaceWithDefaultMethod_compilesCleanWithoutDisqualifyingTheWholeInterfaceAtCompileTime() throws IOException {
-		// The default method itself still disqualifies codegen for this whole
-		// interface (RestClientProcessor.processRestClient falls back to the
-		// reflective proxy entirely rather than generating for the one abstract
-		// method) - what this proves is only that CompileTimeRestClientValidator no
-		// longer fails the *build* over it, mirroring ReflectiveRestClientValidator's
-		// own exemption for a default/static method at runtime.
+	void interfaceWithDefaultMethod_compilesCleanAndStillGeneratesAnImplementation() throws IOException {
+		// CompileTimeRestClientValidator doesn't fail the *build* over a default
+		// method (mirroring ReflectiveRestClientValidator's own exemption for a
+		// default/static method at runtime), and RestClientProcessor no longer
+		// disqualifies the whole interface's codegen over it either - a default
+		// method needs no generated override at all (ordinary Java default-method
+		// dispatch already resolves it via the generated class's own inherited
+		// implementation), so getItem() still gets a real generated implementation.
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ApiWithDefaultMethod", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
@@ -213,6 +214,33 @@ class CompileTimeValidationTest {
 				+ "}\n");
 
 		assertNoErrors(diagnostics);
+		assertTrue(Files.exists(outputDir.resolve("ApiWithDefaultMethod_RipImpl.class")),
+				"Expected ApiWithDefaultMethod_RipImpl.class to be generated, found: " + list(outputDir));
+	}
+
+	@Test
+	void interfaceMixingAnUnsupportedListReturnWithASupportedMethod_generatesAnImplementationForBoth()
+			throws IOException {
+		// The List<String>-returning method is outside RestClientProcessor's
+		// codegen-supported shape (not decodable by a single Class<?> the way a
+		// plain POJO is), but that alone no longer disqualifies getItem() - a
+		// fully supported method on the very same interface - from codegen too.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ApiWithPartialSupport", "" //
+				+ "import java.util.List;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.PathParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ApiWithPartialSupport {\n" //
+				+ "  @GET(\"http://localhost/items/{id}\")\n" //
+				+ "  String getItem(@PathParam(\"id\") String id);\n" //
+				+ "  @GET(\"http://localhost/items\")\n" //
+				+ "  List<String> listItems();\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertTrue(Files.exists(outputDir.resolve("ApiWithPartialSupport_RipImpl.class")),
+				"Expected ApiWithPartialSupport_RipImpl.class to be generated, found: " + list(outputDir));
 	}
 
 	@Test

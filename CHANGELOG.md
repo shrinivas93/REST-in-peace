@@ -62,6 +62,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   real implementation), never as an HTTP call, letting you add ergonomic
   wrapper methods directly on the interface.
 
+### Changed
+
+- `RestClientProcessor`'s compile-time codegen no longer disqualifies an
+  entire `@RestClient` interface's codegen over one method outside its
+  supported shape (a generic collection return type like `List<User>`, a
+  raw `CompletableFuture`, ...) - only that one method now falls back,
+  delegating to a lazily-built internal reflective proxy that shares this
+  same client's config, while every other method on the same interface
+  still gets a real generated implementation. A default method needs no
+  fallback at all (ordinary Java default-method dispatch already resolves
+  it via the generated class's own inherited implementation), and a static
+  method needs nothing generated for it either - so an interface with a
+  default/static method mixed with otherwise-fully-supported methods now
+  gets real codegen too, instead of falling back to the reflective proxy
+  entirely. An interface with *no* codegen-eligible method at all still
+  isn't generated for.
+
 ### Fixed
 
 - Response caching's key now includes the request's query string -
