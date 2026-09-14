@@ -1472,6 +1472,17 @@ RIP.addInterceptor(new LoggingInterceptor());
 // Or route log lines wherever you want instead of System.out.
 RIP.addInterceptor(new LoggingInterceptor(logger::info));
 
+// LoggingInterceptor never logs bodies at all. RedactingLoggingInterceptor
+// does the same before/after logging but also includes the request and
+// response bodies, masking configured field names (password, token,
+// secret, apiKey, ssn, authorization by default) instead of printing
+// them verbatim.
+RIP.addInterceptor(new RedactingLoggingInterceptor());
+
+// Or a custom set of field names to mask, and/or a custom sink.
+Set<String> sensitiveFields = new HashSet<>(Arrays.asList("password", "creditCardNumber"));
+RIP.addInterceptor(new RedactingLoggingInterceptor(sensitiveFields, logger::info));
+
 // Attach a fresh correlation/request ID to every call - useful for
 // tracing across service boundaries. Defaults to a random UUID under
 // the X-Request-Id header.
@@ -1497,6 +1508,16 @@ response — a transport failure (no response at all) never reaches
 `afterResponse`, so it produces no sample. A `@Retry`'d call reports one
 sample per attempt, not just the final one, since every attempt gets its
 own `afterResponse` notification.
+
+`RedactingLoggingInterceptor`'s masking is a regex match over
+`"fieldName": value`-shaped text, not a real JSON parser — reliable for the
+common case of a flat sensitive field, best-effort for one whose value is
+itself a nested object or array. The request body comes from
+`RequestContext.getBody()` (a `String`/POJO `@Body` only — `null` for
+`@FormUrlEncoded`/`@Multipart`); the response body is converted with
+`String.valueOf(...)` first, so masking a decoded POJO response depends on
+its own `toString()` happening to render matching `"fieldName": value`
+pairs.
 
 ## Compile-time proxy generation
 
