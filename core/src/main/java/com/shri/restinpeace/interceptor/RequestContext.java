@@ -131,4 +131,84 @@ public final class RequestContext {
 		return attributes.get(key);
 	}
 
+	/**
+	 * Renders this call as a {@code curl} command reproducing it as closely
+	 * as possible - the exact method, URL, headers, and body (if any) RIP is
+	 * about to send - for pasting into a bug report or a terminal to
+	 * reproduce a failure outside the JVM. Equivalent to
+	 * {@code toCurlCommand(CurlVerbosity.NONE)}.
+	 *
+	 * <p>
+	 * Most useful from {@code afterResponse} on an error status, or from a
+	 * {@code catch} block for {@code RestInPeaceHttpException} - by then the
+	 * body (if any) is already fixed, so the rendered command always matches
+	 * what was actually sent.
+	 *
+	 * @return the equivalent {@code curl} command
+	 */
+	public String toCurlCommand() {
+		return toCurlCommand(CurlVerbosity.NONE);
+	}
+
+	/**
+	 * Same as {@link #toCurlCommand()}, with an extra {@code curl} flag for
+	 * the requested verbosity level - useful when the plain reproduction
+	 * doesn't explain a failure and the wire-level detail {@code curl}
+	 * itself can print (request/response headers, or a full trace including
+	 * bodies) is what's actually needed.
+	 *
+	 * @param verbosity how much extra diagnostic detail the rendered
+	 *                  command asks {@code curl} to print - {@link
+	 *                  CurlVerbosity#NONE} for none
+	 * @return the equivalent {@code curl} command
+	 */
+	public String toCurlCommand(CurlVerbosity verbosity) {
+		StringBuilder curl = new StringBuilder("curl -X ").append(httpMethod);
+		if (verbosity.flag != null) {
+			curl.append(' ').append(verbosity.flag);
+		}
+		curl.append(" '").append(url).append('\'');
+		for (Map.Entry<String, String> header : headers.entrySet()) {
+			curl.append(" -H '").append(header.getKey()).append(": ").append(header.getValue()).append('\'');
+		}
+		if (body != null) {
+			curl.append(" -d '").append(body.replace("'", "'\\''")).append('\'');
+		}
+		return curl.toString();
+	}
+
+	/**
+	 * How much extra diagnostic detail {@link #toCurlCommand(CurlVerbosity)}
+	 * asks {@code curl} itself to print, via {@code curl}'s own flags - RIP
+	 * doesn't invent its own verbosity scheme, it just picks which standard
+	 * {@code curl} flag to include.
+	 */
+	public enum CurlVerbosity {
+
+		/** No extra flag - just the method, URL, headers, and body. */
+		NONE(null),
+
+		/**
+		 * {@code -v} - prints the request/response headers and connection
+		 * info {@code curl} itself sees (to {@code curl}'s own stderr),
+		 * without touching either body.
+		 */
+		VERBOSE("-v"),
+
+		/**
+		 * {@code --trace-ascii -} - the most detailed level: a full,
+		 * human-readable trace of everything sent and received on the wire,
+		 * headers and bodies both (to {@code curl}'s own stdout) - useful
+		 * when {@link #VERBOSE}'s headers-only view isn't enough to explain
+		 * a failure.
+		 */
+		TRACE("--trace-ascii -");
+
+		private final String flag;
+
+		CurlVerbosity(String flag) {
+			this.flag = flag;
+		}
+	}
+
 }

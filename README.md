@@ -81,6 +81,7 @@ test server for unit tests.
   - [Time-based and manual eviction](#time-based-and-manual-eviction)
   - [Query string in the cache key](#query-string-in-the-cache-key)
 - [Interceptors](#interceptors)
+  - [Reproducing a call with `curl`](#reproducing-a-call-with-curl)
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
 - [Compile-time proxy generation](#compile-time-proxy-generation)
@@ -1286,6 +1287,35 @@ the response. Register an interceptor first if it needs to bracket everything
 else's work (e.g. a timer measuring total call overhead); register it last if
 it needs to sit closest to the actual network call (e.g. a timer measuring
 only network latency).
+
+### Reproducing a call with `curl`
+
+`context.toCurlCommand()` renders the exact method, URL, headers, and body
+(if any) as a copy-pasteable `curl` command — handy from `afterResponse` on
+an error status, or from a `catch` block, to attach a reproduction to a bug
+report without a screenshot:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void afterResponse(RequestContext context, int status, Object body) {
+        if (status >= 400) {
+            System.err.println("Reproduce with:\n" + context.toCurlCommand());
+        }
+    }
+});
+// curl -X POST 'https://api.example.com/charges' -H 'Content-Type: application/json' -d '{"amount":500}'
+```
+
+Pass a `RequestContext.CurlVerbosity` to add one of `curl`'s own diagnostic
+flags when the plain reproduction doesn't explain the failure —
+`VERBOSE` (`-v`, request/response headers) or `TRACE` (`--trace-ascii -`,
+a full wire-level trace including both bodies):
+
+```java
+context.toCurlCommand(RequestContext.CurlVerbosity.VERBOSE);
+// curl -X POST -v 'https://api.example.com/charges' -H 'Content-Type: application/json' -d '{"amount":500}'
+```
 
 ### Per-client interceptors
 
