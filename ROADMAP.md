@@ -883,10 +883,17 @@ commitment.
 
 **Quick wins (small, self-contained):**
 
-- [ ] **E1. `RequestContext.toCurlCommand()`** — `RequestContext` already
+- [x] **E1. `RequestContext.toCurlCommand()`** — `RequestContext` already
       knows the method, URL, headers, and (since `RequestContext.getBody()`
       shipped above) the body. One method turns a failed call into a
-      copy-pasteable `curl` repro for logs/bug reports.
+      copy-pasteable `curl` repro for logs/bug reports. Shipped with a
+      verbosity option, `toCurlCommand(RequestContext.CurlVerbosity)` -
+      `NONE` (default, no extra flag), `VERBOSE` (curl's own `-v`,
+      request/response headers), or `TRACE` (curl's own `--trace-ascii -`,
+      a full wire-level trace including both bodies) - for when the plain
+      reproduction doesn't explain the failure. RIP doesn't invent its own
+      verbosity scheme; each level just picks which real `curl` flag to
+      include.
 - [ ] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
       — `isClientError()`/`isServerError()` cover 4xx/5xx; 3xx has no
       helper. `@Retry` already parses a response's own `Retry-After`

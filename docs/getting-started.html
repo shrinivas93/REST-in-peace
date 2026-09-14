@@ -924,6 +924,15 @@ RIP.clearInterceptors();   // removes everything registered</code></pre>
 }</code></pre>
           </div>
           <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · reproduce a call with curl</span>
+              <span class="snippet-caption">CurlVerbosity.VERBOSE (-v) or .TRACE (--trace-ascii -) for more wire-level detail</span></div>
+            <pre><code class="language-java">public void afterResponse(RequestContext ctx, int status, Object body) {
+    if (status >= 400) {
+        System.err.println("Reproduce with:\n" + ctx.toCurlCommand());
+    }
+}</code></pre>
+          </div>
+          <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · scoped to one client</span></div>
             <pre><code class="language-java">StripeApi stripe = RIP.getClient(StripeApi.class, RipClientConfig.builder()
         .baseUrl("https://api.stripe.com")

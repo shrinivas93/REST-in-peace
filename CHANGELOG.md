@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RequestContext.toCurlCommand()` / `toCurlCommand(RequestContext.CurlVerbosity)`
+  render a call as a copy-pasteable `curl` command (method, URL, headers,
+  body) for pasting into a bug report or reproducing a failure outside the
+  JVM - `CurlVerbosity.VERBOSE`/`TRACE` add `curl`'s own `-v`/
+  `--trace-ascii -` flags for more wire-level detail.
 - `RipClientConfig.Builder.cacheKeyIncludesQueryString(boolean)` (per client)
   and `RIP.setCacheKeyIncludesQueryString(boolean)` (shared default) let the
   cache key's query string be turned off - `true` by default, matching
