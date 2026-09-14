@@ -959,10 +959,15 @@ commitment.
       serving until it ages out of its own window too. `CachedResponse`
       gained a new six-arg constructor carrying the deadline explicitly;
       both existing constructors are unchanged and default to no window.
-- [ ] **E6. Negative caching** — cache a confirmed `404` for a short TTL, so
-      a client stops hammering a downstream for a resource it already
-      confirmed doesn't exist. Falls directly out of the `InMemoryCache`
-      max-age infra above (max-age constructor, `Cache.key(...)`).
+- [x] **E6. Negative caching** — `RipClientConfig.Builder#negativeCacheTtlMillis(long)`
+      (and `RIP.setNegativeCacheTtlMillis(long)` for a shared default) opts
+      a client into caching a confirmed `404` for a fixed TTL, so it stops
+      hammering a downstream for a resource it already confirmed doesn't
+      exist - regardless of whatever (if anything) the `404` response's own
+      `Cache-Control`/`ETag`/`Last-Modified` say, unlike every other cached
+      status. `CacheCoordinator.reconcileCache` stores it directly (bypassing
+      `isStorable`), reusing the existing `RestInPeaceHttpException` replay
+      path unchanged - a cached `404` is decoded exactly like a real one.
 - [ ] **E7. `RedactingLoggingInterceptor`** — a direct payoff of
       `RequestContext.getBody()` above: a pre-built interceptor that logs
       bodies like `LoggingInterceptor` does today, but masks configured

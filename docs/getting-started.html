@@ -234,6 +234,7 @@
         <div class="group-title">Caching</div>
         <a href="#caching">Response caching</a>
         <a href="#stale-while-revalidate">Stale-while-revalidate</a>
+        <a href="#negative-caching">Negative caching</a>
         <a href="#cache-eviction">Time-based &amp; manual eviction</a>
         <a href="#cache-key-query-string">Query string in the cache key</a>
 
@@ -889,6 +890,28 @@ Item item = api.getItem("42");
 // logged, nothing is thrown at the caller who triggered it. Once the
 // stale-while-revalidate window itself elapses, the next call falls
 // back to the usual synchronous revalidation (or re-fetch).</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="negative-caching">
+        <h3>Negative caching</h3>
+        <p class="blurb">Every other cached status is stored because the server said so. A confirmed 404 is different - negativeCacheTtlMillis opts in regardless of the response's own headers.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · per client</span></div>
+            <pre><code class="language-java">UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .negativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1))
+        .build());
+
+api.getUser("does-not-exist");   // throws RestInPeaceHttpException(404, ...) - one real network call
+api.getUser("does-not-exist");   // throws the same exception again - served from cache</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · shared default</span>
+              <span class="snippet-caption">a client's own setting still wins over this</span></div>
+            <pre><code class="language-java">RIP.setNegativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1));</code></pre>
           </div>
         </div>
       </div>

@@ -43,13 +43,17 @@ final class CacheCoordinator {
 
 	private static volatile Cache DEFAULT_CACHE;
 	private static volatile boolean DEFAULT_CACHE_KEY_INCLUDES_QUERY_STRING = true;
+	private static volatile Long DEFAULT_NEGATIVE_CACHE_TTL_MILLIS;
 
 	private final Cache configuredCache;
 	private final Boolean configuredCacheKeyIncludesQueryString;
+	private final Long configuredNegativeCacheTtlMillis;
 
-	CacheCoordinator(Cache configuredCache, Boolean configuredCacheKeyIncludesQueryString) {
+	CacheCoordinator(Cache configuredCache, Boolean configuredCacheKeyIncludesQueryString,
+			Long configuredNegativeCacheTtlMillis) {
 		this.configuredCache = configuredCache;
 		this.configuredCacheKeyIncludesQueryString = configuredCacheKeyIncludesQueryString;
+		this.configuredNegativeCacheTtlMillis = configuredNegativeCacheTtlMillis;
 	}
 
 	/**
@@ -76,6 +80,20 @@ final class CacheCoordinator {
 	}
 
 	/**
+	 * Sets the shared default negative-cache TTL, for every client not built
+	 * with a {@link com.shri.restinpeace.RipClientConfig} that sets its own
+	 * via
+	 * {@link com.shri.restinpeace.RipClientConfig.Builder#negativeCacheTtlMillis(long)}.
+	 * See {@link com.shri.restinpeace.RIP#setNegativeCacheTtlMillis(long)}.
+	 *
+	 * @param ttlMillis how long a confirmed {@code 404} stays negatively
+	 *                  cached, in milliseconds
+	 */
+	static void setDefaultNegativeCacheTtlMillis(long ttlMillis) {
+		DEFAULT_NEGATIVE_CACHE_TTL_MILLIS = ttlMillis;
+	}
+
+	/**
 	 * Returns the cache this instance's calls should use - its own, from a
 	 * {@link com.shri.restinpeace.RipClientConfig}, if one was set, otherwise
 	 * the shared default, read dynamically so a later
@@ -96,6 +114,21 @@ final class CacheCoordinator {
 	private boolean cacheKeyIncludesQueryString() {
 		return configuredCacheKeyIncludesQueryString != null ? configuredCacheKeyIncludesQueryString
 				: DEFAULT_CACHE_KEY_INCLUDES_QUERY_STRING;
+	}
+
+	/**
+	 * Returns how long this instance's calls negatively cache a confirmed
+	 * {@code 404} - this client's own choice, if one was set, otherwise the
+	 * shared default, read dynamically so a later {@link
+	 * com.shri.restinpeace.RIP#setNegativeCacheTtlMillis(long)} call still
+	 * takes effect for an already-built client that never set its own.
+	 *
+	 * @return the negative-cache TTL in milliseconds, or {@code null} for no
+	 *         negative caching at all
+	 */
+	private Long negativeCacheTtlMillis() {
+		return configuredNegativeCacheTtlMillis != null ? configuredNegativeCacheTtlMillis
+				: DEFAULT_NEGATIVE_CACHE_TTL_MILLIS;
 	}
 
 	/**
@@ -130,14 +163,14 @@ final class CacheCoordinator {
 				return toSyntheticResponse(cached);
 			}
 			if (sameVariant && cached.isWithinStaleWhileRevalidateWindow()) {
-				triggerBackgroundRevalidation(cache, key, cached, request, call);
+				triggerBackgroundRevalidation(cache, key, cached, request, call, negativeCacheTtlMillis());
 				return toSyntheticResponse(cached);
 			}
 			if (sameVariant) {
 				applyRevalidationHeaders(request, cached);
 			}
 			return reconcileCache(cache, key, sameVariant ? cached : null, differentVariantCached, call.get(),
-					request);
+					request, negativeCacheTtlMillis());
 		};
 	}
 
@@ -179,11 +212,11 @@ final class CacheCoordinator {
 	 * same as if this background attempt had never run.
 	 */
 	private static void triggerBackgroundRevalidation(Cache cache, String key, CachedResponse staleEntry,
-			HttpRequest<?> request, Supplier<HttpResponse<String>> call) {
+			HttpRequest<?> request, Supplier<HttpResponse<String>> call, Long negativeCacheTtlMillis) {
 		applyRevalidationHeaders(request, staleEntry);
 		staleWhileRevalidateExecutor().execute(() -> {
 			try {
-				reconcileCache(cache, key, staleEntry, false, call.get(), request);
+				reconcileCache(cache, key, staleEntry, false, call.get(), request, negativeCacheTtlMillis);
 			} catch (RuntimeException e) {
 				// Best-effort - see this method's own javadoc.
 			}
@@ -222,7 +255,7 @@ final class CacheCoordinator {
 				// the response already being returned below.
 				call.get().thenAccept(response -> {
 					try {
-						reconcileCache(cache, key, cached, false, response, request);
+						reconcileCache(cache, key, cached, false, response, request, negativeCacheTtlMillis());
 					} catch (RuntimeException e) {
 						// Best-effort - see triggerBackgroundRevalidation's own javadoc.
 					}
@@ -233,8 +266,8 @@ final class CacheCoordinator {
 				applyRevalidationHeaders(request, cached);
 			}
 			CachedResponse staleEntry = sameVariant ? cached : null;
-			return call.get().thenApply(
-					response -> reconcileCache(cache, key, staleEntry, differentVariantCached, response, request));
+			return call.get().thenApply(response -> reconcileCache(cache, key, staleEntry, differentVariantCached,
+					response, request, negativeCacheTtlMillis()));
 		};
 	}
 
@@ -281,17 +314,22 @@ final class CacheCoordinator {
 	 * previously-cached entry for this exact request's {@code Vary}
 	 * variant, if any) once a call has actually gone out - either because
 	 * there was nothing cached, a different variant was cached, or a stale
-	 * entry needed revalidating. A {@code 304 Not Modified} against a known
-	 * stale entry refreshes its freshness window and hands back its stored
-	 * body unchanged; any other outcome stores {@code key} per the
-	 * response's own {@code Cache-Control}/{@code ETag}/{@code Last-Modified}
-	 * (snapshotting this request's values for whatever its {@code Vary}
-	 * header names), or evicts it - unless {@code leaveExistingEntryAlone}
-	 * is set, since evicting then would wrongly discard a still-valid,
-	 * different variant this call has nothing to do with.
+	 * entry needed revalidating. A {@code 404} negatively cached for
+	 * {@code negativeCacheTtlMillis} (see {@link #negativeCacheTtlMillis()})
+	 * is stored for exactly that long, regardless of any
+	 * {@code Cache-Control}/{@code ETag}/{@code Last-Modified} of its own. A
+	 * {@code 304 Not Modified} against a known stale entry refreshes its
+	 * freshness window and hands back its stored body unchanged; any other
+	 * outcome stores {@code key} per the response's own
+	 * {@code Cache-Control}/{@code ETag}/{@code Last-Modified} (snapshotting
+	 * this request's values for whatever its {@code Vary} header names), or
+	 * evicts it - unless {@code leaveExistingEntryAlone} is set, since
+	 * evicting then would wrongly discard a still-valid, different variant
+	 * this call has nothing to do with.
 	 */
 	private static HttpResponse<String> reconcileCache(Cache cache, String key, CachedResponse staleEntry,
-			boolean leaveExistingEntryAlone, HttpResponse<String> response, HttpRequest<?> request) {
+			boolean leaveExistingEntryAlone, HttpResponse<String> response, HttpRequest<?> request,
+			Long negativeCacheTtlMillis) {
 		Map<String, List<String>> responseHeaders = ResponseDecoder.toHeaderMap(response.getHeaders());
 		if (response.getStatus() == 304 && staleEntry != null) {
 			CachedResponse refreshed = new CachedResponse(staleEntry.getStatus(), staleEntry.getHeaders(),
@@ -299,6 +337,13 @@ final class CacheCoordinator {
 					staleWhileRevalidateUntil(responseHeaders));
 			cache.put(key, refreshed);
 			return toSyntheticResponse(refreshed);
+		}
+		if (response.getStatus() == 404 && negativeCacheTtlMillis != null) {
+			Map<String, String> varySnapshot = captureVaryValues(request, varyHeaderNames(responseHeaders));
+			long freshUntil = System.currentTimeMillis() + negativeCacheTtlMillis;
+			cache.put(key,
+					new CachedResponse(response.getStatus(), responseHeaders, response.getBody(), freshUntil, varySnapshot));
+			return response;
 		}
 		if (ResponseDecoder.isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
 			Map<String, String> varySnapshot = captureVaryValues(request, varyHeaderNames(responseHeaders));
