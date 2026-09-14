@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RedactingLoggingInterceptor` - a `LoggingInterceptor`-style pre-built
+  interceptor that also logs the request and response bodies, masking a
+  configured set of field names (`password`, `token`, `secret`, `apiKey`,
+  `ssn`, `authorization` by default) case-insensitively instead of printing
+  them verbatim. The request body comes from `RequestContext.getBody()`
+  (unchanged from its existing scope: a `String`/POJO `@Body` only); the
+  response body is converted with `String.valueOf(...)` first, so masking
+  is reliable for a `String`/JSON body and best-effort for a decoded
+  POJO's own `toString()`. Masking is a regex match over
+  `"fieldName": value`-shaped text, not a real JSON parser, so a sensitive
+  field whose value is itself a nested object/array is only masked up to
+  that value's first `,`/`}`/`]`.
 - `RipClientConfig.Builder#negativeCacheTtlMillis(long)` (and
   `RIP.setNegativeCacheTtlMillis(long)` for a shared default) opts a client
   into negatively caching a confirmed `404` for a fixed TTL, regardless of

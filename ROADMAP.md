@@ -968,11 +968,16 @@ commitment.
       status. `CacheCoordinator.reconcileCache` stores it directly (bypassing
       `isStorable`), reusing the existing `RestInPeaceHttpException` replay
       path unchanged - a cached `404` is decoded exactly like a real one.
-- [ ] **E7. `RedactingLoggingInterceptor`** — a direct payoff of
+- [x] **E7. `RedactingLoggingInterceptor`** — a direct payoff of
       `RequestContext.getBody()` above: a pre-built interceptor that logs
-      bodies like `LoggingInterceptor` does today, but masks configured
-      field names (`password`, `token`, `ssn`, ...) so logging bodies is
-      safe by default instead of a footgun.
+      the request (via `getBody()`) and response bodies the same way
+      `LoggingInterceptor` logs method/URL/status/duration, but masks a
+      configured set of field names (`password`, `token`, `secret`,
+      `apiKey`, `ssn`, `authorization` by default) case-insensitively via a
+      regex match over `"fieldName": value`-shaped text - reliable for a
+      flat field, best-effort once its value is itself a nested
+      object/array - so logging bodies is safe by default instead of a
+      footgun.
 - [ ] **E8. Per-client retry budget** — a token-bucket cap on *total*
       retries across a client in a time window
       (`RipClientConfig.retryBudget(maxRetries, perWindow)`), not per-call.

@@ -1036,6 +1036,18 @@ RIP.addInterceptor(new HeaderInterceptor(Map.of("Authorization", () -> currentTo
 RIP.addInterceptor(new LoggingInterceptor(logger::info));     // or your own sink</code></pre>
           </div>
           <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">RedactingLoggingInterceptor</span>
+              <span class="snippet-caption">also logs bodies, masking configured field names</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new RedactingLoggingInterceptor());   // masks password/token/secret/apiKey/ssn/authorization
+RIP.addInterceptor(new RedactingLoggingInterceptor(Set.of("password", "creditCardNumber"), logger::info));</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · a regex mask, not a JSON parser</span>
+              <span class="snippet-caption">reliable for a flat field; best-effort once its value is a nested object/array</span></div>
+            <pre><code class="language-java">// "password": "hunter2"           -> "password": "***"          (masked cleanly)
+// "token": { "value": "x" }       -> masked only up to the value's first , } or ]</code></pre>
+          </div>
+          <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">CorrelationIdInterceptor</span></div>
             <pre><code class="language-java">RIP.addInterceptor(new CorrelationIdInterceptor());                                // random UUID, X-Request-Id
 RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGenerator.next()));</code></pre>
