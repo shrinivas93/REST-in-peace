@@ -38,12 +38,15 @@ final class ResponseDecoder {
 
 	/**
 	 * Decodes a settled response, throwing {@link RestInPeaceHttpException}
-	 * for a non-2xx status instead of returning a value.
+	 * for a non-2xx status instead of returning a value - carrying the
+	 * response's own {@code Retry-After} header, if any, so a caller can
+	 * read it back via {@link RestInPeaceHttpException#getRetryAfterMillis()}
+	 * even for a method with no {@code @Retry} of its own.
 	 */
 	Object decodeOrThrow(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
 		if (!isSuccessStatus(response.getStatus())) {
 			throw new RestInPeaceHttpException(response.getStatus(), toRawBodyString(response.getBody()),
-					decodeBody(response, errorType, returnType));
+					decodeBody(response, errorType, returnType), RetryExecutor.parseRetryAfterMillis(response));
 		}
 		return decodeBody(response, errorType, returnType);
 	}

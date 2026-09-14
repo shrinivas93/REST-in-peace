@@ -684,6 +684,16 @@ else if (e.is(429)) { ... }
 if (e.is(429)) { ... }
 else if (e.isClientError()) { ... }</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · honor the server's own Retry-After</span>
+              <span class="snippet-caption">same parsing @Retry uses internally, for a method with no @Retry at all</span></div>
+            <pre><code class="language-java">catch (RestInPeaceHttpException e) {
+    if (e.is(429) && e.getRetryAfterMillis() != null) {
+        Thread.sleep(e.getRetryAfterMillis());
+        return retryManually();
+    }
+}</code></pre>
+          </div>
         </div>
       </div>
 

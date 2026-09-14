@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RestInPeaceHttpException.isRedirect()` (300-399) joins `isClientError()`/
+  `isServerError()`; `getRetryAfterMillis()` surfaces the response's own
+  `Retry-After` header (delta-seconds or an HTTP-date), parsed to
+  milliseconds via the exact same logic `@Retry` already uses internally -
+  for a method with no `@Retry` at all, or one that exhausted its retries,
+  to honor the server's backoff hint manually. A new
+  `RestInPeaceHttpException(status, rawBody, errorBody, retryAfterMillis)`
+  constructor carries it; the existing three-arg constructor is unchanged
+  and always passes `null`.
 - `RequestContext.toCurlCommand()` / `toCurlCommand(RequestContext.CurlVerbosity)`
   render a call as a copy-pasteable `curl` command (method, URL, headers,
   body) for pasting into a bug report or reproducing a failure outside the
