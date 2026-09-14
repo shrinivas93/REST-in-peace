@@ -48,6 +48,8 @@ public final class RipClientConfig {
 	private final Cache cache;
 	private final Boolean cacheKeyIncludesQueryString;
 	private final Long negativeCacheTtlMillis;
+	private final Integer retryBudgetMaxRetries;
+	private final Long retryBudgetWindowMillis;
 	private final List<RequestInterceptor> interceptors;
 	private final RetryConfig retry;
 
@@ -63,6 +65,8 @@ public final class RipClientConfig {
 		this.cache = builder.cache;
 		this.cacheKeyIncludesQueryString = builder.cacheKeyIncludesQueryString;
 		this.negativeCacheTtlMillis = builder.negativeCacheTtlMillis;
+		this.retryBudgetMaxRetries = builder.retryBudgetMaxRetries;
+		this.retryBudgetWindowMillis = builder.retryBudgetWindowMillis;
 		this.interceptors = builder.interceptors;
 		this.retry = builder.retry;
 	}
@@ -191,6 +195,29 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns this client's retry-budget capacity.
+	 *
+	 * @return the maximum number of retries available at once (and refilled
+	 *         back up to over {@link #getRetryBudgetWindowMillis()}), or
+	 *         {@code null} for no cap beyond each call's own
+	 *         {@code @Retry#times()}
+	 */
+	public Integer getRetryBudgetMaxRetries() {
+		return retryBudgetMaxRetries;
+	}
+
+	/**
+	 * Returns this client's retry-budget refill window.
+	 *
+	 * @return how long a fully-drained retry budget takes to refill back to
+	 *         {@link #getRetryBudgetMaxRetries()}, in milliseconds, or
+	 *         {@code null} if no retry budget is configured
+	 */
+	public Long getRetryBudgetWindowMillis() {
+		return retryBudgetWindowMillis;
+	}
+
+	/**
 	 * Returns this client's own interceptors.
 	 *
 	 * @return this client's own interceptors, run in addition to (not instead
@@ -226,6 +253,8 @@ public final class RipClientConfig {
 		private Cache cache;
 		private Boolean cacheKeyIncludesQueryString;
 		private Long negativeCacheTtlMillis;
+		private Integer retryBudgetMaxRetries;
+		private Long retryBudgetWindowMillis;
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
 		private RetryConfig retry;
 
@@ -373,6 +402,44 @@ public final class RipClientConfig {
 				throw new IllegalArgumentException("ttlMillis must be positive.");
 			}
 			this.negativeCacheTtlMillis = ttlMillis;
+			return this;
+		}
+
+		/**
+		 * Caps the *total* number of retries this client performs across
+		 * every call within a rolling window - not a per-call limit, which
+		 * is still each call's own {@code @Retry#times()} (or this config's
+		 * {@link #retry(RetryConfig)} default). Addresses a retry storm
+		 * amplifying an outage: many concurrently failing calls each
+		 * retrying up to their own {@code times()} independently can
+		 * multiply an already-struggling downstream's request volume, where
+		 * a shared budget caps the aggregate instead. Tokens refill
+		 * continuously (a token-bucket, not a fixed window that resets in
+		 * one burst): starting full at {@code maxRetries}, and regaining
+		 * {@code maxRetries / windowMillis} tokens per elapsed millisecond,
+		 * capped at {@code maxRetries}. Once the budget is exhausted, a call
+		 * that would otherwise retry instead returns (or throws) its current
+		 * outcome immediately, exactly as if it had reached its own
+		 * {@code times()} - no different from an ordinary give-up. Not
+		 * called at all (the default) means no cap beyond each call's own
+		 * {@code times()}, byte-for-byte today's behavior.
+		 *
+		 * @param maxRetries   the bucket's capacity - the maximum number of
+		 *                     retries available at once; must be positive
+		 * @param windowMillis how long a fully-drained bucket takes to
+		 *                     refill back to {@code maxRetries}, in
+		 *                     milliseconds; must be positive
+		 * @return this builder
+		 */
+		public Builder retryBudget(int maxRetries, long windowMillis) {
+			if (maxRetries <= 0) {
+				throw new IllegalArgumentException("maxRetries must be positive.");
+			}
+			if (windowMillis <= 0) {
+				throw new IllegalArgumentException("windowMillis must be positive.");
+			}
+			this.retryBudgetMaxRetries = maxRetries;
+			this.retryBudgetWindowMillis = windowMillis;
 			return this;
 		}
 

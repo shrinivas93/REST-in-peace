@@ -978,9 +978,14 @@ commitment.
       flat field, best-effort once its value is itself a nested
       object/array - so logging bodies is safe by default instead of a
       footgun.
-- [ ] **E8. Per-client retry budget** — a token-bucket cap on *total*
-      retries across a client in a time window
-      (`RipClientConfig.retryBudget(maxRetries, perWindow)`), not per-call.
+- [x] **E8. Per-client retry budget** — `RipClientConfig.Builder#retryBudget(int,
+      long)` is a token-bucket cap on *total* retries across a client in a
+      rolling window, not per-call (still each call's own
+      `@Retry#times()`). Tokens refill continuously (not a once-per-window
+      burst); once exhausted, a call that would otherwise retry gives up
+      immediately instead, same as reaching its own `times()`. Wired into
+      `RetryExecutor`'s sync and async loops alike via a new internal
+      `RetryBudget` (a plain synchronized token bucket, no new dependency).
       Addresses the actual production failure mode the circuit-breaker item
       above is reacting to (a retry storm amplifying an outage) without the
       complexity of a full circuit-breaker/bulkhead abstraction.

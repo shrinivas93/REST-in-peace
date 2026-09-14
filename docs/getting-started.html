@@ -743,6 +743,16 @@ public interface UserApi {
         .retry(RetryConfig.builder().times(3).delayMillis(200).retryOnStatus(503).build())
         .build());</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · retry budget</span>
+              <span class="snippet-caption">caps TOTAL retries across the client, not one call's own times()</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retryBudget(50, TimeUnit.MINUTES.toMillis(1))   // at most 50 retries/minute, client-wide
+        .build());
+// A token bucket, not a once-a-minute burst - refills continuously.
+// Once exhausted, a call that would retry instead gives up immediately,
+// exactly like reaching its own @Retry times().</code></pre>
+          </div>
         </div>
       </div>
 
