@@ -993,14 +993,23 @@ RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGener
 
       <div class="feature">
         <h3>Compile-time proxy generation</h3>
-        <p class="blurb">No opt-in — a supported method shape gets a real generated <code>&lt;Interface&gt;_RipImpl</code> class automatically; anything else falls back to the reflective proxy, transparently.</p>
+        <p class="blurb">No opt-in — a supported method shape gets a real generated <code>&lt;Interface&gt;_RipImpl</code> class automatically; an unsupported method on the same interface falls back internally, method by method, not the whole interface.</p>
         <div class="snippets">
           <div class="snippet neutral">
             <div class="snippet-head"><span class="snippet-tag">Zero code change</span>
               <span class="snippet-caption">same call site either way</span></div>
             <pre><code class="language-java">UserApi api = RIP.getClient(UserApi.class);
 // api.getClass() is UserApi_RipImpl        — supported shape, reflection-free
-// api.getClass() is a java.lang.reflect.Proxy — unsupported shape, same behavior</code></pre>
+// api.getClass() is a java.lang.reflect.Proxy — NO method on this interface is codegen-eligible</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Mixed interface</span>
+              <span class="snippet-caption">List&lt;User&gt; isn't Class&lt;?&gt;-decodable — same limitation on both dispatch paths</span></div>
+            <pre><code class="language-java">interface UserApi {
+    User getUser(String id);        // codegen-eligible — real generated method
+    List&lt;User&gt; listUsers();        // not eligible — delegates internally to a lazily-built reflective proxy
+}
+// api.getClass() is still UserApi_RipImpl — one unsupported method no longer disqualifies the rest</code></pre>
           </div>
         </div>
       </div>

@@ -936,14 +936,48 @@ commitment.
 
 **Bigger bets (real design work first):**
 
-- [ ] **E9. Partial compile-time codegen** — today one unsupported method
-      (`RestClientProcessor`'s own comment: "generating a partially-correct
-      implementation would be worse than not generating one at all")
-      disqualifies the *entire* interface from codegen. An alternative:
-      generate the supported methods for real, and have the generated class
-      internally delegate only the unsupported ones to a private reflective
-      sub-dispatcher - still one class, still a fast path for most methods,
-      without today's all-or-nothing cliff.
+- [x] **E9. Partial compile-time codegen** — one unsupported method (a
+      generic collection return type like `List<User>`, a raw
+      `CompletableFuture`, ...) used to disqualify the *entire* interface's
+      codegen (`RestClientProcessor`'s own former comment: "generating a
+      partially-correct implementation would be worse than not generating
+      one at all"). Now only that one method falls back, delegating to a
+      lazily-built internal `java.lang.reflect.Proxy` (backed by this same
+      client's own `RequestExecutor`, so it shares its retry/cache/
+      interceptor/timeout config) - every other method on the same
+      interface still gets a real generated implementation. Built directly
+      via `Proxy.newProxyInstance`/a new
+      `RestClientInvocationHandler(RequestExecutor)` constructor rather than
+      `RIP.getClient(...)`, which would look up this very generated class by
+      name again and recurse forever. A default method needed no such
+      mechanism at all once investigated - it's simply never overridden by
+      the generated class, so ordinary Java default-method dispatch already
+      resolves it via the class's own inherited implementation (a call back
+      into another interface method from inside it still reaches that
+      method's real generated override); a static method isn't part of the
+      implementing contract and needs nothing generated either - so an
+      interface mixing a default/static method with otherwise-fully-
+      supported methods now gets real codegen too, instead of falling back
+      to the reflective proxy entirely (a nested/private interface
+      declaration remains a separate, unrelated precondition that still
+      disqualifies the whole interface). An interface with *no*
+      codegen-eligible method at all still isn't generated for - the plain
+      reflective proxy already covers that with less indirection.
+      **Important scope note surfaced while implementing this:** it does
+      *not*, by itself, make `List<User>` correctly decodable. RIP's
+      response decoding is `Class<?>`-based on *both* dispatch paths -
+      `RequestExecutor.processRestRequest` calls `method.getReturnType()`,
+      erasing `List<User>` down to bare `List.class`, same as the
+      annotation processor's own `Class<?>`-literal requirement - so
+      delegating to the reflective proxy doesn't fix the underlying
+      decoding gap, only the "does one unsupported method disqualify
+      everything else" ergonomics problem. Genuinely fixing `List<User>`
+      needs generic `Type`-based decoding (`Method.getGenericReturnType()`)
+      threaded through both paths - a deeper, separate piece of work, closer
+      to (or a prerequisite for) the parked `CallAdapter`-style item above
+      than something this item alone could deliver. See the README's
+      ["Why isn't `List<User>` supported?"](README.md#why-isnt-listuser-supported)
+      for the consumer-facing version of this explanation.
 - [ ] **E10. OpenAPI → `@RestClient` interface generator** — flip the
       current direction. Instead of hand-writing an interface and letting
       the processor generate the *implementation*, a processor mode that
@@ -957,3 +991,24 @@ commitment.
       short-circuits, and - as a side effect - a lightweight record/replay
       mode built on the interceptor chain instead of requiring
       `MockRestServer`'s own parked VCR-style feature above.
+- [ ] **E12. Generic `Type`-based response decoding** — surfaced while
+      implementing E9 above: `RequestExecutor.processRestRequest` resolves a
+      method's return type via `Method.getReturnType()`, which erases
+      `List<User>` down to bare `List.class` - the same fundamental reason
+      `RestClientProcessor` can't decode it at compile time either (needs a
+      single `Class<?>` literal, and there's no such class for "a list of
+      `User`"). RIP's response decoding is `Class<?>`-based on *both*
+      dispatch paths today, so a generic collection return type isn't
+      reliably decodable via either one - E9's reflective-fallback
+      mechanism reaches the HTTP call correctly for such a method, but
+      doesn't fix decoding it into the right element type. Fixing this for
+      real needs `Method.getGenericReturnType()` (a `java.lang.reflect.Type`,
+      not just a `Class<?>`) threaded through `ResponseDecoder` on the
+      reflective path, and an equivalent generic-signature-aware decode
+      call on the compile-time path. Likely a prerequisite for (or at least
+      closely related to) the parked `CallAdapter`-style item above, since
+      both need RIP's decoding to stop being `Class<?>`-only. Not started;
+      no design doc yet - the right `Type`/`TypeToken` shape to standardize
+      on (a hand-rolled minimal one vs. leaning on Gson's own `TypeToken`
+      given a Gson-backed `ObjectMapper` is the zero-dependency default)
+      needs a design pass before writing code.

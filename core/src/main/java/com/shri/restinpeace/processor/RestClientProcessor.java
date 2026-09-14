@@ -59,37 +59,53 @@ import com.shri.restinpeace.constant.HTTPMethod;
 
 /**
  * Generates a compile-time implementation ({@code <Interface>_RipImpl}) of
- * every {@code @RestClient} interface whose methods all fall within the
- * currently-supported shape: a single fixed HTTP verb, {@code @PathParam}/
- * {@code @QueryParam}/{@code @HeaderParam}/{@code @QueryMap}/
- * {@code @HeaderMap}/{@code @Body}/{@code @Url}/{@code @Part}/
- * {@code @PartMap}/{@code @Field}/{@code @FieldMap}/{@code @Destination}/an
- * {@code UploadProgressListener}/{@code DownloadProgressListener} parameter,
- * optional {@code @Timeout}/{@code @Retry}/{@code @Headers}/{@code @ErrorType}/
- * {@code @Multipart}/{@code @FormUrlEncoded}, and a {@code void},
- * {@code String}, non-generic POJO, {@code byte[]},
- * {@code File}, or {@code RipResponse<T>} (for any of the previous
- * return-type shapes) return type. {@code RIP.getClient(...)} prefers this
- * generated class over the reflective {@code java.lang.reflect.Proxy} it
- * falls back to for an interface this processor didn't (fully) generate for
- * - see {@code docs/design/compile-time-proxy-generation.md} for the full
- * design this is step 2 of.
+ * every {@code @RestClient} interface with at least one method that falls
+ * within the currently-supported shape: a single fixed HTTP verb,
+ * {@code @PathParam}/{@code @QueryParam}/{@code @HeaderParam}/
+ * {@code @QueryMap}/{@code @HeaderMap}/{@code @Body}/{@code @Url}/
+ * {@code @Part}/{@code @PartMap}/{@code @Field}/{@code @FieldMap}/
+ * {@code @Destination}/an {@code UploadProgressListener}/
+ * {@code DownloadProgressListener} parameter, optional {@code @Timeout}/
+ * {@code @Retry}/{@code @Headers}/{@code @ErrorType}/{@code @Multipart}/
+ * {@code @FormUrlEncoded}, and a {@code void}, {@code String}, non-generic
+ * POJO, {@code byte[]}, {@code File}, or {@code RipResponse<T>} (for any of
+ * the previous return-type shapes) return type. {@code RIP.getClient(...)}
+ * prefers this generated class over the reflective
+ * {@code java.lang.reflect.Proxy} it falls back to entirely for an interface
+ * with no codegen-eligible method at all - see
+ * {@code docs/design/compile-time-proxy-generation.md} for the full design
+ * this is step 2 of.
  *
  * <p>
- * An interface with a nested/private declaration, a default or static
- * method, or any single method using a feature outside the shape above
- * (a {@code CompletableFuture} return type, ...) is silently skipped in its
- * entirety and left to the reflective proxy - generating a
- * partially-correct implementation would be worse than not generating one
- * at all. A default method itself is fully supported by the reflective
- * proxy it falls back to (see
- * {@code com.shri.restinpeace.proxy.RestClientInvocationHandler}) - it's
- * just not (yet) one this processor generates code for.
+ * A default method needs no generated override at all - the generated class
+ * simply doesn't declare one, so ordinary Java default-method dispatch
+ * resolves it via the generated class's own inherited implementation
+ * (including any call back into another interface method, which still
+ * reaches this processor's generated override for it). A static method
+ * isn't part of the implementing contract at all and is never called
+ * through an instance, so nothing is generated for it either.
+ *
+ * <p>
+ * A method using a feature outside the supported shape above (a generic
+ * collection return type like {@code List<User>}, a raw
+ * {@code CompletableFuture}, ...) no longer disqualifies the whole
+ * interface's codegen - only that one method falls back, delegating to a
+ * lazily-built internal {@code java.lang.reflect.Proxy} (see {@link
+ * #appendReflectiveFallbackAccessor}) backed by this exact client's own
+ * {@code RequestExecutor}, so it still shares this client's retry/cache/
+ * interceptor/timeout config. Every other method on the same interface
+ * still gets a real generated implementation. An interface with <em>no</em>
+ * codegen-eligible method at all still isn't generated for - the plain
+ * reflective proxy already covers that case with less indirection than a
+ * generated class made entirely of fallback-delegating methods would add.
+ * A nested/private interface declaration is a separate, structural
+ * precondition unrelated to any one method's shape, and still disqualifies
+ * the whole interface (not yet supported at all).
  *
  * <p>
  * Before any of that, every {@code @RestClient} interface this processor
- * sees - whether or not it also happens to fall within the shape above - is
- * run through {@link CompileTimeRestClientValidator}, the compile-time counterpart of
+ * sees - whether or not it also happens to have a codegen-eligible method -
+ * is run through {@link CompileTimeRestClientValidator}, the compile-time counterpart of
  * {@link com.shri.restinpeace.validator.ReflectiveRestClientValidator}'s semantic
  * rules (an invalid {@code @Retry}, a malformed {@code @Headers} entry, an
  * unmatched path param, ...). A problem there fails compilation outright,
@@ -130,27 +146,40 @@ public class RestClientProcessor extends AbstractProcessor {
 		}
 
 		List<MethodModel> methods = new ArrayList<>();
+		List<ExecutableElement> fallbackMethods = new ArrayList<>();
 		for (Element enclosed : interfaceElement.getEnclosedElements()) {
 			if (enclosed.getKind() != ElementKind.METHOD) {
 				continue;
 			}
 			ExecutableElement methodElement = (ExecutableElement) enclosed;
-			if (methodElement.getModifiers().contains(Modifier.DEFAULT)
-					|| methodElement.getModifiers().contains(Modifier.STATIC)) {
-				return; // default/static interface methods aren't supported yet
+			if (methodElement.getModifiers().contains(Modifier.STATIC)) {
+				continue; // not part of the implementing contract - never called through an instance
+			}
+			if (methodElement.getModifiers().contains(Modifier.DEFAULT)) {
+				continue; // inherited automatically from the interface itself - nothing to override
 			}
 			MethodModel model = toSupportedMethodModel(methodElement);
 			if (model == null) {
-				return; // one unsupported method disqualifies the whole interface
+				// Outside the codegen-supported shape (e.g. a List<T> return type, still not
+				// decodable by a single Class<?> the way a plain POJO is - see
+				// nonAsyncReturnModelOf's own comment). Rather than disqualifying every OTHER
+				// method on this interface from codegen too, this one method alone delegates
+				// to a lazily-built reflective sub-proxy - see appendReflectiveFallbackAccessor.
+				fallbackMethods.add(methodElement);
+				continue;
 			}
 			methods.add(model);
 		}
 		if (methods.isEmpty()) {
+			// Nothing this processor can generate directly - falling all the way back to the
+			// plain reflective proxy (RIP.getClient's own existing behavior when no generated
+			// class exists) covers this exact case with less indirection than a generated
+			// class made entirely of fallback-delegating methods would add.
 			return;
 		}
 
 		String interfaceBaseUrl = interfaceBaseUrlOf(interfaceElement);
-		writeImplementation(interfaceElement, interfaceBaseUrl, methods);
+		writeImplementation(interfaceElement, interfaceBaseUrl, methods, fallbackMethods);
 	}
 
 	private String interfaceBaseUrlOf(TypeElement interfaceElement) {
@@ -519,8 +548,8 @@ public class RestClientProcessor extends AbstractProcessor {
 		return processingEnv.getTypeUtils().isSubtype(paramErasure, mapErasure);
 	}
 
-	private void writeImplementation(TypeElement interfaceElement, String interfaceBaseUrl,
-			List<MethodModel> methods) {
+	private void writeImplementation(TypeElement interfaceElement, String interfaceBaseUrl, List<MethodModel> methods,
+			List<ExecutableElement> fallbackMethods) {
 		String interfaceName = interfaceElement.getQualifiedName().toString();
 		PackageElement packageElement = (PackageElement) interfaceElement.getEnclosingElement();
 		String packageName = packageElement.getQualifiedName().toString();
@@ -531,7 +560,8 @@ public class RestClientProcessor extends AbstractProcessor {
 		try {
 			JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedImplName, interfaceElement);
 			try (Writer writer = file.openWriter()) {
-				writer.write(renderSource(packageName, implName, interfaceName, interfaceBaseUrl, methods));
+				writer.write(
+						renderSource(packageName, implName, interfaceName, interfaceBaseUrl, methods, fallbackMethods));
 			}
 			writeNativeImageReflectConfig(qualifiedImplName, interfaceElement);
 		} catch (IOException e) {
@@ -579,7 +609,7 @@ public class RestClientProcessor extends AbstractProcessor {
 	}
 
 	private String renderSource(String packageName, String implName, String interfaceName, String interfaceBaseUrl,
-			List<MethodModel> methods) {
+			List<MethodModel> methods, List<ExecutableElement> fallbackMethods) {
 		StringBuilder out = new StringBuilder();
 		if (!packageName.isEmpty()) {
 			out.append("package ").append(packageName).append(";\n\n");
@@ -588,18 +618,97 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append("// docs/design/compile-time-proxy-generation.md.\n");
 		out.append("public final class ").append(implName).append(" implements ").append(interfaceName)
 				.append(" {\n\n");
-		out.append("\tprivate final com.shri.restinpeace.internal.RequestExecutor ripProcessor;\n\n");
+		out.append("\tprivate final com.shri.restinpeace.internal.RequestExecutor ripProcessor;\n");
+		if (!fallbackMethods.isEmpty()) {
+			out.append("\tprivate volatile ").append(interfaceName).append(" __ripReflectiveFallback;\n");
+		}
+		out.append("\n");
 		out.append("\tpublic ").append(implName)
 				.append("(com.shri.restinpeace.internal.RequestExecutor ripProcessor) {\n");
 		out.append("\t\tthis.ripProcessor = ripProcessor;\n");
 		out.append("\t}\n\n");
 
+		if (!fallbackMethods.isEmpty()) {
+			appendReflectiveFallbackAccessor(out, interfaceName);
+		}
+
 		for (MethodModel method : methods) {
 			appendMethod(out, method, interfaceBaseUrl, interfaceName);
+		}
+		for (ExecutableElement fallbackMethod : fallbackMethods) {
+			appendFallbackMethod(out, fallbackMethod);
 		}
 
 		out.append("}\n");
 		return out.toString();
+	}
+
+	/**
+	 * Emitted only when this interface mixes at least one codegen-supported
+	 * method with at least one that isn't - lazily builds a raw JDK dynamic
+	 * proxy for the same interface, backed by this exact instance's own
+	 * {@code ripProcessor} (so it shares this client's retry/cache/
+	 * interceptor/timeout config), and reuses it for every {@link
+	 * #appendFallbackMethod fallback method}'s call. Built directly via
+	 * {@code Proxy.newProxyInstance}/{@code RestClientInvocationHandler}
+	 * rather than {@code RIP.getClient(...)} - the latter would look up
+	 * this very generated class by name again and recurse forever.
+	 * Double-checked locking, same as any lazily-initialized field shared
+	 * across threads - a {@code @RestClient} client is expected to be
+	 * built once and called from many threads.
+	 */
+	private void appendReflectiveFallbackAccessor(StringBuilder out, String interfaceName) {
+		out.append("\tprivate ").append(interfaceName).append(" __ripFallback() {\n");
+		out.append("\t\tif (this.__ripReflectiveFallback == null) {\n");
+		out.append("\t\t\tsynchronized (this) {\n");
+		out.append("\t\t\t\tif (this.__ripReflectiveFallback == null) {\n");
+		out.append("\t\t\t\t\tthis.__ripReflectiveFallback = (").append(interfaceName).append(") ")
+				.append("java.lang.reflect.Proxy.newProxyInstance(").append(interfaceName)
+				.append(".class.getClassLoader(), new Class<?>[] { ").append(interfaceName).append(".class }, ")
+				.append("new com.shri.restinpeace.proxy.RestClientInvocationHandler(this.ripProcessor));\n");
+		out.append("\t\t\t\t}\n");
+		out.append("\t\t\t}\n");
+		out.append("\t\t}\n");
+		out.append("\t\treturn this.__ripReflectiveFallback;\n");
+		out.append("\t}\n\n");
+	}
+
+	/**
+	 * Emits a method override that delegates to {@link
+	 * #appendReflectiveFallbackAccessor}'s lazily-built proxy - for a
+	 * method outside the codegen-supported shape (see {@link
+	 * #toSupportedMethodModel}) on an interface that otherwise has at
+	 * least one codegen-eligible method. Rendered directly off the
+	 * {@code javax.lang.model} element rather than a {@link MethodModel},
+	 * since building one is exactly what failed for this method - the
+	 * same {@code TypeMirror.toString()}/{@code VariableElement.asType()}
+	 * rendering {@link #toSupportedParamModel} already uses for a
+	 * parameter's {@code javaTypeName}.
+	 */
+	private void appendFallbackMethod(StringBuilder out, ExecutableElement methodElement) {
+		String returnTypeName = methodElement.getReturnType().toString();
+		out.append("\t@Override\n\tpublic ").append(returnTypeName).append(" ")
+				.append(methodElement.getSimpleName()).append("(");
+		List<? extends VariableElement> parameters = methodElement.getParameters();
+		for (int i = 0; i < parameters.size(); i++) {
+			if (i > 0) {
+				out.append(", ");
+			}
+			VariableElement parameter = parameters.get(i);
+			out.append(parameter.asType().toString()).append(" ").append(parameter.getSimpleName());
+		}
+		out.append(") {\n\t\t");
+		if (!"void".equals(returnTypeName)) {
+			out.append("return ");
+		}
+		out.append("__ripFallback().").append(methodElement.getSimpleName()).append("(");
+		for (int i = 0; i < parameters.size(); i++) {
+			if (i > 0) {
+				out.append(", ");
+			}
+			out.append(parameters.get(i).getSimpleName());
+		}
+		out.append(");\n\t}\n\n");
 	}
 
 	private void appendMethod(StringBuilder out, MethodModel method, String interfaceBaseUrl, String interfaceName) {
