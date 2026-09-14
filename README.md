@@ -66,6 +66,7 @@ test server for unit tests.
   - [`@Multipart` / `@Part` / `@PartMap`](#multipart--part--partmap)
   - [`@FormUrlEncoded` / `@Field` / `@FieldMap`](#formurlencoded--field--fieldmap)
 - [Return types](#return-types)
+  - [Generic collection return types: `List<User>`](#generic-collection-return-types-listuser)
   - [Binary downloads: `byte[]` and `File`](#binary-downloads-byte-and-file)
   - [Response headers and status: `RipResponse<T>`](#response-headers-and-status-ripresponset)
 - [Error handling](#error-handling)
@@ -89,7 +90,7 @@ test server for unit tests.
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
 - [Compile-time proxy generation](#compile-time-proxy-generation)
-  - [Why isn't `List<User>` supported?](#why-isnt-listuser-supported)
+  - [Why isn't `List<User>` code-generated?](#why-isnt-listuser-code-generated)
 - [OpenAPI to `@RestClient` generator](#openapi-to-restclient-generator)
 - [Testing with `MockRestServer`](#testing-with-mockrestserver)
   - [JUnit 5 extension](#junit-5-extension)
@@ -176,7 +177,10 @@ for what actually happens under `getUser(...)`.
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
-  return type is deserialized from JSON automatically
+  return type is deserialized from JSON automatically, including a generic
+  collection like `List<User>` (decoded element-by-element into the
+  declared type, not left as raw maps) - also inside `RipResponse<T>`/
+  `CompletableFuture<T>`; see [Generic collection return types](#generic-collection-return-types-listuser)
 - `byte[]` and `File` (via `@Destination`) return types for binary
   downloads, with an optional `DownloadProgressListener` for progress
   reporting
@@ -781,6 +785,27 @@ void fireEvent(@Body Event event);               // response body discarded
 discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies. These
 rules apply to a successful (2xx) response — see below for anything else.
+
+### Generic collection return types: `List<User>`
+
+A plain generic collection works too — decoded element-by-element into the
+declared type parameter, not left as raw `LinkedTreeMap`s:
+
+```java
+@GET("https://api.example.com/users")
+List<User> listUsers();
+```
+
+This also works wrapped in `RipResponse<List<User>>` or
+`CompletableFuture<List<User>>` (including
+`CompletableFuture<RipResponse<List<User>>>`), the same as any other return
+shape. Internally this reads the method's *generic* return type
+(`Method.getGenericReturnType()`) rather than the type-erased
+`getReturnType()`, and decodes through `kong.unirest.GenericType` instead
+of a plain `Class<?>` whenever the two differ - see
+[Why isn't `List<User>` code-generated?](#why-isnt-listuser-code-generated)
+for the one place this still falls back to the reflective proxy rather than
+a fully generated implementation.
 
 ### Binary downloads: `byte[]` and `File`
 
@@ -1605,30 +1630,38 @@ processing (the Maven/Gradle default for a dependency that ships one), the
 generated class exists on your classpath and is used automatically; there's
 nothing to configure and nothing changes about how you call the client. If
 a method's shape isn't yet covered by the processor (a generic collection
-return type like `List<User>`, say — see [below](#why-isnt-listuser-supported)
+return type like `List<User>`, say — see [below](#why-isnt-listuser-code-generated)
 for why), only *that* method falls back — internally, to a lazily-built
 reflective proxy sharing this same client's config — while every other
 method on the same interface still gets a real generated implementation.
 An interface with *no* codegen-eligible method at all still falls back to
 the plain reflective proxy in its entirety, the same as before.
 
-### Why isn't `List<User>` supported?
+### Why isn't `List<User>` code-generated?
 
-Not (yet) a matter of the processor not getting around to it — decoding a
-JSON response needs a single concrete `Class<?>` to deserialize into
-(`User.class`, `String.class`, ...), and there's no such class for "a list
-of `User`" the way there is for a plain POJO. This isn't specific to
-compile-time codegen either: the reflective proxy resolves a method's
-return type via `Method.getReturnType()`, which erases `List<User>` down to
-the same bare `List.class` — RIP's response decoding is `Class<?>`-based
-everywhere, both dispatch paths, so a raw `List` return type isn't reliably
-decodable via either one today. A `RipResponse<List<User>>` or a nested
-`CompletableFuture<CompletableFuture<T>>` hit the same wall for the same
-reason. Resolving this for real needs generic `Type`-based decoding
-(`Method.getGenericReturnType()` instead of `getReturnType()`) threaded
-through response decoding on both paths — tracked as its own, separate
-roadmap item, since it's a deeper change than compile-time codegen alone
-can fix.
+`List<User>` (and `RipResponse<List<User>>`/`CompletableFuture<List<User>>`)
+decode correctly — that part isn't the limitation. The reflective proxy
+reads a method's *generic* return type (`Method.getGenericReturnType()`,
+not the type-erased `getReturnType()`) and, for anything beyond a plain
+`Class<?>`, decodes through `kong.unirest.GenericType` instead — the same
+mechanism Unirest's own `ObjectMapper.readValue(String, GenericType)`
+extension point exists for, adapted to accept an arbitrary runtime `Type`
+(there's no public constructor for that on `GenericType` itself, since it
+normally infers `T` from an anonymous subclass's compile-time signature —
+worked around with a one-time reflective field overwrite, isolated in
+`RuntimeGenericType`). So `List<User>` works today, on the reflective path,
+for a plain return, `RipResponse<T>`, and `CompletableFuture<T>` alike.
+
+What such a method still doesn't get is *compile-time codegen* — the
+annotation processor runs before any request is ever made, so it needs a
+`Class<?>` it can write as a literal into generated source
+(`User.class`); "a list of `User`" has no such literal the way a plain POJO
+does. That's a fundamentally different problem from decoding a `Type` at
+runtime, and not one a generated `.java` file can solve by itself. So a
+method shaped like `List<User>` (or wrapping one) still falls back — just
+that *one* method — to the reflective proxy described above, which decodes
+it correctly; every other method on the same interface still gets a real
+generated implementation.
 
 This matters most for:
 

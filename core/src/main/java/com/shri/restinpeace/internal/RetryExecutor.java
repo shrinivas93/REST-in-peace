@@ -1,6 +1,7 @@
 package com.shri.restinpeace.internal;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -94,7 +95,7 @@ final class RetryExecutor {
 		this.retryBudget = retryBudget;
 	}
 
-	<B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
+	<B> HttpResponse<B> executeSyncWithRetry(Method method, Type returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Retry retry = method == null ? null : resolveRetry(method);
@@ -113,7 +114,7 @@ final class RetryExecutor {
 	 * by compile-time-generated code, which has both as compile-time
 	 * literals (or {@code null}/{@code false} if the method has neither).
 	 */
-	<B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Class<?> returnType, RequestContext context,
+	<B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Type returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call, boolean hasRetry, int times, long delayMillis, double backoffMultiplier,
 			double jitterFactor, int[] retryOnStatus) {
 		if (!hasRetry && configuredRetry != null) {
@@ -150,7 +151,7 @@ final class RetryExecutor {
 		}
 	}
 
-	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
+	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Type returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Retry retry = resolveRetry(method);
@@ -167,7 +168,7 @@ final class RetryExecutor {
 	 * {@link #executeSyncWithRetry(Class, Class, RequestContext, Supplier, boolean, int, long, double, double, int[])}
 	 * for the async path.
 	 */
-	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Class<?> returnType,
+	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Type returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call, boolean hasRetry, int times,
 			long delayMillis, double backoffMultiplier, double jitterFactor, int[] retryOnStatus) {
 		if (!hasRetry && configuredRetry != null) {
@@ -186,7 +187,7 @@ final class RetryExecutor {
 	}
 
 	private <B> CompletableFuture<HttpResponse<B>> attemptAsync(Supplier<CompletableFuture<HttpResponse<B>>> call,
-			Class<?> errorType, Class<?> returnType, RequestContext context, int times, double backoffMultiplier,
+			Class<?> errorType, Type returnType, RequestContext context, int times, double backoffMultiplier,
 			double jitterFactor, int[] retryOnStatus, int attempt, long delay) {
 		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
 		call.get().whenComplete((response, failure) -> {

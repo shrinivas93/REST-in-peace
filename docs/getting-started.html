@@ -218,6 +218,7 @@
 
         <div class="group-title">Return types</div>
         <a href="#return-basic">String / POJO / void</a>
+        <a href="#generic-collections">Generic collections — List&lt;T&gt;</a>
         <a href="#downloads">byte[] / File downloads</a>
         <a href="#ripresponse">RipResponse&lt;T&gt;</a>
         <a href="#async">Async — CompletableFuture</a>
@@ -563,6 +564,26 @@ User getUser(@PathParam("id") String id);        // JSON deserialized into User
 
 @POST("https://api.example.com/events")
 void fireEvent(@Body Event event);               // response discarded</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="generic-collections">
+        <h3>Generic collections — List&lt;T&gt;</h3>
+        <p class="blurb">Decoded element-by-element into the declared type parameter, not left as raw maps. Also works inside <code>RipResponse&lt;T&gt;</code>/<code>CompletableFuture&lt;T&gt;</code>.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users")
+List&lt;User&gt; listUsers();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · wrapped</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users")
+RipResponse&lt;List&lt;User&gt;&gt; listUsersWithResponse();
+
+@GET("https://api.example.com/users")
+CompletableFuture&lt;List&lt;User&gt;&gt; listUsersAsync();</code></pre>
           </div>
         </div>
       </div>

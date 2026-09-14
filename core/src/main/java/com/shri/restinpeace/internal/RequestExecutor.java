@@ -295,7 +295,7 @@ public class RequestExecutor {
 			return processAsync(request, method, args, context);
 		}
 		if (returnType == RipResponse.class) {
-			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
+			Type innerType = resolveWrappedType(method.getGenericReturnType(), method);
 			if (innerType == byte[].class) {
 				HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
 						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
@@ -317,9 +317,11 @@ public class RequestExecutor {
 			byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
-		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, returnType, context, cacheCoordinator
-				.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)));
-		return responseDecoder.decodeOrThrow(response, errorType, returnType);
+		Type genericReturnType = method.getGenericReturnType();
+		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, genericReturnType, context,
+				cacheCoordinator.wrapWithCache(request, context,
+						interceptorDispatcher.wrapWithShortCircuit(context, request::asString)));
+		return responseDecoder.decodeOrThrow(response, errorType, genericReturnType);
 	}
 
 	// ---------------------------------------------------------------------
@@ -798,7 +800,7 @@ public class RequestExecutor {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Type futureInnerType = resolveFutureInnerType(method);
 		if (isRipResponseType(futureInnerType)) {
-			Class<?> innerType = resolveWrappedType(futureInnerType, method);
+			Type innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
 				return retryExecutor
 						.executeAsyncWithRetry(method, innerType, context,
@@ -812,7 +814,7 @@ public class RequestExecutor {
 					.thenApply(response -> ResponseDecoder.wrapResponse(response,
 							responseDecoder.decodeOrThrow(response, errorType, innerType)));
 		}
-		Class<?> innerType = requireClass(futureInnerType, method);
+		Type innerType = requireDecodableType(futureInnerType, method);
 		if (innerType == byte[].class) {
 			return retryExecutor
 					.executeAsyncWithRetry(method, innerType, context,
@@ -849,24 +851,33 @@ public class RequestExecutor {
 	/**
 	 * Extracts a {@code RipResponse<T>}'s {@code T}, given either a method's
 	 * {@code RipResponse<T>} return type or a {@code CompletableFuture<T>}'s
-	 * inner {@code RipResponse<T>} type argument.
+	 * inner {@code RipResponse<T>} type argument - {@code T} itself may be a
+	 * plain {@code Class} or a generic collection like {@code List<User>}
+	 * (see {@link #requireDecodableType}).
 	 */
-	private Class<?> resolveWrappedType(Type ripResponseType, Method method) {
+	private Type resolveWrappedType(Type ripResponseType, Method method) {
 		if (!(ripResponseType instanceof ParameterizedType)) {
 			throw new RestInPeaceException(
 					String.format("The method %s returns a raw RipResponse with no type parameter.", method));
 		}
 		Type innerType = ((ParameterizedType) ripResponseType).getActualTypeArguments()[0];
-		return requireClass(innerType, method);
+		return requireDecodableType(innerType, method);
 	}
 
-	private Class<?> requireClass(Type type, Method method) {
-		if (!(type instanceof Class)) {
-			throw new RestInPeaceException(String.format(
-					"The method %s returns CompletableFuture<%s>, which is not a supported type parameter.", method,
-					type));
+	/**
+	 * Validates that {@code type} is something {@link ResponseDecoder} can
+	 * actually decode a body into - a plain {@code Class} (the common case)
+	 * or a {@link ParameterizedType} like {@code List<User>} (decoded via
+	 * {@link RuntimeGenericType}) - rejecting anything else, such as an
+	 * unresolved type variable or wildcard.
+	 */
+	private Type requireDecodableType(Type type, Method method) {
+		if (type instanceof Class || type instanceof ParameterizedType) {
+			return type;
 		}
-		return (Class<?>) type;
+		throw new RestInPeaceException(String.format(
+				"The method %s returns CompletableFuture<%s>, which is not a supported type parameter.", method,
+				type));
 	}
 
 	private HttpRequest<?> createRequest(HTTPMethod httpMethod, String url) {
