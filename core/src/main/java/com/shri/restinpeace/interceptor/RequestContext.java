@@ -151,11 +151,15 @@ public final class RequestContext {
 	}
 
 	/**
-	 * Same as {@link #toCurlCommand()}, with an extra {@code curl} flag for
-	 * the requested verbosity level - useful when the plain reproduction
-	 * doesn't explain a failure and the wire-level detail {@code curl}
-	 * itself can print (request/response headers, or a full trace including
-	 * bodies) is what's actually needed.
+	 * Same as {@link #toCurlCommand()}, with an extra {@code curl} flag (or
+	 * flags) for the requested verbosity level - useful when the plain
+	 * reproduction doesn't explain a failure and the wire-level detail
+	 * {@code curl} itself can print (request/response headers, a raw dump
+	 * of everything on the wire, or {@code curl}'s own internal engine
+	 * tracing) is what's actually needed. See {@link CurlVerbosity}'s own
+	 * javadoc for what each level adds, and an important caveat about
+	 * {@link CurlVerbosity#VV}/{@link CurlVerbosity#VVV}/{@link
+	 * CurlVerbosity#VVVV} in particular.
 	 *
 	 * @param verbosity how much extra diagnostic detail the rendered
 	 *                  command asks {@code curl} to print - {@link
@@ -181,7 +185,25 @@ public final class RequestContext {
 	 * How much extra diagnostic detail {@link #toCurlCommand(CurlVerbosity)}
 	 * asks {@code curl} itself to print, via {@code curl}'s own flags - RIP
 	 * doesn't invent its own verbosity scheme, it just picks which standard
-	 * {@code curl} flag to include.
+	 * {@code curl} flag(s) to include.
+	 *
+	 * <p>
+	 * {@link #VERBOSE}/{@link #VV}/{@link #VVV}/{@link #VVVV} are repeated
+	 * {@code -v}, in the same shape a consumer might expect from a tool like
+	 * {@code ssh} - but unlike {@code ssh}, this scaling behavior is
+	 * <b>not</b> documented in {@code curl}'s own {@code --help}/man page
+	 * output (verified against {@code curl 8.22.0}, the latest release as
+	 * of this writing) - only the plain {@code -v}/{@code --verbose} flag
+	 * itself is. It's real and reproducible (confirmed directly: distinct,
+	 * increasing output on the same request for one through four repeated
+	 * {@code -v}s, identical output from a fifth repeat onward - the level
+	 * caps out at four), most likely an internal {@code curl_trc} debug
+	 * counter that happens to respond to how many times {@code -v} was
+	 * given, rather than a committed CLI contract - so, unlike {@link
+	 * #TRACE}'s flags, it could plausibly change or disappear in some
+	 * future {@code curl} release without notice. Prefer {@link #TRACE}
+	 * over {@link #VVVV} when that stability matters more than matching
+	 * exactly what a person would type by hand while debugging.
 	 */
 	public enum CurlVerbosity {
 
@@ -191,18 +213,60 @@ public final class RequestContext {
 		/**
 		 * {@code -v} - prints the request/response headers and connection
 		 * info {@code curl} itself sees (to {@code curl}'s own stderr),
-		 * without touching either body.
+		 * without touching either body. Documented, stable {@code curl}
+		 * behavior.
 		 */
 		VERBOSE("-v"),
 
 		/**
-		 * {@code --trace-ascii - --trace-time} - the most detailed level: a
-		 * full, human-readable, per-line-timestamped trace of everything
-		 * sent and received on the wire, headers and bodies both (to
-		 * {@code curl}'s own stdout) - useful when {@link #VERBOSE}'s
-		 * headers-only view isn't enough to explain a failure, or when the
-		 * timing of one step in the exchange (a slow TLS handshake, a
-		 * delayed response body) matters as much as its content.
+		 * {@code -vv} - everything {@link #VERBOSE} prints, plus a
+		 * per-line timestamp and a transfer/connection id prefix (e.g.
+		 * {@code [0-0]}) on each line - closer to what {@link #TRACE}'s
+		 * {@code --trace-time} adds, but bundled into {@code -v} itself
+		 * instead of a separate documented flag - see this enum's own
+		 * class javadoc above for why this is less stable than {@link
+		 * #VERBOSE} or {@link #TRACE}.
+		 */
+		VV("-vv"),
+
+		/**
+		 * {@code -vvv} - everything {@link #VV} prints, plus a raw,
+		 * hex-offset-prefixed dump of the actual header and body bytes
+		 * sent and received on the wire (e.g.
+		 * {@code 0000: GET / HTTP/1.1}) - the closest of the repeated-{@code
+		 * -v} levels to what {@link #TRACE} shows, but via undocumented
+		 * behavior instead of a committed flag - see this enum's own class
+		 * javadoc above.
+		 */
+		VVV("-vvv"),
+
+		/**
+		 * {@code -vvvv} - everything {@link #VVV} prints, plus a full trace
+		 * of {@code curl}'s own internal engine state machine (DNS
+		 * resolution, TCP connect, Happy Eyeballs, connection-pool and
+		 * multi-handle transitions, internal timers, ...) - by far the
+		 * noisiest level, most of it {@code curl}'s own implementation
+		 * detail rather than anything about the actual request/response.
+		 * Confirmed this is also the ceiling: a fifth (or further) repeated
+		 * {@code -v} produces byte-identical output to this level, it
+		 * doesn't keep escalating. See this enum's own class javadoc above
+		 * for why {@link #TRACE} is usually the better choice when this
+		 * much detail is genuinely needed.
+		 */
+		VVVV("-vvvv"),
+
+		/**
+		 * {@code --trace-ascii - --trace-time} - a full, human-readable,
+		 * per-line-timestamped trace of everything sent and received on
+		 * the wire, headers and bodies both (to {@code curl}'s own
+		 * stdout) - useful when {@link #VERBOSE}'s headers-only view isn't
+		 * enough to explain a failure, or when the timing of one step in
+		 * the exchange (a slow TLS handshake, a delayed response body)
+		 * matters as much as its content. Unlike {@link #VV}/{@link
+		 * #VVV}/{@link #VVVV}, both flags here are documented, stable
+		 * {@code curl} behavior - prefer this level over {@link #VVVV}
+		 * when that stability matters, or when {@code curl}'s own internal
+		 * engine-state noise isn't wanted alongside the wire-level detail.
 		 */
 		TRACE("--trace-ascii - --trace-time");
 

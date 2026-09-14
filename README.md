@@ -1309,15 +1309,32 @@ RIP.addInterceptor(new RequestInterceptor() {
 ```
 
 Pass a `RequestContext.CurlVerbosity` to add one of `curl`'s own diagnostic
-flags when the plain reproduction doesn't explain the failure —
-`VERBOSE` (`-v`, request/response headers) or `TRACE` (`--trace-ascii -
---trace-time`, a full, per-line-timestamped wire-level trace including
-both bodies):
+flags when the plain reproduction doesn't explain the failure:
+
+| Level | Flag(s) | Adds |
+|---|---|---|
+| `NONE` (default) | *(none)* | just the method/URL/headers/body |
+| `VERBOSE` | `-v` | request/response headers + connection info |
+| `VV` | `-vv` | + per-line timestamps and a transfer/connection id |
+| `VVV` | `-vvv` | + a raw hex-offset dump of the header/body bytes on the wire |
+| `VVVV` | `-vvvv` | + `curl`'s own internal engine tracing (DNS, TCP, connection pool, ...) — the ceiling; a fifth+ `-v` adds nothing further |
+| `TRACE` | `--trace-ascii - --trace-time` | a full, per-line-timestamped trace of everything on the wire, headers and both bodies |
 
 ```java
 context.toCurlCommand(RequestContext.CurlVerbosity.VERBOSE);
 // curl -X POST -v 'https://api.example.com/charges' -H 'Content-Type: application/json' -d '{"amount":500}'
 ```
+
+**A caveat on `VV`/`VVV`/`VVVV`:** repeating `-v` to escalate verbosity is
+real, reproducible behavior (verified directly against `curl 8.22.0`, the
+latest release at the time of writing) — but it's *not* documented in
+`curl`'s own `--help`/man page the way plain `-v` and `--trace-ascii` are.
+It's most likely an internal debug counter that happens to respond to how
+many times `-v` was given, not a committed CLI contract, so it could
+plausibly change in a future `curl` release without notice. `TRACE` covers
+similar ground (a full wire-level trace including both bodies) using only
+documented, stable flags — prefer it over `VVVV` when that stability
+matters more than matching exactly what someone would type by hand.
 
 ### Per-client interceptors
 
