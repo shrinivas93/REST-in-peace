@@ -1516,9 +1516,17 @@ server.close();
 `on(...)` registers a sticky response for a method+path, with `{name}`
 placeholder matching the same as a real `@GET`/`@PathParam` template; an
 unmatched request fails loudly (a `500` with a clear message) instead of
-silently succeeding for the wrong reason. `MockResponse.ok(body)`,
-`.json(object)`, `.status(code, body)`, `.noContent()`, and `.notModified()`
-cover the common status shapes.
+silently succeeding for the wrong reason. When a route is registered for
+the same HTTP method but a different path, the failure message names the
+closest one by edit distance — usually the typo that broke the test:
+
+```
+MockRestServer: no response was queued or registered for POST /orders.
+Did you mean: POST /order?
+```
+
+`MockResponse.ok(body)`, `.json(object)`, `.status(code, body)`,
+`.noContent()`, and `.notModified()` cover the common status shapes.
 
 For scripting a sequence of responses — proving `@Retry` actually
 recovers — `enqueueFor(...)` scripts a one-time response ahead of a route's

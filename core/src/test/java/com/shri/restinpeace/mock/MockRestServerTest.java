@@ -111,6 +111,26 @@ class MockRestServerTest {
 	}
 
 	@Test
+	void unmatchedRequest_withASimilarRegisteredRoute_suggestsIt() {
+		server.on(HTTPMethod.POST, "/order", MockResponse.ok("{}"));
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.createOrder("{\"sku\":\"sku-1\"}"));
+
+		assertTrue(exception.getRawBody().contains("Did you mean: POST /order?"));
+	}
+
+	@Test
+	void unmatchedRequest_withNoRouteForThatMethod_suggestsNothing() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+
+		RestInPeaceHttpException exception = assertThrows(RestInPeaceHttpException.class,
+				() -> api.createOrder("{\"sku\":\"sku-1\"}"));
+
+		assertFalse(exception.getRawBody().contains("Did you mean"));
+	}
+
+	@Test
 	void takeRequest_onEmptyHistory_throwsNoSuchElementException() {
 		assertThrows(NoSuchElementException.class, () -> server.takeRequest());
 	}

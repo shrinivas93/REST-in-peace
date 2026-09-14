@@ -927,12 +927,13 @@ commitment.
       a new four-arg constructor (`status, rawBody, errorBody,
       retryAfterMillis`) - the existing three-arg one is unchanged and
       always passes `null`, so no existing caller's behavior changes.
-- [ ] **E3. Friendlier `MockRestServer` unmatched-request diagnostics** —
-      today an unmatched request just gets `"no response was queued or
-      registered for METHOD PATH"`. Since routes are already stored with
-      their path template, the failure message could name the closest
-      registered route (same method, different path - usually a typo)
-      instead of leaving the test author to grep their own setup.
+- [x] **E3. Friendlier `MockRestServer` unmatched-request diagnostics** —
+      the unmatched-request failure message now appends `"Did you mean:
+      METHOD path?"` naming the closest registered route for the same
+      HTTP method, computed by a hand-rolled Levenshtein edit-distance
+      over the routes' stored path templates (no new dependency). No
+      suggestion is added when no route at all is registered for that
+      method, so the existing bare message is unchanged in that case.
 - [ ] **E4. Auto-report `getUnhitRoutes()` in `MockRestServerExtension`** —
       the coverage-check method already exists but has to be called by
       hand. An opt-in flag printing unhit routes at `afterAll` turns dead

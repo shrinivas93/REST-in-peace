@@ -1064,6 +1064,17 @@ class OrderApiTest {
 
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt</code></pre>
           </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Unmatched request · closest-route suggestion</span>
+              <span class="snippet-caption">same HTTP method, different path registered - usually a typo in the test setup</span></div>
+            <pre><code class="language-java">server.on(HTTPMethod.POST, "/order", MockResponse.ok("{}"));
+
+api.createOrder("{...}");   // actually POSTs to /orders
+
+// RestInPeaceHttpException.getRawBody():
+// MockRestServer: no response was queued or registered for POST /orders.
+// Did you mean: POST /order?</code></pre>
+          </div>
           <div class="snippet spring">
             <div class="snippet-head"><span class="snippet-tag">Spring · @AutoConfigureMockRestServer</span>
               <span class="snippet-caption">redirects every registered client's base URL for you</span></div>
