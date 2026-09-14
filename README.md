@@ -204,8 +204,10 @@ for what actually happens under `getUser(...)`.
   of one entry via the public `Cache.key(...)` formula. Whether the cache
   key includes the query string is configurable per client or as a shared
   default via `cacheKeyIncludesQueryString(...)`
-- `RestInPeaceHttpException.isClientError()`/`isServerError()`/`is(int)`
-  for branching on a status range in a `catch` block
+- `RestInPeaceHttpException.isClientError()`/`isServerError()`/`isRedirect()`/`is(int)`
+  for branching on a status range in a `catch` block, plus
+  `getRetryAfterMillis()` to read the response's own `Retry-After` header
+  even for a method with no `@Retry`
 - Global interceptors for cross-cutting concerns (auth headers, logging,
   metrics) without touching individual `@RestClient` interfaces;
   `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
@@ -878,10 +880,10 @@ a timeout) throws the underlying transport exception directly, not
 `RestInPeaceHttpException`, which specifically means "the server answered,
 and the answer was an error."
 
-`isClientError()` (400–499), `isServerError()` (500–599), and `is(int
-status)` are small convenience checks on the exception itself, for when a
-`catch` block only needs to branch on the status range rather than compare
-`getStatus()` to specific numbers:
+`isClientError()` (400–499), `isServerError()` (500–599), `isRedirect()`
+(300–399), and `is(int status)` are small convenience checks on the
+exception itself, for when a `catch` block only needs to branch on the
+status range rather than compare `getStatus()` to specific numbers:
 
 ```java
 catch (RestInPeaceHttpException e) {
@@ -906,6 +908,22 @@ else if (e.is(429)) { ... }
 // Right - the specific case is checked first
 if (e.is(429)) { ... }
 else if (e.isClientError()) { ... }
+```
+
+`getRetryAfterMillis()` returns the response's own `Retry-After` header
+(delta-seconds or an HTTP-date, per RFC 1123) parsed to milliseconds from
+now — the exact same parsing `@Retry` itself uses internally to honor a
+server's backoff hint, surfaced here for a method with no `@Retry` at all
+(or one that gave up after exhausting its attempts) that wants to honor it
+manually. `null` if the header was absent or in neither supported format:
+
+```java
+catch (RestInPeaceHttpException e) {
+    if (e.is(429) && e.getRetryAfterMillis() != null) {
+        Thread.sleep(e.getRetryAfterMillis());
+        return retryManually();
+    }
+}
 ```
 
 ## Async

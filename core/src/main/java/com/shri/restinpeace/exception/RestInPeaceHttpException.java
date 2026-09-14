@@ -25,9 +25,13 @@ public class RestInPeaceHttpException extends RestInPeaceException {
 	private final String rawBody;
 	/** The response body deserialized into the method's {@code @ErrorType}, or {@link #rawBody} itself. */
 	private final Object errorBody;
+	/** The response's own {@code Retry-After} header, parsed to milliseconds, or {@code null}. */
+	private final Long retryAfterMillis;
 
 	/**
-	 * Creates the exception for a failed response.
+	 * Creates the exception for a failed response with no {@code Retry-After}
+	 * header to parse. Equivalent to {@code RestInPeaceHttpException(status,
+	 * rawBody, errorBody, null)}.
 	 *
 	 * @param status    the response's HTTP status
 	 * @param rawBody   the response's raw body
@@ -36,10 +40,28 @@ public class RestInPeaceHttpException extends RestInPeaceException {
 	 *                  method has no {@code @ErrorType}
 	 */
 	public RestInPeaceHttpException(int status, String rawBody, Object errorBody) {
+		this(status, rawBody, errorBody, null);
+	}
+
+	/**
+	 * Creates the exception for a failed response.
+	 *
+	 * @param status           the response's HTTP status
+	 * @param rawBody          the response's raw body
+	 * @param errorBody        the response body deserialized into the
+	 *                         method's {@code @ErrorType}, or {@code rawBody}
+	 *                         itself if the method has no {@code @ErrorType}
+	 * @param retryAfterMillis the response's own {@code Retry-After} header
+	 *                         (delta-seconds or an HTTP-date), parsed to
+	 *                         milliseconds from now, or {@code null} if the
+	 *                         header was absent or unparseable
+	 */
+	public RestInPeaceHttpException(int status, String rawBody, Object errorBody, Long retryAfterMillis) {
 		super(String.format("Request failed with HTTP status %d.", status));
 		this.status = status;
 		this.rawBody = rawBody;
 		this.errorBody = errorBody;
+		this.retryAfterMillis = retryAfterMillis;
 	}
 
 	/**
@@ -72,6 +94,21 @@ public class RestInPeaceHttpException extends RestInPeaceException {
 	 */
 	public boolean isServerError() {
 		return status >= 500 && status < 600;
+	}
+
+	/**
+	 * Whether the response's status is in the {@code 3xx} range. A redirect
+	 * response is typically followed transparently by the underlying HTTP
+	 * client before RIP ever sees a final status, so this is mostly relevant
+	 * with redirect-following disabled at that layer, or for a status this
+	 * library doesn't otherwise treat specially (a {@code 304} used for
+	 * cache revalidation, for instance, is handled internally and never
+	 * surfaces as this exception at all).
+	 *
+	 * @return {@code true} for a {@code 3xx} status
+	 */
+	public boolean isRedirect() {
+		return status >= 300 && status < 400;
 	}
 
 	/**
@@ -124,6 +161,22 @@ public class RestInPeaceHttpException extends RestInPeaceException {
 	@SuppressWarnings("unchecked")
 	public <T> T getErrorBody() {
 		return (T) errorBody;
+	}
+
+	/**
+	 * Returns the response's own {@code Retry-After} header, parsed to
+	 * milliseconds from now - the exact same parsing {@code @Retry} itself
+	 * uses internally (delta-seconds, a plain integer, or an HTTP-date per
+	 * RFC 1123), surfaced here for a caller whose method has no
+	 * {@code @Retry} at all (or one that gave up after exhausting its
+	 * attempts) and wants to honor the server's own backoff hint manually.
+	 *
+	 * @return the {@code Retry-After} header's value in milliseconds, or
+	 *         {@code null} if the header was absent or in neither supported
+	 *         format
+	 */
+	public Long getRetryAfterMillis() {
+		return retryAfterMillis;
 	}
 
 }

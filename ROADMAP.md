@@ -917,12 +917,16 @@ commitment.
       disappear in a future `curl` release without notice. `TRACE` remains
       the recommended choice over `VVVV` when that stability matters more
       than matching exactly what someone would type by hand.
-- [ ] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
-      — `isClientError()`/`isServerError()` cover 4xx/5xx; 3xx has no
-      helper. `@Retry` already parses a response's own `Retry-After`
-      (delta-seconds or HTTP-date) internally but discards it once retries
-      are exhausted - surface the parsed value on the exception so a caller
-      who gives up can still honor it manually.
+- [x] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
+      — `isClientError()`/`isServerError()` covered 4xx/5xx; 3xx had no
+      helper. `@Retry` already parsed a response's own `Retry-After`
+      (delta-seconds or HTTP-date) internally but discarded it once retries
+      were exhausted - the parsed value is now surfaced on the exception too
+      (`RetryExecutor.parseRetryAfterMillis` made package-private so
+      `ResponseDecoder` can share it instead of duplicating the parsing), via
+      a new four-arg constructor (`status, rawBody, errorBody,
+      retryAfterMillis`) - the existing three-arg one is unchanged and
+      always passes `null`, so no existing caller's behavior changes.
 - [ ] **E3. Friendlier `MockRestServer` unmatched-request diagnostics** —
       today an unmatched request just gets `"no response was queued or
       registered for METHOD PATH"`. Since routes are already stored with

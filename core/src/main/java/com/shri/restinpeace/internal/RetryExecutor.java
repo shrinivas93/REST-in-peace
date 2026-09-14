@@ -257,12 +257,15 @@ final class RetryExecutor {
 	 * delta-seconds (a plain integer, converted to milliseconds) or an
 	 * HTTP-date (RFC 1123, e.g. {@code "Wed, 21 Oct 2015 07:28:00 GMT"},
 	 * converted to the number of milliseconds from now until then, floored
-	 * at zero for a date already in the past).
+	 * at zero for a date already in the past). Package-private so {@link
+	 * ResponseDecoder} can share this instead of duplicating it, to surface
+	 * the same parsed value on {@link
+	 * com.shri.restinpeace.exception.RestInPeaceHttpException#getRetryAfterMillis()}.
 	 *
 	 * @return the header's value in milliseconds, or {@code null} if the
 	 *         header is absent or its value is in neither supported format
 	 */
-	private static Long parseRetryAfterMillis(HttpResponse<?> response) {
+	static Long parseRetryAfterMillis(HttpResponse<?> response) {
 		String value = response.getHeaders().getFirst(RETRY_AFTER_HEADER);
 		if (value == null || value.trim().isEmpty()) {
 			return null;
