@@ -1566,6 +1566,28 @@ class OrderApiTest {
 }
 ```
 
+`reportUnhitRoutes()` opts into printing every route still unhit
+(`MockRestServer.getUnhitRoutes()`) when the test class finishes — a route
+left registered after the code path that used to exercise it was removed
+otherwise causes no failure at all. It only takes effect with the
+`static @RegisterExtension` field style, since `@ExtendWith(MockRestServerExtension.class)`
+has JUnit construct the extension itself, with no way to call
+`reportUnhitRoutes()` first:
+
+```java
+class OrderApiTest {
+
+    @RegisterExtension
+    static MockRestServerExtension extension = new MockRestServerExtension().reportUnhitRoutes();
+
+    @Test
+    void getOrder_returnsDecodedBody(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+        // ...
+    }
+}
+```
+
 ## Integrating with your project
 
 `RIP.getClient(...)` re-validates and re-resolves its interface every call

@@ -1064,6 +1064,20 @@ class OrderApiTest {
 
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · auto-report unhit routes</span>
+              <span class="snippet-caption">requires the static @RegisterExtension field style - @ExtendWith can't call reportUnhitRoutes() first</span></div>
+            <pre><code class="language-java">class OrderApiTest {
+    @RegisterExtension
+    static MockRestServerExtension extension = new MockRestServerExtension().reportUnhitRoutes();
+
+    @Test
+    void getOrder_returnsDecodedBody(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+        // a route left registered but never called prints a warning at afterAll
+    }
+}</code></pre>
+          </div>
           <div class="snippet neutral">
             <div class="snippet-head"><span class="snippet-tag">Unmatched request · closest-route suggestion</span>
               <span class="snippet-caption">same HTTP method, different path registered - usually a typo in the test setup</span></div>
