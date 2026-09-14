@@ -9,6 +9,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -127,12 +129,65 @@ final class CacheCoordinator {
 			if (sameVariant && cached.isFresh()) {
 				return toSyntheticResponse(cached);
 			}
+			if (sameVariant && cached.isWithinStaleWhileRevalidateWindow()) {
+				triggerBackgroundRevalidation(cache, key, cached, request, call);
+				return toSyntheticResponse(cached);
+			}
 			if (sameVariant) {
 				applyRevalidationHeaders(request, cached);
 			}
 			return reconcileCache(cache, key, sameVariant ? cached : null, differentVariantCached, call.get(),
 					request);
 		};
+	}
+
+	private static volatile ExecutorService staleWhileRevalidateExecutor;
+
+	/**
+	 * Returns the shared background executor used to revalidate a
+	 * stale-while-revalidate entry for a <em>synchronous</em> call, created
+	 * lazily on first use - a {@code CompletableFuture}-returning call needs
+	 * no such executor at all, since it's already async (see
+	 * {@link #wrapWithCacheAsync}). Threads are daemon threads, so they never
+	 * keep the JVM alive on their own.
+	 */
+	private static ExecutorService staleWhileRevalidateExecutor() {
+		ExecutorService executor = staleWhileRevalidateExecutor;
+		if (executor == null) {
+			synchronized (CacheCoordinator.class) {
+				executor = staleWhileRevalidateExecutor;
+				if (executor == null) {
+					executor = Executors.newCachedThreadPool(runnable -> {
+						Thread thread = new Thread(runnable, "rip-stale-while-revalidate");
+						thread.setDaemon(true);
+						return thread;
+					});
+					staleWhileRevalidateExecutor = executor;
+				}
+			}
+		}
+		return executor;
+	}
+
+	/**
+	 * Fires the real network call in the background to refresh
+	 * {@code staleEntry}, without blocking the caller that's already being
+	 * handed the stale entry immediately. A failed revalidation (a thrown
+	 * exception, a non-2xx/non-304 response with no caching headers, etc.)
+	 * is silently swallowed - {@code staleEntry} simply keeps being served
+	 * until it ages out of its own stale-while-revalidate window too, the
+	 * same as if this background attempt had never run.
+	 */
+	private static void triggerBackgroundRevalidation(Cache cache, String key, CachedResponse staleEntry,
+			HttpRequest<?> request, Supplier<HttpResponse<String>> call) {
+		applyRevalidationHeaders(request, staleEntry);
+		staleWhileRevalidateExecutor().execute(() -> {
+			try {
+				reconcileCache(cache, key, staleEntry, false, call.get(), request);
+			} catch (RuntimeException e) {
+				// Best-effort - see this method's own javadoc.
+			}
+		});
 	}
 
 	/**
@@ -158,6 +213,20 @@ final class CacheCoordinator {
 			boolean sameVariant = cached != null && matchesVary(cached, request);
 			boolean differentVariantCached = cached != null && !sameVariant;
 			if (sameVariant && cached.isFresh()) {
+				return CompletableFuture.completedFuture(toSyntheticResponse(cached));
+			}
+			if (sameVariant && cached.isWithinStaleWhileRevalidateWindow()) {
+				applyRevalidationHeaders(request, cached);
+				// Fire-and-forget: the revalidation result only ever updates
+				// the cache for the next call, so it's never joined against
+				// the response already being returned below.
+				call.get().thenAccept(response -> {
+					try {
+						reconcileCache(cache, key, cached, false, response, request);
+					} catch (RuntimeException e) {
+						// Best-effort - see triggerBackgroundRevalidation's own javadoc.
+					}
+				});
 				return CompletableFuture.completedFuture(toSyntheticResponse(cached));
 			}
 			if (sameVariant) {
@@ -226,14 +295,15 @@ final class CacheCoordinator {
 		Map<String, List<String>> responseHeaders = ResponseDecoder.toHeaderMap(response.getHeaders());
 		if (response.getStatus() == 304 && staleEntry != null) {
 			CachedResponse refreshed = new CachedResponse(staleEntry.getStatus(), staleEntry.getHeaders(),
-					staleEntry.getBody(), freshUntil(responseHeaders), staleEntry.getVaryRequestHeaders());
+					staleEntry.getBody(), freshUntil(responseHeaders), staleEntry.getVaryRequestHeaders(),
+					staleWhileRevalidateUntil(responseHeaders));
 			cache.put(key, refreshed);
 			return toSyntheticResponse(refreshed);
 		}
 		if (ResponseDecoder.isSuccessStatus(response.getStatus()) && isStorable(responseHeaders)) {
 			Map<String, String> varySnapshot = captureVaryValues(request, varyHeaderNames(responseHeaders));
 			cache.put(key, new CachedResponse(response.getStatus(), responseHeaders, response.getBody(),
-					freshUntil(responseHeaders), varySnapshot));
+					freshUntil(responseHeaders), varySnapshot, staleWhileRevalidateUntil(responseHeaders)));
 		} else if (!leaveExistingEntryAlone) {
 			cache.evict(key);
 		}
@@ -245,8 +315,8 @@ final class CacheCoordinator {
 		if (directives.noStore || isWildcardVary(headers)) {
 			return false;
 		}
-		return directives.maxAgeSeconds != null || firstHeader(headers, "ETag") != null
-				|| firstHeader(headers, "Last-Modified") != null;
+		return directives.maxAgeSeconds != null || directives.staleWhileRevalidateSeconds != null
+				|| firstHeader(headers, "ETag") != null || firstHeader(headers, "Last-Modified") != null;
 	}
 
 	/**
@@ -314,6 +384,20 @@ final class CacheCoordinator {
 		return System.currentTimeMillis(); // no (usable) freshness window - always revalidate
 	}
 
+	/**
+	 * Computes an entry's stale-while-revalidate deadline: {@link #freshUntil}
+	 * plus the response's own {@code stale-while-revalidate=N} seconds, or
+	 * simply {@link #freshUntil} unchanged (no window at all) if the response
+	 * named no such directive.
+	 */
+	private static long staleWhileRevalidateUntil(Map<String, List<String>> headers) {
+		CacheDirectives directives = CacheDirectives.parse(firstHeader(headers, "Cache-Control"));
+		long freshUntil = freshUntil(headers);
+		return directives.staleWhileRevalidateSeconds != null
+				? freshUntil + directives.staleWhileRevalidateSeconds * 1000L
+				: freshUntil;
+	}
+
 	private static String firstHeader(Map<String, List<String>> headers, String name) {
 		List<String> values = headers.get(name);
 		return values == null || values.isEmpty() ? null : values.get(0);
@@ -324,20 +408,24 @@ final class CacheCoordinator {
 		final boolean noStore;
 		final boolean noCache;
 		final Long maxAgeSeconds;
+		final Long staleWhileRevalidateSeconds;
 
-		private CacheDirectives(boolean noStore, boolean noCache, Long maxAgeSeconds) {
+		private CacheDirectives(boolean noStore, boolean noCache, Long maxAgeSeconds,
+				Long staleWhileRevalidateSeconds) {
 			this.noStore = noStore;
 			this.noCache = noCache;
 			this.maxAgeSeconds = maxAgeSeconds;
+			this.staleWhileRevalidateSeconds = staleWhileRevalidateSeconds;
 		}
 
 		static CacheDirectives parse(String headerValue) {
 			if (headerValue == null) {
-				return new CacheDirectives(false, false, null);
+				return new CacheDirectives(false, false, null, null);
 			}
 			boolean noStore = false;
 			boolean noCache = false;
 			Long maxAgeSeconds = null;
+			Long staleWhileRevalidateSeconds = null;
 			for (String directive : headerValue.split(",")) {
 				String trimmed = directive.trim().toLowerCase(Locale.ROOT);
 				if (trimmed.equals("no-store")) {
@@ -345,17 +433,20 @@ final class CacheCoordinator {
 				} else if (trimmed.equals("no-cache")) {
 					noCache = true;
 				} else if (trimmed.startsWith("max-age=")) {
-					maxAgeSeconds = parseMaxAge(trimmed.substring("max-age=".length()).trim());
+					maxAgeSeconds = parseSeconds(trimmed.substring("max-age=".length()).trim());
+				} else if (trimmed.startsWith("stale-while-revalidate=")) {
+					staleWhileRevalidateSeconds = parseSeconds(
+							trimmed.substring("stale-while-revalidate=".length()).trim());
 				}
 			}
-			return new CacheDirectives(noStore, noCache, maxAgeSeconds);
+			return new CacheDirectives(noStore, noCache, maxAgeSeconds, staleWhileRevalidateSeconds);
 		}
 
-		private static Long parseMaxAge(String value) {
+		private static Long parseSeconds(String value) {
 			try {
 				return Math.max(0L, Long.parseLong(value));
 			} catch (NumberFormatException e) {
-				return null; // malformed - fail open, same as no max-age at all
+				return null; // malformed - fail open, same as no directive at all
 			}
 		}
 	}

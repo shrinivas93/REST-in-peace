@@ -233,6 +233,7 @@
 
         <div class="group-title">Caching</div>
         <a href="#caching">Response caching</a>
+        <a href="#stale-while-revalidate">Stale-while-revalidate</a>
         <a href="#cache-eviction">Time-based &amp; manual eviction</a>
         <a href="#cache-key-query-string">Query string in the cache key</a>
 
@@ -864,6 +865,30 @@ Price getLivePrice(@PathParam("symbol") String symbol);</code></pre>
             <pre><code class="language-java">@Bean
 @Qualifier("user-api")
 Cache userApiCache() { return new InMemoryCache(); }</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="stale-while-revalidate">
+        <h3>Stale-while-revalidate</h3>
+        <p class="blurb">A stale entry normally blocks on a synchronous revalidation round trip. <code>stale-while-revalidate=N</code> serves it as-is instead, refreshing in the background for the next call.</p>
+        <div class="snippets">
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Server response header</span></div>
+            <pre><code class="language-java">// Cache-Control: max-age=60, stale-while-revalidate=30
+Item item = api.getItem("42");
+// fresh for 60s, then still instantly servable (stale) for 30s more
+// while a background call refreshes the entry - this call never sees
+// the new response, only ever the one already in hand</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · a failed background refresh is silent</span>
+              <span class="snippet-caption">the stale entry just keeps serving until it ages out of its own window too</span></div>
+            <pre><code class="language-java">// A background refresh throwing, or answering with a non-2xx/non-304
+// response carrying no caching headers, is swallowed - nothing is
+// logged, nothing is thrown at the caller who triggered it. Once the
+// stale-while-revalidate window itself elapses, the next call falls
+// back to the usual synchronous revalidation (or re-fetch).</code></pre>
           </div>
         </div>
       </div>
