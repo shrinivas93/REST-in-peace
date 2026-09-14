@@ -24,6 +24,7 @@
 		<maven.compiler.target>1.8</maven.compiler.target>
 		<unirest.version>3.14.5</unirest.version>
 		<junit.version>5.14.4</junit.version>
+		<gson.version>2.10</gson.version>
 	</properties>
 
 	<dependencies>
@@ -31,6 +32,19 @@
 			<groupId>com.konghq</groupId>
 			<artifactId>unirest-java</artifactId>
 			<version>${unirest.version}</version>
+		</dependency>
+		<dependency>
+			<!-- Already an unconditional compile-scope transitive dependency via
+			     unirest-java (it backs kong.unirest.JsonObjectMapper by default) -
+			     declared directly here, pinned to the same version already
+			     resolved, only so OpenApiClientGenerator's own com.google.gson.*
+			     import doesn't rely on transitive resolution (which could silently
+			     break if unirest-java ever drops or relocates it). Adds no new jar
+			     to any consumer's classpath - the same gson.jar they already get
+			     today. -->
+			<groupId>com.google.code.gson</groupId>
+			<artifactId>gson</artifactId>
+			<version>${gson.version}</version>
 		</dependency>
 		<dependency>
 			<!-- provided, not test: MockRestServerExtension (main source) implements

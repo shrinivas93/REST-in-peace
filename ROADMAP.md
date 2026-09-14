@@ -1034,12 +1034,18 @@ commitment.
       than something this item alone could deliver. See the README's
       ["Why isn't `List<User>` supported?"](README.md#why-isnt-listuser-supported)
       for the consumer-facing version of this explanation.
-- [ ] **E10. OpenAPI → `@RestClient` interface generator** — flip the
-      current direction. Instead of hand-writing an interface and letting
-      the processor generate the *implementation*, a processor mode that
-      reads an OpenAPI/Swagger spec and generates the *interface itself*
-      (annotations and all) - spec-first client generation, not just
-      annotation-first.
+- [x] **E10. OpenAPI → `@RestClient` interface generator** — flips the
+      current direction: `OpenApiClientGenerator` reads an OpenAPI 3.x JSON
+      document and generates the *interface itself* (annotations and all) -
+      spec-first client generation, not just annotation-first. A skeleton
+      generator, not a full schema-to-POJO tool like swagger-codegen -
+      every parameter and body is `String`; OpenAPI's own `{name}` path
+      placeholder already matches `@PathParam`'s exactly, so paths need no
+      translation. Backed by Gson (already an unconditional transitive
+      dependency via `unirest-java`, now declared directly - no new jar for
+      any consumer). Proven by a real `javac` compile of the generated
+      source through `RestClientProcessor` itself in the test suite, not
+      just string-matching the output.
 - [ ] **E11. Interceptor short-circuit responses** — today `beforeRequest`
       can only add headers or abort by throwing; it can't hand back a
       response. Letting it return a synthetic response to skip the network

@@ -89,6 +89,7 @@ test server for unit tests.
   - [Pre-built interceptors](#pre-built-interceptors)
 - [Compile-time proxy generation](#compile-time-proxy-generation)
   - [Why isn't `List<User>` supported?](#why-isnt-listuser-supported)
+- [OpenAPI to `@RestClient` generator](#openapi-to-restclient-generator)
 - [Testing with `MockRestServer`](#testing-with-mockrestserver)
   - [JUnit 5 extension](#junit-5-extension)
 - [Integrating with your project](#integrating-with-your-project)
@@ -230,6 +231,10 @@ for what actually happens under `getUser(...)`.
 - `MockRestServer` — a real, local HTTP server for unit-testing
   `@RestClient` code without a real network dependency, with a JUnit 5
   extension for zero-boilerplate setup
+- **Spec-first client generation** — `OpenApiClientGenerator` reads an
+  OpenAPI 3.x JSON document and generates a `@RestClient` interface (paths,
+  HTTP methods, parameters, base URL) instead of hand-writing one; see
+  [OpenAPI to `@RestClient` generator](#openapi-to-restclient-generator)
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -1605,6 +1610,48 @@ of what each rollout step actually landed as), and
 for a standalone project showing exactly what a downstream consumer sees —
 including a GraalVM native-image build and run, exercised by CI's
 `native-image-smoke-test` job on every push.
+
+## OpenAPI to `@RestClient` generator
+
+The opposite direction: instead of hand-writing an interface and letting
+`RestClientProcessor` generate the *implementation* (above),
+`OpenApiClientGenerator` reads an existing API's OpenAPI 3.x JSON document
+and generates the *interface itself* — spec-first client generation, for
+pointing this at a large API's spec instead of transcribing every
+path/parameter by hand:
+
+```java
+OpenApiClientGenerator.generate(
+        new File("petstore-openapi.json"),   // the spec - JSON, not YAML
+        new File("src/main/java"),           // output directory
+        "com.example.client",                // package
+        "PetStoreApi");                      // interface simple name
+```
+
+produces `src/main/java/com/example/client/PetStoreApi.java`, a ready-to-compile
+`@RestClient` interface: `servers[0].url` becomes `@BaseUrl`, each
+`get`/`post`/`put`/`delete`/`patch` operation becomes a method (named from
+its own `operationId` if present, otherwise synthesized from the HTTP
+method and path), and OpenAPI's own `{name}` path-template placeholder
+syntax already matches `@PathParam`'s exactly — no translation needed at
+all.
+
+**Scope:** this is a skeleton generator, not a full schema-to-POJO tool
+like swagger-codegen/OpenAPI Generator — every parameter and every
+request/response body is generated as `String`. What it gets right (the
+paths, HTTP methods, parameter names/locations, and base URL) is the
+tedious, error-prone part of a large API; narrowing a specific parameter's
+type, or replacing a body's `String` with your own POJO, is a normal
+hand-edit of the generated file afterward. A `parameters` entry with
+`in: header`/`in: cookie` is skipped (not part of the interface shape — a
+per-call/interceptor concern instead), and only `application/json`-style
+request bodies are recognized (any `requestBody` at all becomes one
+`@Body String` parameter, regardless of its declared schema).
+
+Also runnable from the command line — `java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator
+<specFile> <outputDirectory> <packageName> <interfaceName>` — for wiring
+into a build via `exec-maven-plugin`/a Gradle `JavaExec` task, or just
+running it once by hand and committing the result.
 
 ## Testing with `MockRestServer`
 
