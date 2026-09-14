@@ -84,6 +84,7 @@ test server for unit tests.
   - [Time-based and manual eviction](#time-based-and-manual-eviction)
   - [Query string in the cache key](#query-string-in-the-cache-key)
 - [Interceptors](#interceptors)
+  - [Short-circuiting a request](#short-circuiting-a-request)
   - [Reproducing a call with `curl`](#reproducing-a-call-with-curl)
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
@@ -222,7 +223,9 @@ for what actually happens under `getUser(...)`.
   metrics) without touching individual `@RestClient` interfaces;
   `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
   client only (e.g. that service's own auth scheme), running in addition to
-  every global one, not instead of them
+  every global one, not instead of them. `shortCircuit` skips the network
+  call entirely with a synthetic response - a feature-flag bypass, a canary
+  short-circuit, or a lightweight record/replay mode
 - Optional **compile-time proxy generation** — an annotation processor
   emits a real, reflection-free implementation for a supported
   `@RestClient` interface at build time, with zero configuration and a
@@ -1402,6 +1405,42 @@ the response. Register an interceptor first if it needs to bracket everything
 else's work (e.g. a timer measuring total call overhead); register it last if
 it needs to sit closest to the actual network call (e.g. a timer measuring
 only network latency).
+
+### Short-circuiting a request
+
+`shortCircuit` skips the network call entirely, handing back a synthetic
+response instead — a feature-flag bypass, a canary short-circuit, or a
+lightweight record/replay mode built on the interceptor chain instead of a
+real network dependency:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public ShortCircuitResponse shortCircuit(RequestContext context) {
+        if (featureFlags.isEnabled("bypass-pricing-api")) {
+            return ShortCircuitResponse.ok("{\"price\":0}");
+        }
+        return null;   // let the call proceed normally
+    }
+});
+```
+
+Called after every registered interceptor's `beforeRequest` has already run
+(in that same FIFO order) — the first interceptor to return a non-`null`
+`ShortCircuitResponse` wins, and the request is never sent. The synthetic
+response is decoded exactly like a real one (including throwing
+`RestInPeaceHttpException` for a non-2xx `ShortCircuitResponse.status(...)`),
+and every registered interceptor's `afterResponse` still runs afterward,
+same as it would for a real response. `ShortCircuitResponse.ok(body)`/
+`.status(code, body)` build it; `.header(name, value)` adds response
+headers.
+
+A short-circuited response still goes through this client's own
+caching/retry configuration exactly like a real one would — it may get
+cached if it carries cacheable headers, or "retried" if its status matches
+`@Retry#retryOnStatus()` (which just re-invokes `shortCircuit` again
+instead of a real network call — harmless, if a little redundant, since no
+network round trip happens either way).
 
 ### Reproducing a call with `curl`
 

@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `RequestInterceptor.shortCircuit(RequestContext)` skips the network call
+  entirely, handing back a synthetic `ShortCircuitResponse` instead - a
+  feature-flag bypass, a canary short-circuit, or a lightweight
+  record/replay mode built on the interceptor chain. Called after every
+  registered interceptor's `beforeRequest` has already run (same FIFO
+  order); the first interceptor to return non-`null` wins, and the request
+  is never sent. The synthetic response is decoded exactly like a real one
+  (including throwing `RestInPeaceHttpException` for a non-2xx
+  `ShortCircuitResponse.status(...)`), and every registered interceptor's
+  `afterResponse` still runs afterward. Wired into every dispatch path -
+  reflective and compile-time-generated, sync and async, plain/`byte[]`/
+  `File`/`RipResponse<T>` returns - so it applies uniformly regardless of a
+  method's shape. A short-circuited response still goes through this
+  client's own caching/retry configuration like a real one would (may get
+  cached, or "retried" by re-invoking `shortCircuit` again - harmless,
+  since no network round trip happens either way). A new default method on
+  `RequestInterceptor`, so every existing implementation is unaffected
+  (defaults to never short-circuiting).
 - `OpenApiClientGenerator` - the opposite direction of compile-time proxy
   generation: reads an OpenAPI 3.x JSON document and generates a
   `@RestClient` interface (annotations and all) instead of hand-writing

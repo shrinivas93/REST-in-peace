@@ -297,25 +297,28 @@ public class RequestExecutor {
 		if (returnType == RipResponse.class) {
 			Class<?> innerType = resolveWrappedType(method.getGenericReturnType(), method);
 			if (innerType == byte[].class) {
-				HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, innerType, context, request::asBytes);
+				HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
 				return ResponseDecoder.wrapResponse(response, responseDecoder.decodeOrThrow(response, errorType, innerType));
 			}
-			HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
-					cacheCoordinator.wrapWithCache(request, context, request::asString));
+			HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, innerType, context, cacheCoordinator
+					.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)));
 			return ResponseDecoder.wrapResponse(response, responseDecoder.decodeOrThrow(response, errorType, innerType));
 		}
 		if (returnType == byte[].class) {
-			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, returnType, context, request::asBytes);
+			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, returnType, context,
+					interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
 			return responseDecoder.decodeOrThrow(response, errorType, returnType);
 		}
 		if (returnType == File.class) {
 			File destination = resolveDestinationFile(method, args);
-			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, byte[].class, context, request::asBytes);
+			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, byte[].class, context,
+					interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
 			byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
-		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, returnType, context,
-				cacheCoordinator.wrapWithCache(request, context, request::asString));
+		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, returnType, context, cacheCoordinator
+				.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)));
 		return responseDecoder.decodeOrThrow(response, errorType, returnType);
 	}
 
@@ -483,8 +486,8 @@ public class RequestExecutor {
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, returnType, context,
-				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
-				retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
+				cacheCoordinator.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)),
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return responseDecoder.decodeOrThrow(response, errorType, returnType);
 	}
 
@@ -512,8 +515,9 @@ public class RequestExecutor {
 			boolean hasRetry, int retryTimes, long retryDelayMillis, double retryBackoffMultiplier,
 			double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
-		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
+		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context,
+				interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes), hasRetry, retryTimes,
+				retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 	}
 
@@ -542,8 +546,9 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
-		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
+		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context,
+				interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes), hasRetry, retryTimes,
+				retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 		return writeToFile(destination, bytes);
 	}
@@ -578,8 +583,8 @@ public class RequestExecutor {
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, innerType, context,
-				cacheCoordinator.wrapWithCache(request, context, request::asString), hasRetry, retryTimes, retryDelayMillis,
-				retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
+				cacheCoordinator.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)),
+				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return (RipResponse<?>) ResponseDecoder.wrapResponse(response,
 				responseDecoder.decodeOrThrow(response, errorType, innerType));
 	}
@@ -608,8 +613,9 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
-		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context, request::asBytes,
-				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
+		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context,
+				interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes), hasRetry, retryTimes,
+				retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		@SuppressWarnings("unchecked")
 		RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
 				responseDecoder.decodeOrThrow(response, errorType, byte[].class));
@@ -642,9 +648,11 @@ public class RequestExecutor {
 			Class<?> returnType, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
-		return retryExecutor.executeAsyncWithRetry(errorType, returnType, context,
-				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
+		return retryExecutor
+				.executeAsyncWithRetry(errorType, returnType, context,
+						cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context,
+								interceptorDispatcher.wrapWithShortCircuitAsync(context, interceptedRequest::asStringAsync)),
+						hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, returnType));
 	}
 
@@ -672,8 +680,10 @@ public class RequestExecutor {
 			Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
-		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
+		return retryExecutor
+				.executeAsyncWithRetry(errorType, byte[].class, context,
+						interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, interceptedRequest::asBytesAsync), hasRetry,
+						retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class));
 	}
 
@@ -702,8 +712,10 @@ public class RequestExecutor {
 			File destination, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
-		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
+		return retryExecutor
+				.executeAsyncWithRetry(errorType, byte[].class, context,
+						interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, interceptedRequest::asBytesAsync), hasRetry,
+						retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> writeToFile(destination, (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
 	}
 
@@ -736,9 +748,11 @@ public class RequestExecutor {
 			RequestContext context, Class<?> innerType, Class<?> errorType, boolean hasRetry, int retryTimes,
 			long retryDelayMillis, double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
-		return retryExecutor.executeAsyncWithRetry(errorType, innerType, context,
-				cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context, interceptedRequest::asStringAsync), hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
+		return retryExecutor
+				.executeAsyncWithRetry(errorType, innerType, context,
+						cacheCoordinator.wrapWithCacheAsync(interceptedRequest, context,
+								interceptorDispatcher.wrapWithShortCircuitAsync(context, interceptedRequest::asStringAsync)),
+						hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
 				.thenApply(response -> (RipResponse<?>) ResponseDecoder.wrapResponse(response,
 						responseDecoder.decodeOrThrow(response, errorType, innerType)));
 	}
@@ -767,8 +781,11 @@ public class RequestExecutor {
 			RequestContext context, Class<?> errorType, boolean hasRetry, int retryTimes, long retryDelayMillis,
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		HttpRequest<?> interceptedRequest = interceptorDispatcher.applyInterceptors(request, context);
-		return retryExecutor.executeAsyncWithRetry(errorType, byte[].class, context, interceptedRequest::asBytesAsync, hasRetry,
-				retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus).thenApply(response -> {
+		return retryExecutor
+				.executeAsyncWithRetry(errorType, byte[].class, context,
+						interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, interceptedRequest::asBytesAsync), hasRetry,
+						retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus)
+				.thenApply(response -> {
 					@SuppressWarnings("unchecked")
 					RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
 							responseDecoder.decodeOrThrow(response, errorType, byte[].class));
@@ -783,27 +800,36 @@ public class RequestExecutor {
 		if (isRipResponseType(futureInnerType)) {
 			Class<?> innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
-				return retryExecutor.executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
+				return retryExecutor
+						.executeAsyncWithRetry(method, innerType, context,
+								interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))
 						.thenApply(response -> ResponseDecoder.wrapResponse(response,
 								responseDecoder.decodeOrThrow(response, errorType, innerType)));
 			}
-			return retryExecutor.executeAsyncWithRetry(method, innerType, context,
-					cacheCoordinator.wrapWithCacheAsync(request, context, request::asStringAsync))
+			return retryExecutor
+					.executeAsyncWithRetry(method, innerType, context, cacheCoordinator.wrapWithCacheAsync(request, context,
+							interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))
 					.thenApply(response -> ResponseDecoder.wrapResponse(response,
 							responseDecoder.decodeOrThrow(response, errorType, innerType)));
 		}
 		Class<?> innerType = requireClass(futureInnerType, method);
 		if (innerType == byte[].class) {
-			return retryExecutor.executeAsyncWithRetry(method, innerType, context, request::asBytesAsync)
+			return retryExecutor
+					.executeAsyncWithRetry(method, innerType, context,
+							interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))
 					.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
 		}
 		if (innerType == File.class) {
 			File destination = resolveDestinationFile(method, args);
-			return retryExecutor.executeAsyncWithRetry(method, byte[].class, context, request::asBytesAsync).thenApply(
-					response -> writeToFile(destination, (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
+			return retryExecutor
+					.executeAsyncWithRetry(method, byte[].class, context,
+							interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))
+					.thenApply(response -> writeToFile(destination,
+							(byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
 		}
-		return retryExecutor.executeAsyncWithRetry(method, innerType, context,
-				cacheCoordinator.wrapWithCacheAsync(request, context, request::asStringAsync))
+		return retryExecutor
+				.executeAsyncWithRetry(method, innerType, context, cacheCoordinator.wrapWithCacheAsync(request, context,
+						interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))
 				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
 	}
 
