@@ -925,7 +925,7 @@ RIP.clearInterceptors();   // removes everything registered</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · reproduce a call with curl</span>
-              <span class="snippet-caption">CurlVerbosity.VERBOSE (-v) or .TRACE (--trace-ascii -) for more wire-level detail</span></div>
+              <span class="snippet-caption">CurlVerbosity.VERBOSE (-v) or .TRACE (--trace-ascii - --trace-time) for more wire-level detail</span></div>
             <pre><code class="language-java">public void afterResponse(RequestContext ctx, int status, Object body) {
     if (status >= 400) {
         System.err.println("Reproduce with:\n" + ctx.toCurlCommand());

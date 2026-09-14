@@ -56,10 +56,10 @@ class RequestContextTest {
 	}
 
 	@Test
-	void toCurlCommand_trace_addsTheTraceAsciiFlagRightAfterTheMethod() {
+	void toCurlCommand_trace_addsTheTraceAsciiAndTraceTimeFlagsRightAfterTheMethod() {
 		RequestContext context = new RequestContext(HTTPMethod.GET, "https://api.example.com/users/42");
 
-		assertEquals("curl -X GET --trace-ascii - 'https://api.example.com/users/42'",
+		assertEquals("curl -X GET --trace-ascii - --trace-time 'https://api.example.com/users/42'",
 				context.toCurlCommand(RequestContext.CurlVerbosity.TRACE));
 	}
 

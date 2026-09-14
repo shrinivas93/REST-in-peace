@@ -889,11 +889,18 @@ commitment.
       copy-pasteable `curl` repro for logs/bug reports. Shipped with a
       verbosity option, `toCurlCommand(RequestContext.CurlVerbosity)` -
       `NONE` (default, no extra flag), `VERBOSE` (curl's own `-v`,
-      request/response headers), or `TRACE` (curl's own `--trace-ascii -`,
-      a full wire-level trace including both bodies) - for when the plain
-      reproduction doesn't explain the failure. RIP doesn't invent its own
-      verbosity scheme; each level just picks which real `curl` flag to
-      include.
+      request/response headers), or `TRACE` (curl's own `--trace-ascii -
+      --trace-time`, a full, per-line-timestamped wire-level trace
+      including both bodies) - for when the plain reproduction doesn't
+      explain the failure. RIP doesn't invent its own verbosity scheme;
+      each level just picks which real, current `curl` flag(s) to include
+      - verified against both the sandbox's installed curl (8.5.0) and the
+      actual latest release (8.22.0) that none of `-v`/`--trace-ascii`/
+      `--trace-time` are deprecated or renamed. Deliberately does *not*
+      offer an `ssh`-style stacked `-v`/`-vv`/`-vvv` scheme - confirmed by
+      direct testing (identical output line count from `-v` and `-vvvv`
+      against the same request) that `curl`'s own `--verbose` is a plain
+      boolean with no such leveled behavior to mirror, unlike `ssh`.
 - [ ] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
       — `isClientError()`/`isServerError()` cover 4xx/5xx; 3xx has no
       helper. `@Retry` already parses a response's own `Retry-After`

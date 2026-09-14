@@ -1310,8 +1310,9 @@ RIP.addInterceptor(new RequestInterceptor() {
 
 Pass a `RequestContext.CurlVerbosity` to add one of `curl`'s own diagnostic
 flags when the plain reproduction doesn't explain the failure —
-`VERBOSE` (`-v`, request/response headers) or `TRACE` (`--trace-ascii -`,
-a full wire-level trace including both bodies):
+`VERBOSE` (`-v`, request/response headers) or `TRACE` (`--trace-ascii -
+--trace-time`, a full, per-line-timestamped wire-level trace including
+both bodies):
 
 ```java
 context.toCurlCommand(RequestContext.CurlVerbosity.VERBOSE);

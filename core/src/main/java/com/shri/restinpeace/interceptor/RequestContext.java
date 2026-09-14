@@ -196,13 +196,15 @@ public final class RequestContext {
 		VERBOSE("-v"),
 
 		/**
-		 * {@code --trace-ascii -} - the most detailed level: a full,
-		 * human-readable trace of everything sent and received on the wire,
-		 * headers and bodies both (to {@code curl}'s own stdout) - useful
-		 * when {@link #VERBOSE}'s headers-only view isn't enough to explain
-		 * a failure.
+		 * {@code --trace-ascii - --trace-time} - the most detailed level: a
+		 * full, human-readable, per-line-timestamped trace of everything
+		 * sent and received on the wire, headers and bodies both (to
+		 * {@code curl}'s own stdout) - useful when {@link #VERBOSE}'s
+		 * headers-only view isn't enough to explain a failure, or when the
+		 * timing of one step in the exchange (a slow TLS handshake, a
+		 * delayed response body) matters as much as its content.
 		 */
-		TRACE("--trace-ascii -");
+		TRACE("--trace-ascii - --trace-time");
 
 		private final String flag;
 

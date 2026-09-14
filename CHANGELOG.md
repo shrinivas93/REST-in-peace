@@ -12,7 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   render a call as a copy-pasteable `curl` command (method, URL, headers,
   body) for pasting into a bug report or reproducing a failure outside the
   JVM - `CurlVerbosity.VERBOSE`/`TRACE` add `curl`'s own `-v`/
-  `--trace-ascii -` flags for more wire-level detail.
+  `--trace-ascii - --trace-time` flags for more wire-level detail
+  (`TRACE` also stamps each trace line with a timestamp, for a failure
+  where timing - a slow TLS handshake, a delayed response body - matters
+  as much as content).
 - `RipClientConfig.Builder.cacheKeyIncludesQueryString(boolean)` (per client)
   and `RIP.setCacheKeyIncludesQueryString(boolean)` (shared default) let the
   cache key's query string be turned off - `true` by default, matching
