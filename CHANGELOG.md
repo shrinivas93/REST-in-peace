@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `MockRestServer`'s unmatched-request failure message now names the closest
+  registered route for the same HTTP method (by edit distance) when one
+  exists - `"no response was queued or registered for POST /orders. Did
+  you mean: POST /order?"` - instead of leaving the test author to grep
+  their own setup for the typo. No suggestion is added when no route at all
+  is registered for that method.
 - `RestInPeaceHttpException.isRedirect()` (300-399) joins `isClientError()`/
   `isServerError()`; `getRetryAfterMillis()` surfaces the response's own
   `Retry-After` header (delta-seconds or an HTTP-date), parsed to
