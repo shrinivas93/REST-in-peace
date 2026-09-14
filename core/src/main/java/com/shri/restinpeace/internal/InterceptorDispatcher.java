@@ -1,5 +1,6 @@
 package com.shri.restinpeace.internal;
 
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -192,7 +193,7 @@ final class InterceptorDispatcher {
 	 * needs to report every attempt, not just the final one.
 	 */
 	<B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
-			Class<?> returnType) {
+			Type returnType) {
 		List<RequestInterceptor> interceptors = effectiveInterceptors();
 		if (interceptors.isEmpty()) {
 			return;

@@ -374,7 +374,7 @@ public class ReflectiveRestClientValidator {
 			validateParameterizedReturnType(method, innerType, "RipResponse", false, validationResult);
 			return;
 		}
-		if (!(innerType instanceof Class)) {
+		if (!(innerType instanceof Class) && !(innerType instanceof ParameterizedType)) {
 			validationResult.addError(String.format(
 					"The method %s.%s returns %s<%s>, which is not a supported type parameter.",
 					method.getDeclaringClass().getName(), method.getName(), typeName, innerType));

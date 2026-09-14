@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -150,6 +151,57 @@ class RipReturnTypeIntegrationTest extends AbstractRipIntegrationTest {
 		LocalApi api = RIP.getClient(LocalApi.class);
 
 		assertThrows(RestInPeaceHttpException.class, () -> api.pingAlwaysFailing(port, "x"));
+	}
+
+	@Test
+	void get_withListOfPojoReturnType_decodesEachElementIntoTheDeclaredType() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		List<Payload> payloads = api.getPayloadList(port, "abc");
+
+		assertEquals(2, payloads.size());
+		assertEquals("Shrinivas", payloads.get(0).name);
+		assertEquals(1993, payloads.get(0).age);
+		assertEquals("Alice", payloads.get(1).name);
+		assertEquals(30, payloads.get(1).age);
+	}
+
+	@Test
+	void getAsync_withListOfPojoReturnType_completesWithEachElementDecoded()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		List<Payload> payloads = api.getPayloadListAsync(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertEquals(2, payloads.size());
+		assertEquals("Shrinivas", payloads.get(0).name);
+		assertEquals("Alice", payloads.get(1).name);
+	}
+
+	@Test
+	void get_withRipResponseOfListOfPojo_exposesStatusAndDecodedList() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<List<Payload>> response = api.getPayloadListWithResponse(port, "abc");
+
+		assertEquals(200, response.getStatus());
+		assertEquals(2, response.getBody().size());
+		assertEquals("Shrinivas", response.getBody().get(0).name);
+		assertEquals("Alice", response.getBody().get(1).name);
+	}
+
+	@Test
+	void getAsync_withRipResponseOfListOfPojo_completesWithStatusAndDecodedList()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<List<Payload>> response = api.getPayloadListWithResponseAsync(port, "abc").get(5,
+				TimeUnit.SECONDS);
+
+		assertEquals(200, response.getStatus());
+		assertEquals(2, response.getBody().size());
+		assertEquals("Shrinivas", response.getBody().get(0).name);
+		assertEquals("Alice", response.getBody().get(1).name);
 	}
 
 }

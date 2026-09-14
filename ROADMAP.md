@@ -1019,20 +1019,17 @@ commitment.
       disqualifies the whole interface). An interface with *no*
       codegen-eligible method at all still isn't generated for - the plain
       reflective proxy already covers that with less indirection.
-      **Important scope note surfaced while implementing this:** it does
-      *not*, by itself, make `List<User>` correctly decodable. RIP's
-      response decoding is `Class<?>`-based on *both* dispatch paths -
-      `RequestExecutor.processRestRequest` calls `method.getReturnType()`,
-      erasing `List<User>` down to bare `List.class`, same as the
-      annotation processor's own `Class<?>`-literal requirement - so
-      delegating to the reflective proxy doesn't fix the underlying
-      decoding gap, only the "does one unsupported method disqualify
-      everything else" ergonomics problem. Genuinely fixing `List<User>`
-      needs generic `Type`-based decoding (`Method.getGenericReturnType()`)
-      threaded through both paths - a deeper, separate piece of work, closer
-      to (or a prerequisite for) the parked `CallAdapter`-style item above
-      than something this item alone could deliver. See the README's
-      ["Why isn't `List<User>` supported?"](README.md#why-isnt-listuser-supported)
+      **Important scope note surfaced while implementing this (since fixed
+      by E12 below):** at the time this item landed, it did *not*, by
+      itself, make `List<User>` correctly decodable - RIP's response
+      decoding was `Class<?>`-based on *both* dispatch paths, so
+      delegating to the reflective proxy fixed only the "does one
+      unsupported method disqualify everything else" ergonomics problem,
+      not the underlying decoding gap. E12 closed that gap on the
+      reflective path (see its own entry below); compile-time codegen
+      still doesn't generate for such a method, by design - see the
+      README's
+      ["Why isn't `List<User>` code-generated?"](README.md#why-isnt-listuser-code-generated)
       for the consumer-facing version of this explanation.
 - [x] **E10. OpenAPI → `@RestClient` interface generator** — flips the
       current direction: `OpenApiClientGenerator` reads an OpenAPI 3.x JSON
@@ -1061,24 +1058,40 @@ commitment.
       `notifyAfterResponse`/caching/retry all see a short-circuited
       response exactly like a real one, with zero changes needed to
       `RetryExecutor`/`CacheCoordinator` themselves.
-- [ ] **E12. Generic `Type`-based response decoding** — surfaced while
-      implementing E9 above: `RequestExecutor.processRestRequest` resolves a
-      method's return type via `Method.getReturnType()`, which erases
-      `List<User>` down to bare `List.class` - the same fundamental reason
-      `RestClientProcessor` can't decode it at compile time either (needs a
-      single `Class<?>` literal, and there's no such class for "a list of
-      `User`"). RIP's response decoding is `Class<?>`-based on *both*
-      dispatch paths today, so a generic collection return type isn't
-      reliably decodable via either one - E9's reflective-fallback
-      mechanism reaches the HTTP call correctly for such a method, but
-      doesn't fix decoding it into the right element type. Fixing this for
-      real needs `Method.getGenericReturnType()` (a `java.lang.reflect.Type`,
-      not just a `Class<?>`) threaded through `ResponseDecoder` on the
-      reflective path, and an equivalent generic-signature-aware decode
-      call on the compile-time path. Likely a prerequisite for (or at least
-      closely related to) the parked `CallAdapter`-style item above, since
-      both need RIP's decoding to stop being `Class<?>`-only. Not started;
-      no design doc yet - the right `Type`/`TypeToken` shape to standardize
-      on (a hand-rolled minimal one vs. leaning on Gson's own `TypeToken`
-      given a Gson-backed `ObjectMapper` is the zero-dependency default)
-      needs a design pass before writing code.
+- [x] **E12. Generic `Type`-based response decoding** — fixes the decoding
+      gap E9 explicitly called out as out of scope: a method returning
+      `List<User>` (or wrapped in `RipResponse<T>`/`CompletableFuture<T>`,
+      including `CompletableFuture<RipResponse<List<User>>>`) now decodes
+      each element into the declared type, instead of the bare `List`/
+      `LinkedTreeMap`s type erasure otherwise leaves. The reflective
+      dispatch path (`RequestExecutor.processRestRequest`/`processAsync`)
+      now reads `Method.getGenericReturnType()` - a `java.lang.reflect.Type`
+      - instead of the type-erased `getReturnType()`, threaded through
+      `ResponseDecoder`/`RetryExecutor`/`InterceptorDispatcher` by widening
+      their `Class<?> returnType` parameters to `Type` in place (a
+      `Class<?>` already satisfies `Type`, so every existing call site
+      passing one compiles and behaves unchanged). Decoding itself goes
+      through a new internal `RuntimeGenericType`, which adapts an
+      arbitrary runtime `Type` into `kong.unirest.GenericType` for
+      Unirest's own `ObjectMapper.readValue(String, GenericType)` - the
+      already-correct Gson-backed mechanism the zero-config default
+      `JsonObjectMapper` needed no change to use, since `GenericType` only
+      exposes the `new GenericType<List<User>>(){}` anonymous-subclass
+      pattern (no constructor/factory accepting a `Type` value directly,
+      since that pattern assumes the type is always known at the call
+      site); worked around with a one-time reflective overwrite of its
+      already-`protected` `type` field instead of inferring it from a
+      generic superclass. Compile-time codegen deliberately keeps its
+      existing E9 behavior rather than gaining an equivalent
+      generic-signature-aware code path: such a method still falls back to
+      the reflective proxy (now correctly decoding it), since an annotation
+      processor has no `Class<?>` literal to emit for "a list of `User`" -
+      a fundamentally different problem than decoding a `Type` at runtime.
+      `ReflectiveRestClientValidator`'s own return-type check was relaxed
+      the same way (a `ParameterizedType` inner type is now accepted
+      alongside a plain `Class`), so a previously-rejecting-at-validation
+      shape like `RipResponse<List<User>>` no longer fails
+      `RIP.getClient(...)` up front. See the README's
+      [Generic collection return types](README.md#generic-collection-return-types-listuser)
+      and the updated
+      ["Why isn't `List<User>` code-generated?"](README.md#why-isnt-listuser-code-generated).

@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Generic `Type`-based response decoding - a method returning `List<User>`
+  (or `RipResponse<List<User>>`/`CompletableFuture<List<User>>`/
+  `CompletableFuture<RipResponse<List<User>>>`) now decodes each element
+  into the declared type instead of erasing to raw `List`/`LinkedTreeMap`s.
+  The reflective dispatch path now reads `Method.getGenericReturnType()`
+  instead of the type-erased `getReturnType()`, and decodes through a new
+  internal `RuntimeGenericType`, which adapts an arbitrary runtime `Type`
+  into `kong.unirest.GenericType` for `ObjectMapper.readValue(String,
+  GenericType)` - `GenericType` normally only supports the
+  `new GenericType<List<User>>(){}` anonymous-subclass pattern, since it
+  assumes the type is always known at the call site; `RuntimeGenericType`
+  works around that with a one-time reflective field overwrite instead,
+  since the actual type isn't known until a method is actually invoked.
+  Compile-time codegen is unaffected by design - such a method still falls
+  back to the reflective proxy per the existing partial-codegen mechanism,
+  since an annotation processor has no `Class<?>` literal to write for "a
+  list of `User`"; every other method on the same interface still gets a
+  real generated implementation. `Class<?>`-returning methods are
+  unaffected either way, since `Class` already satisfies `Type`.
 - `RequestInterceptor.shortCircuit(RequestContext)` skips the network call
   entirely, handing back a synthetic `ShortCircuitResponse` instead - a
   feature-flag bypass, a canary short-circuit, or a lightweight

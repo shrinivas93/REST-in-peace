@@ -137,6 +137,12 @@ class ReflectiveRestClientValidatorTest {
 	@RestClient
 	public interface UnsupportedCompletableFutureTypeParam {
 		@GET("http://example.com")
+		CompletableFuture<? extends String> foo();
+	}
+
+	@RestClient
+	public interface ValidCompletableFutureOfList {
+		@GET("http://example.com")
 		CompletableFuture<List<String>> foo();
 	}
 
@@ -162,7 +168,19 @@ class ReflectiveRestClientValidatorTest {
 	@RestClient
 	public interface UnsupportedRipResponseTypeParam {
 		@GET("http://example.com")
+		RipResponse<? extends String> foo();
+	}
+
+	@RestClient
+	public interface ValidRipResponseOfList {
+		@GET("http://example.com")
 		RipResponse<List<String>> foo();
+	}
+
+	@RestClient
+	public interface ValidCompletableFutureOfRipResponseOfList {
+		@GET("http://example.com")
+		CompletableFuture<RipResponse<List<String>>> foo();
 	}
 
 	@RestClient
@@ -681,6 +699,11 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@Test
+	void validate_validCompletableFutureOfList_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidCompletableFutureOfList.class));
+	}
+
+	@Test
 	void validate_validRipResponse_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidRipResponse.class));
 	}
@@ -702,6 +725,16 @@ class ReflectiveRestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(UnsupportedRipResponseTypeParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
+	}
+
+	@Test
+	void validate_validRipResponseOfList_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidRipResponseOfList.class));
+	}
+
+	@Test
+	void validate_validCompletableFutureOfRipResponseOfList_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidCompletableFutureOfRipResponseOfList.class));
 	}
 
 	@Test

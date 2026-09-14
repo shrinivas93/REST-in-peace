@@ -220,6 +220,19 @@ abstract class AbstractRipIntegrationTest {
 		@GET("http://localhost:{port}/payload/{id}")
 		Payload getPayload(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/payload-list/{id}")
+		List<Payload> getPayloadList(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload-list/{id}")
+		CompletableFuture<List<Payload>> getPayloadListAsync(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload-list/{id}")
+		RipResponse<List<Payload>> getPayloadListWithResponse(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload-list/{id}")
+		CompletableFuture<RipResponse<List<Payload>>> getPayloadListWithResponseAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
+
 		@GET("http://localhost:{port}/items/{id}")
 		void ping(@PathParam("port") int port, @PathParam("id") String id);
 
@@ -403,6 +416,14 @@ abstract class AbstractRipIntegrationTest {
 			exchange.sendResponseHeaders(200, -1);
 		} else if (exchange.getRequestURI().getPath().startsWith("/payload/")) {
 			byte[] response = "{\"name\":\"Shrinivas\",\"age\":1993}".getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			exchange.sendResponseHeaders(200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/payload-list/")) {
+			byte[] response = "[{\"name\":\"Shrinivas\",\"age\":1993},{\"name\":\"Alice\",\"age\":30}]"
+					.getBytes(StandardCharsets.UTF_8);
 			exchange.getResponseHeaders().set("Content-Type", "application/json");
 			exchange.sendResponseHeaders(200, response.length);
 			try (OutputStream os = exchange.getResponseBody()) {

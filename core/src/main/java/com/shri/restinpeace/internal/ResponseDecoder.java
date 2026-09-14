@@ -1,6 +1,7 @@
 package com.shri.restinpeace.internal;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -42,8 +43,18 @@ final class ResponseDecoder {
 	 * response's own {@code Retry-After} header, if any, so a caller can
 	 * read it back via {@link RestInPeaceHttpException#getRetryAfterMillis()}
 	 * even for a method with no {@code @Retry} of its own.
+	 *
+	 * @param returnType the declared return type to decode a success body
+	 *                    into - a plain {@code Class<?>} for the common case,
+	 *                    or a {@link java.lang.reflect.ParameterizedType}
+	 *                    like {@code List<User>} (from {@code
+	 *                    Method.getGenericReturnType()}) for a generic
+	 *                    collection, decoded via {@link RuntimeGenericType}
+	 *                    instead - {@code Class<?>} already satisfies
+	 *                    {@code Type}, so every existing caller passing one
+	 *                    is unaffected
 	 */
-	Object decodeOrThrow(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
+	Object decodeOrThrow(HttpResponse<?> response, Class<?> errorType, Type returnType) {
 		if (!isSuccessStatus(response.getStatus())) {
 			throw new RestInPeaceHttpException(response.getStatus(), toRawBodyString(response.getBody()),
 					decodeBody(response, errorType, returnType), RetryExecutor.parseRetryAfterMillis(response));
@@ -60,8 +71,10 @@ final class ResponseDecoder {
 	 * {@code errorType} from {@code method.getAnnotation(ErrorType.class)};
 	 * a compile-time-generated call passes its {@code @ErrorType}'s value as
 	 * a literal, or {@code null} if it has none.
+	 *
+	 * @param returnType see {@link #decodeOrThrow}'s own javadoc
 	 */
-	Object decodeBody(HttpResponse<?> response, Class<?> errorType, Class<?> returnType) {
+	Object decodeBody(HttpResponse<?> response, Class<?> errorType, Type returnType) {
 		Object rawBody = response.getBody();
 		if (!isSuccessStatus(response.getStatus())) {
 			String rawBodyString = toRawBodyString(rawBody);
@@ -79,7 +92,10 @@ final class ResponseDecoder {
 		if (returnType == void.class || returnType == Void.class) {
 			return null;
 		}
-		return getObjectMapper().readValue((String) rawBody, returnType);
+		if (returnType instanceof Class) {
+			return getObjectMapper().readValue((String) rawBody, (Class<?>) returnType);
+		}
+		return getObjectMapper().readValue((String) rawBody, RuntimeGenericType.of(returnType));
 	}
 
 	private ObjectMapper getObjectMapper() {
