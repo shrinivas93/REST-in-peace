@@ -871,3 +871,82 @@ up.
       been disabled entirely. Needs a proper, verified setup - PRs required
       into `master`, with a working bypass for `release.yml`'s own
       version-bump/tag push - before it's turned back on for real.
+
+## Excavation ideas (2026-09-14) — proposed, not yet designed or scoped
+
+A second full codebase excavation (mock server, internal encoders, both
+dispatch paths, pre-built interceptors, the Spring starter, samples, and the
+existing roadmap items above) turned up these as candidates - numbered here
+so they can be discussed/scoped/picked off individually rather than lost in
+chat history. None are started; sizes below are a rough guess, not a
+commitment.
+
+**Quick wins (small, self-contained):**
+
+- [ ] **E1. `RequestContext.toCurlCommand()`** — `RequestContext` already
+      knows the method, URL, headers, and (since `RequestContext.getBody()`
+      shipped above) the body. One method turns a failed call into a
+      copy-pasteable `curl` repro for logs/bug reports.
+- [ ] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
+      — `isClientError()`/`isServerError()` cover 4xx/5xx; 3xx has no
+      helper. `@Retry` already parses a response's own `Retry-After`
+      (delta-seconds or HTTP-date) internally but discards it once retries
+      are exhausted - surface the parsed value on the exception so a caller
+      who gives up can still honor it manually.
+- [ ] **E3. Friendlier `MockRestServer` unmatched-request diagnostics** —
+      today an unmatched request just gets `"no response was queued or
+      registered for METHOD PATH"`. Since routes are already stored with
+      their path template, the failure message could name the closest
+      registered route (same method, different path - usually a typo)
+      instead of leaving the test author to grep their own setup.
+- [ ] **E4. Auto-report `getUnhitRoutes()` in `MockRestServerExtension`** —
+      the coverage-check method already exists but has to be called by
+      hand. An opt-in flag printing unhit routes at `afterAll` turns dead
+      test setup into a free signal.
+
+**Medium features (new user-facing value):**
+
+- [ ] **E5. Stale-while-revalidate caching mode** — a stale-but-revalidatable
+      entry currently blocks on a synchronous `If-None-Match` round trip.
+      Since the `CompletableFuture` async plumbing already exists, this
+      mode could return the stale body immediately and revalidate in the
+      background.
+- [ ] **E6. Negative caching** — cache a confirmed `404` for a short TTL, so
+      a client stops hammering a downstream for a resource it already
+      confirmed doesn't exist. Falls directly out of the `InMemoryCache`
+      max-age infra above (max-age constructor, `Cache.key(...)`).
+- [ ] **E7. `RedactingLoggingInterceptor`** — a direct payoff of
+      `RequestContext.getBody()` above: a pre-built interceptor that logs
+      bodies like `LoggingInterceptor` does today, but masks configured
+      field names (`password`, `token`, `ssn`, ...) so logging bodies is
+      safe by default instead of a footgun.
+- [ ] **E8. Per-client retry budget** — a token-bucket cap on *total*
+      retries across a client in a time window
+      (`RipClientConfig.retryBudget(maxRetries, perWindow)`), not per-call.
+      Addresses the actual production failure mode the circuit-breaker item
+      above is reacting to (a retry storm amplifying an outage) without the
+      complexity of a full circuit-breaker/bulkhead abstraction.
+
+**Bigger bets (real design work first):**
+
+- [ ] **E9. Partial compile-time codegen** — today one unsupported method
+      (`RestClientProcessor`'s own comment: "generating a partially-correct
+      implementation would be worse than not generating one at all")
+      disqualifies the *entire* interface from codegen. An alternative:
+      generate the supported methods for real, and have the generated class
+      internally delegate only the unsupported ones to a private reflective
+      sub-dispatcher - still one class, still a fast path for most methods,
+      without today's all-or-nothing cliff.
+- [ ] **E10. OpenAPI → `@RestClient` interface generator** — flip the
+      current direction. Instead of hand-writing an interface and letting
+      the processor generate the *implementation*, a processor mode that
+      reads an OpenAPI/Swagger spec and generates the *interface itself*
+      (annotations and all) - spec-first client generation, not just
+      annotation-first.
+- [ ] **E11. Interceptor short-circuit responses** — today `beforeRequest`
+      can only add headers or abort by throwing; it can't hand back a
+      response. Letting it return a synthetic response to skip the network
+      call entirely would enable feature-flag bypasses, canary
+      short-circuits, and - as a side effect - a lightweight record/replay
+      mode built on the interceptor chain instead of requiring
+      `MockRestServer`'s own parked VCR-style feature above.
