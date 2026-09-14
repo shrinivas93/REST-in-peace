@@ -993,6 +993,16 @@ RIP.clearInterceptors();   // removes everything registered</code></pre>
 }</code></pre>
           </div>
           <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · short-circuit the network call</span>
+              <span class="snippet-caption">feature-flag bypass, canary short-circuit, or record/replay - first non-null wins, FIFO</span></div>
+            <pre><code class="language-java">public ShortCircuitResponse shortCircuit(RequestContext ctx) {
+    if (featureFlags.isEnabled("bypass-pricing-api")) {
+        return ShortCircuitResponse.ok("{\"price\":0}");
+    }
+    return null;   // let the call proceed normally
+}</code></pre>
+          </div>
+          <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · reproduce a call with curl</span>
               <span class="snippet-caption">CurlVerbosity: NONE, VERBOSE (-v), VV (-vv), VVV (-vvv), VVVV (-vvvv), or TRACE (--trace-ascii - --trace-time)</span></div>
             <pre><code class="language-java">public void afterResponse(RequestContext ctx, int status, Object body) {

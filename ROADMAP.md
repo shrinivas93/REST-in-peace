@@ -1046,13 +1046,21 @@ commitment.
       any consumer). Proven by a real `javac` compile of the generated
       source through `RestClientProcessor` itself in the test suite, not
       just string-matching the output.
-- [ ] **E11. Interceptor short-circuit responses** — today `beforeRequest`
-      can only add headers or abort by throwing; it can't hand back a
-      response. Letting it return a synthetic response to skip the network
-      call entirely would enable feature-flag bypasses, canary
-      short-circuits, and - as a side effect - a lightweight record/replay
-      mode built on the interceptor chain instead of requiring
-      `MockRestServer`'s own parked VCR-style feature above.
+- [x] **E11. Interceptor short-circuit responses** — a new
+      `RequestInterceptor.shortCircuit(RequestContext)` default method
+      (backward compatible - `beforeRequest` itself couldn't change return
+      type without breaking every existing override) hands back a
+      synthetic `ShortCircuitResponse` to skip the network call entirely -
+      feature-flag bypasses, canary short-circuits, and a lightweight
+      record/replay mode built on the interceptor chain. Called after
+      every interceptor's `beforeRequest` (same FIFO order); first
+      non-`null` wins. Wired into all ~20 call sites across both dispatch
+      paths (reflective and compile-time-generated) and every return shape
+      (sync/async, plain/`byte[]`/`File`/`RipResponse<T>`) by wrapping each
+      one's innermost network supplier in `InterceptorDispatcher`, so
+      `notifyAfterResponse`/caching/retry all see a short-circuited
+      response exactly like a real one, with zero changes needed to
+      `RetryExecutor`/`CacheCoordinator` themselves.
 - [ ] **E12. Generic `Type`-based response decoding** — surfaced while
       implementing E9 above: `RequestExecutor.processRestRequest` resolves a
       method's return type via `Method.getReturnType()`, which erases
