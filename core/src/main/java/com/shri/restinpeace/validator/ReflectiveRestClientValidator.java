@@ -180,6 +180,9 @@ public class ReflectiveRestClientValidator {
 	private static void validateTimeout(Method method, ValidationResult validationResult) {
 		Timeout timeout = method.getAnnotation(Timeout.class);
 		if (timeout == null) {
+			timeout = method.getDeclaringClass().getAnnotation(Timeout.class);
+		}
+		if (timeout == null) {
 			return;
 		}
 		if (timeout.connectMillis() < -1) {
@@ -330,6 +333,9 @@ public class ReflectiveRestClientValidator {
 	private static void validateRetry(Method method, ValidationResult validationResult) {
 		Retry retry = method.getAnnotation(Retry.class);
 		if (retry == null) {
+			retry = method.getDeclaringClass().getAnnotation(Retry.class);
+		}
+		if (retry == null) {
 			return;
 		}
 		if (retry.times() < 1) {
@@ -368,7 +374,7 @@ public class ReflectiveRestClientValidator {
 			validateParameterizedReturnType(method, innerType, "RipResponse", false, validationResult);
 			return;
 		}
-		if (!(innerType instanceof Class)) {
+		if (!(innerType instanceof Class) && !(innerType instanceof ParameterizedType)) {
 			validationResult.addError(String.format(
 					"The method %s.%s returns %s<%s>, which is not a supported type parameter.",
 					method.getDeclaringClass().getName(), method.getName(), typeName, innerType));

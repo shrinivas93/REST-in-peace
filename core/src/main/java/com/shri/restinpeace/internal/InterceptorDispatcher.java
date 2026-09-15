@@ -1,13 +1,18 @@
 package com.shri.restinpeace.internal;
 
+import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.interceptor.RequestContext;
 import com.shri.restinpeace.interceptor.RequestInterceptor;
+import com.shri.restinpeace.interceptor.ShortCircuitResponse;
 
 import kong.unirest.HttpRequest;
 import kong.unirest.HttpResponse;
@@ -98,12 +103,97 @@ final class InterceptorDispatcher {
 	}
 
 	/**
+	 * Checks whether any registered interceptor wants to short-circuit this
+	 * call - see {@link RequestInterceptor#shortCircuit}'s own javadoc for
+	 * the FIFO-first-wins semantics.
+	 *
+	 * @return the winning short-circuit response, or {@code null} if none
+	 */
+	private ShortCircuitResponse checkShortCircuit(RequestContext context) {
+		for (RequestInterceptor interceptor : effectiveInterceptors()) {
+			ShortCircuitResponse response = interceptor.shortCircuit(context);
+			if (response != null) {
+				return response;
+			}
+		}
+		return null;
+	}
+
+	private static kong.unirest.Headers toUnirestHeaders(ShortCircuitResponse shortCircuit) {
+		kong.unirest.Headers headers = new kong.unirest.Headers();
+		shortCircuit.getHeaders().forEach((name, values) -> values.forEach(value -> headers.add(name, value)));
+		return headers;
+	}
+
+	/**
+	 * Wraps a {@code String}-decoding network call so a registered
+	 * interceptor can short-circuit it - see
+	 * {@link RequestInterceptor#shortCircuit}. {@code call} itself may never
+	 * run at all if an interceptor short-circuits.
+	 *
+	 * @param context this call's context, checked against every registered
+	 *                interceptor's {@code shortCircuit}
+	 * @param call    the real network call
+	 * @return a wrapping supplier that may serve a short-circuited response
+	 *         instead of invoking {@code call} at all
+	 */
+	Supplier<HttpResponse<String>> wrapWithShortCircuit(RequestContext context, Supplier<HttpResponse<String>> call) {
+		return () -> {
+			ShortCircuitResponse shortCircuit = checkShortCircuit(context);
+			return shortCircuit != null
+					? new SyntheticHttpResponse<>(shortCircuit.getStatus(), toUnirestHeaders(shortCircuit), shortCircuit.getBody())
+					: call.get();
+		};
+	}
+
+	/**
+	 * The {@code byte[]}-decoding counterpart of {@link #wrapWithShortCircuit} -
+	 * a short-circuited response's {@link ShortCircuitResponse#getBody()} is
+	 * re-encoded as UTF-8 bytes.
+	 */
+	Supplier<HttpResponse<byte[]>> wrapWithShortCircuitBytes(RequestContext context,
+			Supplier<HttpResponse<byte[]>> call) {
+		return () -> {
+			ShortCircuitResponse shortCircuit = checkShortCircuit(context);
+			return shortCircuit != null
+					? new SyntheticHttpResponse<>(shortCircuit.getStatus(), toUnirestHeaders(shortCircuit),
+							shortCircuit.getBody().getBytes(StandardCharsets.UTF_8))
+					: call.get();
+		};
+	}
+
+	/** The async counterpart of {@link #wrapWithShortCircuit}, for a {@code CompletableFuture}-returning call. */
+	Supplier<CompletableFuture<HttpResponse<String>>> wrapWithShortCircuitAsync(RequestContext context,
+			Supplier<CompletableFuture<HttpResponse<String>>> call) {
+		return () -> {
+			ShortCircuitResponse shortCircuit = checkShortCircuit(context);
+			return shortCircuit != null
+					? CompletableFuture.completedFuture(new SyntheticHttpResponse<>(shortCircuit.getStatus(),
+							toUnirestHeaders(shortCircuit), shortCircuit.getBody()))
+					: call.get();
+		};
+	}
+
+	/** The async counterpart of {@link #wrapWithShortCircuitBytes}, for a {@code CompletableFuture}-returning call. */
+	Supplier<CompletableFuture<HttpResponse<byte[]>>> wrapWithShortCircuitAsyncBytes(RequestContext context,
+			Supplier<CompletableFuture<HttpResponse<byte[]>>> call) {
+		return () -> {
+			ShortCircuitResponse shortCircuit = checkShortCircuit(context);
+			return shortCircuit != null
+					? CompletableFuture.completedFuture(new SyntheticHttpResponse<>(shortCircuit.getStatus(),
+							toUnirestHeaders(shortCircuit),
+							shortCircuit.getBody().getBytes(StandardCharsets.UTF_8)))
+					: call.get();
+		};
+	}
+
+	/**
 	 * Notifies every applicable interceptor's {@code afterResponse}, in
 	 * "onion" (LIFO) order. Called directly by {@link RetryExecutor} - retry
 	 * needs to report every attempt, not just the final one.
 	 */
 	<B> void notifyAfterResponse(RequestContext context, HttpResponse<B> response, Class<?> errorType,
-			Class<?> returnType) {
+			Type returnType) {
 		List<RequestInterceptor> interceptors = effectiveInterceptors();
 		if (interceptors.isEmpty()) {
 			return;

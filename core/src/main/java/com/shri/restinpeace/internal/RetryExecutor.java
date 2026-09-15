@@ -1,6 +1,7 @@
 package com.shri.restinpeace.internal;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -12,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
+import com.shri.restinpeace.RetryConfig;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.interceptor.RequestContext;
@@ -39,6 +41,12 @@ import kong.unirest.HttpResponse;
  * whichever wait was actually used for the previous attempt, so a run of
  * {@code Retry-After}-guided waits still keeps growing if the server keeps
  * asking for longer ones.
+ *
+ * <p>
+ * A configured {@link RetryBudget} additionally caps the *total* number of
+ * retries this instance (i.e. this client) performs across every call
+ * within a rolling window, regardless of any individual call's own
+ * {@code @Retry#times()} - see {@link RetryBudget}'s own javadoc.
  */
 final class RetryExecutor {
 
@@ -53,15 +61,44 @@ final class RetryExecutor {
 	});
 
 	private final InterceptorDispatcher interceptorDispatcher;
+	private final RetryConfig configuredRetry;
+	private final RetryBudget retryBudget;
 
 	RetryExecutor(InterceptorDispatcher interceptorDispatcher) {
-		this.interceptorDispatcher = interceptorDispatcher;
+		this(interceptorDispatcher, null);
 	}
 
-	<B> HttpResponse<B> executeSyncWithRetry(Method method, Class<?> returnType, RequestContext context,
+	/**
+	 * @param configuredRetry a {@link com.shri.restinpeace.RipClientConfig}'s
+	 *                        default retry policy, applied to any call whose
+	 *                        method (and interface) has no {@code @Retry} of
+	 *                        its own, or {@code null} for no retrying at all
+	 *                        in that case - see {@link RetryConfig}
+	 */
+	RetryExecutor(InterceptorDispatcher interceptorDispatcher, RetryConfig configuredRetry) {
+		this(interceptorDispatcher, configuredRetry, null);
+	}
+
+	/**
+	 * @param configuredRetry a {@link com.shri.restinpeace.RipClientConfig}'s
+	 *                        default retry policy - see the two-arg
+	 *                        constructor
+	 * @param retryBudget     a {@link com.shri.restinpeace.RipClientConfig}'s
+	 *                        total-retries-per-client budget (see
+	 *                        {@link com.shri.restinpeace.RipClientConfig.Builder#retryBudget(int, long)}),
+	 *                        or {@code null} for no cap beyond each call's own
+	 *                        {@code @Retry#times()}
+	 */
+	RetryExecutor(InterceptorDispatcher interceptorDispatcher, RetryConfig configuredRetry, RetryBudget retryBudget) {
+		this.interceptorDispatcher = interceptorDispatcher;
+		this.configuredRetry = configuredRetry;
+		this.retryBudget = retryBudget;
+	}
+
+	<B> HttpResponse<B> executeSyncWithRetry(Method method, Type returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
-		Retry retry = method == null ? null : method.getAnnotation(Retry.class);
+		Retry retry = method == null ? null : resolveRetry(method);
 		if (retry == null) {
 			return executeSyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, 0.0, EMPTY_STATUS_CODES);
 		}
@@ -77,9 +114,14 @@ final class RetryExecutor {
 	 * by compile-time-generated code, which has both as compile-time
 	 * literals (or {@code null}/{@code false} if the method has neither).
 	 */
-	<B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Class<?> returnType, RequestContext context,
+	<B> HttpResponse<B> executeSyncWithRetry(Class<?> errorType, Type returnType, RequestContext context,
 			Supplier<HttpResponse<B>> call, boolean hasRetry, int times, long delayMillis, double backoffMultiplier,
 			double jitterFactor, int[] retryOnStatus) {
+		if (!hasRetry && configuredRetry != null) {
+			return executeSyncWithRetry(errorType, returnType, context, call, true, configuredRetry.getTimes(),
+					configuredRetry.getDelayMillis(), configuredRetry.getBackoffMultiplier(),
+					configuredRetry.getJitterFactor(), configuredRetry.getRetryOnStatus());
+		}
 		if (!hasRetry) {
 			HttpResponse<B> response = call.get();
 			interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
@@ -96,7 +138,7 @@ final class RetryExecutor {
 				failure = e;
 			}
 			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
-			if (!retryable || attempt >= times) {
+			if (!retryable || attempt >= times || (retryBudget != null && !retryBudget.tryConsume())) {
 				if (failure != null) {
 					throw failure;
 				}
@@ -109,10 +151,10 @@ final class RetryExecutor {
 		}
 	}
 
-	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Class<?> returnType,
+	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Method method, Type returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
-		Retry retry = method.getAnnotation(Retry.class);
+		Retry retry = resolveRetry(method);
 		if (retry == null) {
 			return executeAsyncWithRetry(errorType, returnType, context, call, false, 0, 0L, 1.0, 0.0, EMPTY_STATUS_CODES);
 		}
@@ -126,9 +168,14 @@ final class RetryExecutor {
 	 * {@link #executeSyncWithRetry(Class, Class, RequestContext, Supplier, boolean, int, long, double, double, int[])}
 	 * for the async path.
 	 */
-	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Class<?> returnType,
+	<B> CompletableFuture<HttpResponse<B>> executeAsyncWithRetry(Class<?> errorType, Type returnType,
 			RequestContext context, Supplier<CompletableFuture<HttpResponse<B>>> call, boolean hasRetry, int times,
 			long delayMillis, double backoffMultiplier, double jitterFactor, int[] retryOnStatus) {
+		if (!hasRetry && configuredRetry != null) {
+			return executeAsyncWithRetry(errorType, returnType, context, call, true, configuredRetry.getTimes(),
+					configuredRetry.getDelayMillis(), configuredRetry.getBackoffMultiplier(),
+					configuredRetry.getJitterFactor(), configuredRetry.getRetryOnStatus());
+		}
 		if (!hasRetry) {
 			return call.get().thenApply(response -> {
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
@@ -140,7 +187,7 @@ final class RetryExecutor {
 	}
 
 	private <B> CompletableFuture<HttpResponse<B>> attemptAsync(Supplier<CompletableFuture<HttpResponse<B>>> call,
-			Class<?> errorType, Class<?> returnType, RequestContext context, int times, double backoffMultiplier,
+			Class<?> errorType, Type returnType, RequestContext context, int times, double backoffMultiplier,
 			double jitterFactor, int[] retryOnStatus, int attempt, long delay) {
 		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
 		call.get().whenComplete((response, failure) -> {
@@ -148,7 +195,7 @@ final class RetryExecutor {
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 			}
 			boolean retryable = failure != null || isRetryableStatus(response.getStatus(), retryOnStatus);
-			if (!retryable || attempt >= times) {
+			if (!retryable || attempt >= times || (retryBudget != null && !retryBudget.tryConsume())) {
 				if (failure != null) {
 					result.completeExceptionally(failure);
 				} else {
@@ -172,6 +219,37 @@ final class RetryExecutor {
 					waitMillis, TimeUnit.MILLISECONDS);
 		});
 		return result;
+	}
+
+	/**
+	 * Resolves the effective {@code @Retry} for {@code method} - the
+	 * method's own if present, otherwise its declaring interface's (see
+	 * {@code @Retry}'s own javadoc for the interface-level-default shape,
+	 * mirroring {@code @BaseUrl}'s), otherwise {@code null} if neither has
+	 * one. Also used directly by
+	 * {@code RequestExecutor.applyIdempotencyKeyIfNeeded}, so every
+	 * reflective-path call site answering "does this call have a
+	 * {@code @Retry}, and if so which" agrees on where to look.
+	 */
+	static Retry resolveRetry(Method method) {
+		Retry retry = method.getAnnotation(Retry.class);
+		return retry != null ? retry : method.getDeclaringClass().getAnnotation(Retry.class);
+	}
+
+	/**
+	 * Whether a stable {@code Idempotency-Key} should be sent for a call to
+	 * {@code method} - {@code @Retry}'s (method's, then interface's)
+	 * {@code idempotent()} if either is present, otherwise this instance's
+	 * {@link #configuredRetry}'s, for a call driven entirely by the
+	 * client's default retry policy rather than any {@code @Retry}
+	 * annotation at all.
+	 */
+	boolean isIdempotent(Method method) {
+		Retry retry = resolveRetry(method);
+		if (retry != null) {
+			return retry.idempotent();
+		}
+		return configuredRetry != null && configuredRetry.isIdempotent();
 	}
 
 	private static boolean isRetryableStatus(int status, int[] retryOnStatus) {
@@ -202,12 +280,15 @@ final class RetryExecutor {
 	 * delta-seconds (a plain integer, converted to milliseconds) or an
 	 * HTTP-date (RFC 1123, e.g. {@code "Wed, 21 Oct 2015 07:28:00 GMT"},
 	 * converted to the number of milliseconds from now until then, floored
-	 * at zero for a date already in the past).
+	 * at zero for a date already in the past). Package-private so {@link
+	 * ResponseDecoder} can share this instead of duplicating it, to surface
+	 * the same parsed value on {@link
+	 * com.shri.restinpeace.exception.RestInPeaceHttpException#getRetryAfterMillis()}.
 	 *
 	 * @return the header's value in milliseconds, or {@code null} if the
 	 *         header is absent or its value is in neither supported format
 	 */
-	private static Long parseRetryAfterMillis(HttpResponse<?> response) {
+	static Long parseRetryAfterMillis(HttpResponse<?> response) {
 		String value = response.getHeaders().getFirst(RETRY_AFTER_HEADER);
 		if (value == null || value.trim().isEmpty()) {
 			return null;

@@ -482,10 +482,72 @@ public final class MockRestServer implements AutoCloseable {
 			response = queue.poll();
 		}
 		if (response == null) {
-			response = MockResponse.status(500, "MockRestServer: no response was queued or registered for "
-					+ request.getHttpMethod() + " " + request.getPath() + ".");
+			String message = "MockRestServer: no response was queued or registered for " + request.getHttpMethod()
+					+ " " + request.getPath() + ".";
+			String suggestion = closestRegisteredPath(request.getHttpMethod(), request.getPath());
+			if (suggestion != null) {
+				message += " Did you mean: " + request.getHttpMethod() + " " + suggestion + "?";
+			}
+			response = MockResponse.status(500, message);
 		}
 		response.writeTo(exchange);
+	}
+
+	/**
+	 * Finds the registered route, if any, for {@code httpMethod} whose
+	 * {@code pathTemplate} is textually closest to {@code path} - a plain
+	 * Levenshtein edit distance between the two strings, {@code {name}}
+	 * placeholders and all, which is enough to catch the common case this
+	 * exists for (a typo'd path segment, or a placeholder name that doesn't
+	 * match the real one) without needing to actually resolve either side's
+	 * placeholders. Only ever consults routes for the same HTTP method - a
+	 * request that used the wrong verb entirely isn't the typo this is
+	 * meant to catch, and suggesting across methods would be noisier than
+	 * helpful.
+	 *
+	 * @return the closest route's {@code pathTemplate}, or {@code null} if
+	 *         no route is registered for {@code httpMethod} at all
+	 */
+	private String closestRegisteredPath(HTTPMethod httpMethod, String path) {
+		String closest = null;
+		int closestDistance = Integer.MAX_VALUE;
+		synchronized (routes) {
+			for (Route route : routes) {
+				if (route.httpMethod != httpMethod) {
+					continue;
+				}
+				int distance = levenshteinDistance(path, route.pathTemplate);
+				if (distance < closestDistance) {
+					closestDistance = distance;
+					closest = route.pathTemplate;
+				}
+			}
+		}
+		return closest;
+	}
+
+	/**
+	 * The minimum number of single-character insertions, deletions, or
+	 * substitutions to turn {@code a} into {@code b} - the standard
+	 * dynamic-programming formulation, {@code O(a.length() * b.length())}
+	 * time and {@code O(b.length())} space (one row of the DP table kept at
+	 * a time). No new dependency for this one calculation.
+	 */
+	private static int levenshteinDistance(String a, String b) {
+		int[] previousRow = new int[b.length() + 1];
+		for (int j = 0; j <= b.length(); j++) {
+			previousRow[j] = j;
+		}
+		for (int i = 1; i <= a.length(); i++) {
+			int[] currentRow = new int[b.length() + 1];
+			currentRow[0] = i;
+			for (int j = 1; j <= b.length(); j++) {
+				int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+				currentRow[j] = Math.min(Math.min(currentRow[j - 1] + 1, previousRow[j] + 1), previousRow[j - 1] + cost);
+			}
+			previousRow = currentRow;
+		}
+		return previousRow[b.length()];
 	}
 
 	private static final class Route {

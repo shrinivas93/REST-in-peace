@@ -76,6 +76,22 @@ public class RestClientInvocationHandler implements InvocationHandler {
 		this.restRequestProcessor = new RequestExecutor(config);
 	}
 
+	/**
+	 * Creates a handler backed by an already-built {@link RequestExecutor},
+	 * instead of constructing a fresh one from a base URL or config - used
+	 * by a compile-time-generated {@code <Interface>_RipImpl} class to build
+	 * its own internal reflective fallback proxy (for the one method, if
+	 * any, outside {@code RestClientProcessor}'s codegen-supported shape)
+	 * that shares this exact client's retry/cache/interceptor/timeout
+	 * config, rather than one built from scratch with none of it. Not part
+	 * of the public API surface a consumer is expected to call directly.
+	 *
+	 * @param requestExecutor the already-built request executor to reuse
+	 */
+	public RestClientInvocationHandler(RequestExecutor requestExecutor) {
+		this.restRequestProcessor = requestExecutor;
+	}
+
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
 		if (method.getDeclaringClass() == Object.class) {

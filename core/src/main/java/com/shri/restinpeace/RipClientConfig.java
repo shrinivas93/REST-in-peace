@@ -11,13 +11,15 @@ import kong.unirest.ObjectMapper;
 /**
  * Per-client settings for {@link RIP#getClient(Class, RipClientConfig)} -
  * base URL, connect/read timeout, proxy, JSON {@code ObjectMapper}, cache,
- * and interceptors - for a {@code @RestClient} whose environment differs
- * from every other client's,
+ * interceptors, and a default retry policy - for a {@code @RestClient}
+ * whose environment differs from every other client's,
  * since {@code kong.unirest.Unirest}'s own global config is shared by every
  * RIP client that doesn't ask for its own. A method's {@link
  * com.shri.restinpeace.annotation.timeout.Timeout @Timeout} overrides this
  * config's timeout when both are present, the same way an absolute method
- * URL overrides {@link #getBaseUrl()}.
+ * URL overrides {@link #getBaseUrl()}; a method's (or its interface's)
+ * {@link com.shri.restinpeace.annotation.retry.Retry @Retry} wins over this
+ * config's {@link #getRetry()} the same way.
  *
  * <pre>
  * UserApi prodApi = RIP.getClient(UserApi.class, RipClientConfig.builder()
@@ -44,7 +46,12 @@ public final class RipClientConfig {
 	private final String proxyPassword;
 	private final ObjectMapper objectMapper;
 	private final Cache cache;
+	private final Boolean cacheKeyIncludesQueryString;
+	private final Long negativeCacheTtlMillis;
+	private final Integer retryBudgetMaxRetries;
+	private final Long retryBudgetWindowMillis;
 	private final List<RequestInterceptor> interceptors;
+	private final RetryConfig retry;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -56,7 +63,12 @@ public final class RipClientConfig {
 		this.proxyPassword = builder.proxyPassword;
 		this.objectMapper = builder.objectMapper;
 		this.cache = builder.cache;
+		this.cacheKeyIncludesQueryString = builder.cacheKeyIncludesQueryString;
+		this.negativeCacheTtlMillis = builder.negativeCacheTtlMillis;
+		this.retryBudgetMaxRetries = builder.retryBudgetMaxRetries;
+		this.retryBudgetWindowMillis = builder.retryBudgetWindowMillis;
 		this.interceptors = builder.interceptors;
+		this.retry = builder.retry;
 	}
 
 	/**
@@ -158,6 +170,54 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns whether this client's cache key includes the request's query
+	 * string.
+	 *
+	 * @return whether this client's cache key includes the query string, or
+	 *         {@code null} to fall back to the shared default set via
+	 *         {@link RIP#setCacheKeyIncludesQueryString(boolean)} (which
+	 *         itself defaults to {@code true} if never called)
+	 */
+	public Boolean getCacheKeyIncludesQueryString() {
+		return cacheKeyIncludesQueryString;
+	}
+
+	/**
+	 * Returns how long this client negatively caches a confirmed {@code 404}.
+	 *
+	 * @return the negative-cache TTL in milliseconds, or {@code null} to fall
+	 *         back to the shared default set via
+	 *         {@link RIP#setNegativeCacheTtlMillis(long)} (which itself
+	 *         defaults to no negative caching at all if never called)
+	 */
+	public Long getNegativeCacheTtlMillis() {
+		return negativeCacheTtlMillis;
+	}
+
+	/**
+	 * Returns this client's retry-budget capacity.
+	 *
+	 * @return the maximum number of retries available at once (and refilled
+	 *         back up to over {@link #getRetryBudgetWindowMillis()}), or
+	 *         {@code null} for no cap beyond each call's own
+	 *         {@code @Retry#times()}
+	 */
+	public Integer getRetryBudgetMaxRetries() {
+		return retryBudgetMaxRetries;
+	}
+
+	/**
+	 * Returns this client's retry-budget refill window.
+	 *
+	 * @return how long a fully-drained retry budget takes to refill back to
+	 *         {@link #getRetryBudgetMaxRetries()}, in milliseconds, or
+	 *         {@code null} if no retry budget is configured
+	 */
+	public Long getRetryBudgetWindowMillis() {
+		return retryBudgetWindowMillis;
+	}
+
+	/**
 	 * Returns this client's own interceptors.
 	 *
 	 * @return this client's own interceptors, run in addition to (not instead
@@ -166,6 +226,17 @@ public final class RipClientConfig {
 	 */
 	public List<RequestInterceptor> getInterceptors() {
 		return interceptors;
+	}
+
+	/**
+	 * Returns this client's default retry policy.
+	 *
+	 * @return this client's default retry policy, applied to a call whose
+	 *         method (and interface) has no {@code @Retry} of its own, or
+	 *         {@code null} for no retrying at all in that case
+	 */
+	public RetryConfig getRetry() {
+		return retry;
 	}
 
 	/** Builds a {@link RipClientConfig}. */
@@ -180,7 +251,12 @@ public final class RipClientConfig {
 		private String proxyPassword;
 		private ObjectMapper objectMapper;
 		private Cache cache;
+		private Boolean cacheKeyIncludesQueryString;
+		private Long negativeCacheTtlMillis;
+		private Integer retryBudgetMaxRetries;
+		private Long retryBudgetWindowMillis;
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
+		private RetryConfig retry;
 
 		private Builder() {
 		}
@@ -282,6 +358,92 @@ public final class RipClientConfig {
 		}
 
 		/**
+		 * Sets whether this client's cache key includes the request's query
+		 * string, overriding the shared default set via
+		 * {@link RIP#setCacheKeyIncludesQueryString(boolean)} (itself
+		 * {@code true} by default, matching RIP's own established behavior)
+		 * for this client only. Turn this off for an endpoint whose query
+		 * params don't affect the response (e.g. an analytics/tracking
+		 * param), so every query-string variant of the same path shares one
+		 * cache entry instead of each getting its own - trading precision
+		 * for a higher hit rate. Has no effect unless this client also has a
+		 * {@link Cache} configured (its own via {@link #cache(Cache)}, or
+		 * the shared default).
+		 *
+		 * @param cacheKeyIncludesQueryString whether this client's cache key
+		 *                                    includes the query string
+		 * @return this builder
+		 */
+		public Builder cacheKeyIncludesQueryString(boolean cacheKeyIncludesQueryString) {
+			this.cacheKeyIncludesQueryString = cacheKeyIncludesQueryString;
+			return this;
+		}
+
+		/**
+		 * Opts this client into negatively caching a confirmed {@code 404},
+		 * overriding the shared default set via
+		 * {@link RIP#setNegativeCacheTtlMillis(long)} for this client only -
+		 * so a client that already asked once for a resource that doesn't
+		 * exist stops hammering the downstream asking again, for
+		 * {@code ttlMillis} - regardless of whether the {@code 404} response
+		 * itself carries any {@code Cache-Control}/{@code ETag}/
+		 * {@code Last-Modified} at all (unlike every other cached status,
+		 * which is only ever stored when the server's own headers say so).
+		 * Has no effect unless this client also has a {@link Cache}
+		 * configured (its own via {@link #cache(Cache)}, or the shared
+		 * default), and is skipped the same way by {@code @NoCache}.
+		 *
+		 * @param ttlMillis how long a confirmed {@code 404} stays negatively
+		 *                  cached, in milliseconds; must be positive
+		 * @return this builder
+		 */
+		public Builder negativeCacheTtlMillis(long ttlMillis) {
+			if (ttlMillis <= 0) {
+				throw new IllegalArgumentException("ttlMillis must be positive.");
+			}
+			this.negativeCacheTtlMillis = ttlMillis;
+			return this;
+		}
+
+		/**
+		 * Caps the *total* number of retries this client performs across
+		 * every call within a rolling window - not a per-call limit, which
+		 * is still each call's own {@code @Retry#times()} (or this config's
+		 * {@link #retry(RetryConfig)} default). Addresses a retry storm
+		 * amplifying an outage: many concurrently failing calls each
+		 * retrying up to their own {@code times()} independently can
+		 * multiply an already-struggling downstream's request volume, where
+		 * a shared budget caps the aggregate instead. Tokens refill
+		 * continuously (a token-bucket, not a fixed window that resets in
+		 * one burst): starting full at {@code maxRetries}, and regaining
+		 * {@code maxRetries / windowMillis} tokens per elapsed millisecond,
+		 * capped at {@code maxRetries}. Once the budget is exhausted, a call
+		 * that would otherwise retry instead returns (or throws) its current
+		 * outcome immediately, exactly as if it had reached its own
+		 * {@code times()} - no different from an ordinary give-up. Not
+		 * called at all (the default) means no cap beyond each call's own
+		 * {@code times()}, byte-for-byte today's behavior.
+		 *
+		 * @param maxRetries   the bucket's capacity - the maximum number of
+		 *                     retries available at once; must be positive
+		 * @param windowMillis how long a fully-drained bucket takes to
+		 *                     refill back to {@code maxRetries}, in
+		 *                     milliseconds; must be positive
+		 * @return this builder
+		 */
+		public Builder retryBudget(int maxRetries, long windowMillis) {
+			if (maxRetries <= 0) {
+				throw new IllegalArgumentException("maxRetries must be positive.");
+			}
+			if (windowMillis <= 0) {
+				throw new IllegalArgumentException("windowMillis must be positive.");
+			}
+			this.retryBudgetMaxRetries = maxRetries;
+			this.retryBudgetWindowMillis = windowMillis;
+			return this;
+		}
+
+		/**
 		 * Sets this client's own interceptors, run in addition to (not
 		 * instead of) every globally registered {@link RIP#addInterceptor
 		 * interceptor} - for a concern specific to this one client (e.g. this
@@ -297,6 +459,20 @@ public final class RipClientConfig {
 		 */
 		public Builder interceptors(List<RequestInterceptor> interceptors) {
 			this.interceptors = interceptors == null ? Collections.emptyList() : interceptors;
+			return this;
+		}
+
+		/**
+		 * Sets this client's default retry policy - applied to a call whose
+		 * method (and interface) has no {@code @Retry} of its own, which
+		 * always wins over this when present. See {@link RetryConfig}.
+		 *
+		 * @param retry this client's default retry policy, or {@code null}
+		 *              for no retrying at all in that case
+		 * @return this builder
+		 */
+		public Builder retry(RetryConfig retry) {
+			this.retry = retry;
 			return this;
 		}
 

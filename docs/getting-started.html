@@ -218,6 +218,7 @@
 
         <div class="group-title">Return types</div>
         <a href="#return-basic">String / POJO / void</a>
+        <a href="#generic-collections">Generic collections — List&lt;T&gt;</a>
         <a href="#downloads">byte[] / File downloads</a>
         <a href="#ripresponse">RipResponse&lt;T&gt;</a>
         <a href="#async">Async — CompletableFuture</a>
@@ -233,6 +234,10 @@
 
         <div class="group-title">Caching</div>
         <a href="#caching">Response caching</a>
+        <a href="#stale-while-revalidate">Stale-while-revalidate</a>
+        <a href="#negative-caching">Negative caching</a>
+        <a href="#cache-eviction">Time-based &amp; manual eviction</a>
+        <a href="#cache-key-query-string">Query string in the cache key</a>
 
         <div class="group-title">Interceptors</div>
         <a href="#interceptors-global">Global &amp; per-client</a>
@@ -240,6 +245,7 @@
 
         <div class="group-title">Codegen &amp; testing</div>
         <a href="#codegen">Compile-time proxies</a>
+        <a href="#openapi-generator">OpenAPI → @RestClient generator</a>
         <a href="#testing">MockRestServer</a>
 
         <div class="group-title">Integration</div>
@@ -562,6 +568,26 @@ void fireEvent(@Body Event event);               // response discarded</code></p
         </div>
       </div>
 
+      <div class="feature" id="generic-collections">
+        <h3>Generic collections — List&lt;T&gt;</h3>
+        <p class="blurb">Decoded element-by-element into the declared type parameter, not left as raw maps. Also works inside <code>RipResponse&lt;T&gt;</code>/<code>CompletableFuture&lt;T&gt;</code>.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users")
+List&lt;User&gt; listUsers();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · wrapped</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/users")
+RipResponse&lt;List&lt;User&gt;&gt; listUsersWithResponse();
+
+@GET("https://api.example.com/users")
+CompletableFuture&lt;List&lt;User&gt;&gt; listUsersAsync();</code></pre>
+          </div>
+        </div>
+      </div>
+
       <div class="feature" id="downloads">
         <h3>Binary downloads: byte[] and File</h3>
         <p class="blurb"><code>byte[]</code> buffers the whole response; <code>File</code> streams straight to disk for large payloads.</p>
@@ -664,6 +690,34 @@ catch (RestInPeaceHttpException e) {
     System.out.println(error.code);
 }</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · status-range helpers</span></div>
+            <pre><code class="language-java">catch (RestInPeaceHttpException e) {
+    if (e.isServerError()) { scheduleRetryLater(); }        // 500-599
+    else if (e.isClientError()) { throw new IllegalArgumentException(); }  // 400-499
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · order is(status) before the range checks</span>
+              <span class="snippet-caption">a specific-status branch after isClientError()/isServerError() is unreachable - that status is already inside the range</span></div>
+            <pre><code class="language-java">// Wrong - e.is(429) never runs
+if (e.isClientError()) { ... }
+else if (e.is(429)) { ... }
+
+// Right - check the specific case first
+if (e.is(429)) { ... }
+else if (e.isClientError()) { ... }</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · honor the server's own Retry-After</span>
+              <span class="snippet-caption">same parsing @Retry uses internally, for a method with no @Retry at all</span></div>
+            <pre><code class="language-java">catch (RestInPeaceHttpException e) {
+    if (e.is(429) && e.getRetryAfterMillis() != null) {
+        Thread.sleep(e.getRetryAfterMillis());
+        return retryManually();
+    }
+}</code></pre>
+          </div>
         </div>
       </div>
 
@@ -694,18 +748,54 @@ User getUser(@PathParam("id") String id);</code></pre>
 @Retry(times = 3, delayMillis = 200, idempotent = true)
 String createCharge(@Body Charge charge);</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · interface-level default</span>
+              <span class="snippet-caption">like @BaseUrl — a method's own @Retry still wins over this</span></div>
+            <pre><code class="language-java">@RestClient
+@Retry(times = 3, delayMillis = 200, retryOnStatus = { 503 })
+public interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);   // uses the interface's @Retry
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · client-wide default</span>
+              <span class="snippet-caption">lowest priority: method @Retry &gt; interface @Retry &gt; RetryConfig</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retry(RetryConfig.builder().times(3).delayMillis(200).retryOnStatus(503).build())
+        .build());</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · retry budget</span>
+              <span class="snippet-caption">caps TOTAL retries across the client, not one call's own times()</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retryBudget(50, TimeUnit.MINUTES.toMillis(1))   // at most 50 retries/minute, client-wide
+        .build());
+// A token bucket, not a once-a-minute burst - refills continuously.
+// Once exhausted, a call that would retry instead gives up immediately,
+// exactly like reaching its own @Retry times().</code></pre>
+          </div>
         </div>
       </div>
 
       <div class="feature" id="timeout">
         <h3>@Timeout</h3>
-        <p class="blurb">Overrides connect/read timeout for one method only. Priority: <code>@Timeout</code> &gt; <code>RipClientConfig</code> &gt; shared client default.</p>
+        <p class="blurb">Overrides connect/read timeout for one method only. Priority: method <code>@Timeout</code> &gt; interface-level <code>@Timeout</code> &gt; <code>RipClientConfig</code> &gt; shared client default.</p>
         <div class="snippets">
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
             <pre><code class="language-java">@GET("https://api.example.com/reports/export")
 @Timeout(readMillis = 120_000)
 String exportReport();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · interface-level default</span></div>
+            <pre><code class="language-java">@RestClient
+@Timeout(readMillis = 50)
+public interface SlowApi {
+    @GET("/slow/{id}")
+    String getSlow(@PathParam("id") String id);   // uses the interface's @Timeout
+}</code></pre>
           </div>
         </div>
       </div>
@@ -811,6 +901,88 @@ Cache userApiCache() { return new InMemoryCache(); }</code></pre>
           </div>
         </div>
       </div>
+
+      <div class="feature" id="stale-while-revalidate">
+        <h3>Stale-while-revalidate</h3>
+        <p class="blurb">A stale entry normally blocks on a synchronous revalidation round trip. <code>stale-while-revalidate=N</code> serves it as-is instead, refreshing in the background for the next call.</p>
+        <div class="snippets">
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Server response header</span></div>
+            <pre><code class="language-java">// Cache-Control: max-age=60, stale-while-revalidate=30
+Item item = api.getItem("42");
+// fresh for 60s, then still instantly servable (stale) for 30s more
+// while a background call refreshes the entry - this call never sees
+// the new response, only ever the one already in hand</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · a failed background refresh is silent</span>
+              <span class="snippet-caption">the stale entry just keeps serving until it ages out of its own window too</span></div>
+            <pre><code class="language-java">// A background refresh throwing, or answering with a non-2xx/non-304
+// response carrying no caching headers, is swallowed - nothing is
+// logged, nothing is thrown at the caller who triggered it. Once the
+// stale-while-revalidate window itself elapses, the next call falls
+// back to the usual synchronous revalidation (or re-fetch).</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="negative-caching">
+        <h3>Negative caching</h3>
+        <p class="blurb">Every other cached status is stored because the server said so. A confirmed 404 is different - negativeCacheTtlMillis opts in regardless of the response's own headers.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · per client</span></div>
+            <pre><code class="language-java">UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .negativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1))
+        .build());
+
+api.getUser("does-not-exist");   // throws RestInPeaceHttpException(404, ...) - one real network call
+api.getUser("does-not-exist");   // throws the same exception again - served from cache</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · shared default</span>
+              <span class="snippet-caption">a client's own setting still wins over this</span></div>
+            <pre><code class="language-java">RIP.setNegativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1));</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="cache-eviction">
+        <h3>Time-based &amp; manual eviction</h3>
+        <p class="blurb">Separate from server-driven freshness: how long an entry is held at all, and forcing one out on demand.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · max-age eviction</span>
+              <span class="snippet-caption">checked lazily on the next get() for that key, no background thread</span></div>
+            <pre><code class="language-java">RIP.setCache(new InMemoryCache(TimeUnit.MINUTES.toMillis(10)));</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · manual eviction</span>
+              <span class="snippet-caption">Cache.key(...) computes the same key CacheCoordinator uses internally</span></div>
+            <pre><code class="language-java">cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42"));</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="cache-key-query-string">
+        <h3>Query string in the cache key</h3>
+        <p class="blurb">On by default — /items?page=1 and ?page=2 cache separately. Turn it off for a query param that doesn't affect the response.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · per client</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .cacheKeyIncludesQueryString(false)
+        .build());</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · shared default</span>
+              <span class="snippet-caption">a client's own setting still wins over this</span></div>
+            <pre><code class="language-java">RIP.setCacheKeyIncludesQueryString(false);</code></pre>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ INTERCEPTORS ============ -->
@@ -833,6 +1005,38 @@ Cache userApiCache() { return new InMemoryCache(); }</code></pre>
 });
 
 RIP.clearInterceptors();   // removes everything registered</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · inspect the outgoing body</span>
+              <span class="snippet-caption">raw string for @Body String, serialized JSON for a POJO @Body; null if no @Body</span></div>
+            <pre><code class="language-java">public void beforeRequest(RequestContext ctx) {
+    String body = ctx.getBody();   // read-only — setting it here has no effect
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · short-circuit the network call</span>
+              <span class="snippet-caption">feature-flag bypass, canary short-circuit, or record/replay - first non-null wins, FIFO</span></div>
+            <pre><code class="language-java">public ShortCircuitResponse shortCircuit(RequestContext ctx) {
+    if (featureFlags.isEnabled("bypass-pricing-api")) {
+        return ShortCircuitResponse.ok("{\"price\":0}");
+    }
+    return null;   // let the call proceed normally
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · reproduce a call with curl</span>
+              <span class="snippet-caption">CurlVerbosity: NONE, VERBOSE (-v), VV (-vv), VVV (-vvv), VVVV (-vvvv), or TRACE (--trace-ascii - --trace-time)</span></div>
+            <pre><code class="language-java">public void afterResponse(RequestContext ctx, int status, Object body) {
+    if (status >= 400) {
+        System.err.println("Reproduce with:\n" + ctx.toCurlCommand());
+    }
+}</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · VV/VVV/VVVV are undocumented curl behavior</span>
+              <span class="snippet-caption">repeating -v scales verbosity (verified on curl 8.22.0) but isn't in curl's own --help/man page - prefer TRACE when stability matters</span></div>
+            <pre><code class="language-java">ctx.toCurlCommand(RequestContext.CurlVerbosity.VVVV);   // curl's own internal DNS/TCP/engine tracing - noisy, undocumented
+ctx.toCurlCommand(RequestContext.CurlVerbosity.TRACE);   // same ballpark of detail, but documented + stable</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · scoped to one client</span></div>
@@ -874,6 +1078,18 @@ RIP.addInterceptor(new HeaderInterceptor(Map.of("Authorization", () -> currentTo
 RIP.addInterceptor(new LoggingInterceptor(logger::info));     // or your own sink</code></pre>
           </div>
           <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">RedactingLoggingInterceptor</span>
+              <span class="snippet-caption">also logs bodies, masking configured field names</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new RedactingLoggingInterceptor());   // masks password/token/secret/apiKey/ssn/authorization
+RIP.addInterceptor(new RedactingLoggingInterceptor(Set.of("password", "creditCardNumber"), logger::info));</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · a regex mask, not a JSON parser</span>
+              <span class="snippet-caption">reliable for a flat field; best-effort once its value is a nested object/array</span></div>
+            <pre><code class="language-java">// "password": "hunter2"           -> "password": "***"          (masked cleanly)
+// "token": { "value": "x" }       -> masked only up to the value's first , } or ]</code></pre>
+          </div>
+          <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">CorrelationIdInterceptor</span></div>
             <pre><code class="language-java">RIP.addInterceptor(new CorrelationIdInterceptor());                                // random UUID, X-Request-Id
 RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGenerator.next()));</code></pre>
@@ -895,14 +1111,52 @@ RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGener
 
       <div class="feature">
         <h3>Compile-time proxy generation</h3>
-        <p class="blurb">No opt-in — a supported method shape gets a real generated <code>&lt;Interface&gt;_RipImpl</code> class automatically; anything else falls back to the reflective proxy, transparently.</p>
+        <p class="blurb">No opt-in — a supported method shape gets a real generated <code>&lt;Interface&gt;_RipImpl</code> class automatically; an unsupported method on the same interface falls back internally, method by method, not the whole interface.</p>
         <div class="snippets">
           <div class="snippet neutral">
             <div class="snippet-head"><span class="snippet-tag">Zero code change</span>
               <span class="snippet-caption">same call site either way</span></div>
             <pre><code class="language-java">UserApi api = RIP.getClient(UserApi.class);
 // api.getClass() is UserApi_RipImpl        — supported shape, reflection-free
-// api.getClass() is a java.lang.reflect.Proxy — unsupported shape, same behavior</code></pre>
+// api.getClass() is a java.lang.reflect.Proxy — NO method on this interface is codegen-eligible</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Mixed interface</span>
+              <span class="snippet-caption">List&lt;User&gt; isn't Class&lt;?&gt;-decodable — same limitation on both dispatch paths</span></div>
+            <pre><code class="language-java">interface UserApi {
+    User getUser(String id);        // codegen-eligible — real generated method
+    List&lt;User&gt; listUsers();        // not eligible — delegates internally to a lazily-built reflective proxy
+}
+// api.getClass() is still UserApi_RipImpl — one unsupported method no longer disqualifies the rest</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="openapi-generator">
+        <h3>OpenAPI → @RestClient generator</h3>
+        <p class="blurb">The opposite direction - reads an OpenAPI 3.x JSON document and generates the interface itself, instead of hand-writing one.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">OpenApiClientGenerator.generate(
+        new File("petstore-openapi.json"),   // spec - JSON, not YAML
+        new File("src/main/java"),
+        "com.example.client",
+        "PetStoreApi");
+// writes src/main/java/com/example/client/PetStoreApi.java</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Pitfall · a skeleton generator, not full schema-to-POJO</span>
+              <span class="snippet-caption">every parameter and body is String - narrow types / swap in your own POJO by hand afterward</span></div>
+            <pre><code class="language-java">// servers[0].url -&gt; @BaseUrl; OpenAPI's own {name} path placeholder already
+// matches @PathParam's, so paths need no translation at all. header/cookie
+// parameters are skipped (not part of the interface shape); any requestBody
+// becomes one @Body String parameter regardless of its declared schema.</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Also runnable from the CLI</span></div>
+            <pre><code class="language-java">java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator \
+    petstore-openapi.json src/main/java com.example.client PetStoreApi</code></pre>
           </div>
         </div>
       </div>
@@ -940,6 +1194,31 @@ class OrderApiTest {
         MockResponse.status(503, ""), MockResponse.json(new Order("42", "shipped")));
 
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · auto-report unhit routes</span>
+              <span class="snippet-caption">requires the static @RegisterExtension field style - @ExtendWith can't call reportUnhitRoutes() first</span></div>
+            <pre><code class="language-java">class OrderApiTest {
+    @RegisterExtension
+    static MockRestServerExtension extension = new MockRestServerExtension().reportUnhitRoutes();
+
+    @Test
+    void getOrder_returnsDecodedBody(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+        // a route left registered but never called prints a warning at afterAll
+    }
+}</code></pre>
+          </div>
+          <div class="snippet neutral">
+            <div class="snippet-head"><span class="snippet-tag">Unmatched request · closest-route suggestion</span>
+              <span class="snippet-caption">same HTTP method, different path registered - usually a typo in the test setup</span></div>
+            <pre><code class="language-java">server.on(HTTPMethod.POST, "/order", MockResponse.ok("{}"));
+
+api.createOrder("{...}");   // actually POSTs to /orders
+
+// RestInPeaceHttpException.getRawBody():
+// MockRestServer: no response was queued or registered for POST /orders.
+// Did you mean: POST /order?</code></pre>
           </div>
           <div class="snippet spring">
             <div class="snippet-head"><span class="snippet-tag">Spring · @AutoConfigureMockRestServer</span>

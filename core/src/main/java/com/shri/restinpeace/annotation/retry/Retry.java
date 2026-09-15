@@ -34,10 +34,19 @@ import java.lang.annotation.Target;
  * attempt of a given call, so a server that honors idempotency keys (as
  * Stripe, PayPal, Adyen, and Square all do) can recognize a retried attempt
  * as the same logical request instead of a new one.
+ *
+ * <p>
+ * Also valid directly on a {@code @RestClient} interface, as a default for
+ * every method that doesn't declare its own {@code @Retry} - mirroring
+ * {@code @BaseUrl}'s own interface-level-default/per-method-override shape,
+ * for an interface that wants one uniform retry policy instead of repeating
+ * the same annotation on every method. A method's own {@code @Retry}, if
+ * present, is used in full instead of the interface's - the two are never
+ * merged field-by-field.
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.METHOD)
+@Target({ ElementType.METHOD, ElementType.TYPE })
 public @interface Retry {
 
 	/**

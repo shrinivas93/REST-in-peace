@@ -33,6 +33,36 @@ public interface RequestInterceptor {
 	}
 
 	/**
+	 * Called after every registered interceptor's {@code beforeRequest} has
+	 * run (in the same FIFO registration order as {@code beforeRequest}
+	 * itself) - returning a non-{@code null} {@link ShortCircuitResponse}
+	 * skips the network call entirely and uses it as this call's response
+	 * instead, decoded exactly as a real one would be (including throwing
+	 * {@link com.shri.restinpeace.exception.RestInPeaceHttpException} for a
+	 * non-2xx status). The first interceptor (in that same FIFO order) to
+	 * return non-{@code null} wins; every interceptor's {@code afterResponse}
+	 * still runs afterward, exactly as it would for a real response.
+	 * Enables a feature-flag bypass, a canary short-circuit, or a
+	 * lightweight record/replay mode built on the interceptor chain instead
+	 * of a real network dependency.
+	 *
+	 * <p>
+	 * A short-circuited response still goes through this client's own
+	 * caching/retry configuration exactly like a real one would (e.g. it may
+	 * get cached if it carries cacheable headers, or retried if its status
+	 * matches {@code @Retry#retryOnStatus()} - the latter simply re-invokes
+	 * this method again instead of a real network call, so it's harmless if
+	 * wasteful).
+	 *
+	 * @param context the request that would otherwise be sent
+	 * @return a synthetic response to short-circuit with, or {@code null} to
+	 *         let the request proceed normally
+	 */
+	default ShortCircuitResponse shortCircuit(RequestContext context) {
+		return null;
+	}
+
+	/**
 	 * Called once the response is back.
 	 *
 	 * @param context the request that was made

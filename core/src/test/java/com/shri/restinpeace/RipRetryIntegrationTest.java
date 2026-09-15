@@ -113,4 +113,29 @@ class RipRetryIntegrationTest extends AbstractRipIntegrationTest {
 		assertEquals(3, FLAKY_ATTEMPTS.get());
 	}
 
+	@Test
+	void retry_drivenPurelyByRipClientConfig_succeedsAfterRetrying_withNoAnnotationAtAll() {
+		LocalApi api = RIP.getClient(LocalApi.class, RipClientConfig.builder()
+				.retry(RetryConfig.builder().times(3).delayMillis(5).retryOnStatus(503).build()).build());
+
+		String result = api.getFlakyWithNoRetryAnnotation(port, "z");
+
+		assertEquals("ok", result);
+		assertEquals(3, FLAKY_ATTEMPTS.get());
+	}
+
+	@Test
+	void retry_methodAnnotation_winsOverRipClientConfigsDefault() {
+		// @Retry(times = 3) on getFlaky itself must win over this client's own
+		// times = 1 default - if the config wrongly took over, this would give up
+		// after the first 503 instead of succeeding on the third attempt.
+		LocalApi api = RIP.getClient(LocalApi.class,
+				RipClientConfig.builder().retry(RetryConfig.builder().times(1).build()).build());
+
+		String result = api.getFlaky(port, "z");
+
+		assertEquals("ok", result);
+		assertEquals(3, FLAKY_ATTEMPTS.get());
+	}
+
 }

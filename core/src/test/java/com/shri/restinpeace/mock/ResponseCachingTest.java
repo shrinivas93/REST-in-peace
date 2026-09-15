@@ -1,6 +1,7 @@
 package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +17,7 @@ import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.cache.InMemoryCache;
 import com.shri.restinpeace.constant.HTTPMethod;
+import com.shri.restinpeace.exception.RestInPeaceHttpException;
 
 /**
  * Exercises response caching (see {@code com.shri.restinpeace.cache}) end to
@@ -193,6 +195,163 @@ class ResponseCachingTest {
 		assertEquals("{\"v\":1}", first);
 		assertEquals("{\"v\":1}", second);
 		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void differentQueryStrings_onTheSamePath_areNeverConflated() {
+		server.on(HTTPMethod.GET, "/search", MockResponse.ok("{\"page\":1}").header("Cache-Control", "max-age=60"));
+
+		String page1First = api.search("1");
+		String page2 = api.search("2");
+		String page1Second = api.search("1");
+
+		assertEquals("{\"page\":1}", page1First);
+		assertEquals("{\"page\":1}", page2);
+		assertEquals("{\"page\":1}", page1Second);
+		// 1 real request for page=1, 1 for page=2 (a different cache key), and the
+		// second page=1 call is a cache hit - 2 total, not 1 (which is what a cache
+		// key blind to the query string would produce, wrongly serving page=2's
+		// call - or any call at all after the first - out of page=1's own entry).
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void cacheKeyIncludesQueryStringDisabled_conflatesDifferentQueryStringsOnTheSamePath() {
+		CacheTestApi noQueryStringKeyApi = RIP.getClient(CacheTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).cache(cache).cacheKeyIncludesQueryString(false).build());
+		server.on(HTTPMethod.GET, "/search", MockResponse.ok("{\"page\":1}").header("Cache-Control", "max-age=60"));
+
+		String page1 = noQueryStringKeyApi.search("1");
+		String page2 = noQueryStringKeyApi.search("2");
+
+		assertEquals("{\"page\":1}", page1);
+		// Same entry as page1's - the opt-out deliberately collapses every query
+		// string variant of /search onto one cache key, so this is a cache hit
+		// (still page 1's stored body) rather than a second real request.
+		assertEquals("{\"page\":1}", page2);
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void manualEviction_viaThePubliclyComputableKey_forcesTheNextCallBackToTheNetwork() {
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=60"));
+
+		api.getItem("42");
+		cache.evict(com.shri.restinpeace.cache.Cache.key(HTTPMethod.GET, server.baseUrl() + "/items/42"));
+		api.getItem("42");
+
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void staleWhileRevalidate_servesTheStaleBodyImmediatelyThenRefreshesInTheBackground() throws InterruptedException {
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		String first = api.getItem("42"); // stores v1 - immediately stale, but now within its swr window
+
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":2}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		String second = api.getItem("42"); // still v1 - served from the stale entry, not blocked on a re-fetch
+
+		assertEquals("{\"v\":1}", first);
+		assertEquals("{\"v\":1}", second);
+		awaitCachedBody("/items/42", "{\"v\":2}"); // the background revalidation triggered by the second call
+
+		String third = api.getItem("42"); // the background refresh already replaced the entry with v2
+		assertEquals("{\"v\":2}", third);
+	}
+
+	@Test
+	void staleWhileRevalidate_pastItsOwnWindow_fallsBackToASynchronousRefetch() throws InterruptedException {
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0, stale-while-revalidate=1"));
+		api.getItem("42");
+
+		Thread.sleep(1100); // past both max-age=0 and the 1-second stale-while-revalidate window
+
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":2}").header("Cache-Control", "max-age=0, stale-while-revalidate=1"));
+		String second = api.getItem("42");
+
+		assertEquals("{\"v\":2}", second); // synchronous re-fetch, not the stale v1 body
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void staleWhileRevalidate_asyncCall_alsoServesTheStaleBodyImmediately()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+
+		server.on(HTTPMethod.GET, "/items/{id}",
+				MockResponse.ok("{\"v\":2}").header("Cache-Control", "max-age=0, stale-while-revalidate=60"));
+		String second = api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+
+		assertEquals("{\"v\":1}", second);
+		awaitCachedBody("/items/42", "{\"v\":2}");
+
+		String third = api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+		assertEquals("{\"v\":2}", third);
+	}
+
+	/**
+	 * Polls the same {@link InMemoryCache} instance {@code api} is configured
+	 * with directly, rather than {@code server.requestCount()} - the
+	 * background revalidation's real network round trip completing (which is
+	 * what bumps the request count) and its {@code cache.put(...)} happen on
+	 * the same background thread but aren't the same instant, so polling the
+	 * cache itself is what actually avoids the race.
+	 */
+	private void awaitCachedBody(String path, String expectedBody) throws InterruptedException {
+		String key = com.shri.restinpeace.cache.Cache.key(HTTPMethod.GET, server.baseUrl() + path);
+		long deadline = System.currentTimeMillis() + 2000;
+		while (System.currentTimeMillis() < deadline) {
+			com.shri.restinpeace.cache.CachedResponse cached = cache.get(key);
+			if (cached != null && expectedBody.equals(cached.getBody())) {
+				return;
+			}
+			Thread.sleep(20);
+		}
+		throw new AssertionError("Cache never observed body " + expectedBody + " for key " + key);
+	}
+
+	@Test
+	void negativeCaching_confirmedNotFound_isServedFromCacheWithoutHittingTheNetworkAgain() {
+		CacheTestApi negativeCachingApi = RIP.getClient(CacheTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).cache(cache).negativeCacheTtlMillis(60_000).build());
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{\"error\":\"not found\"}"));
+
+		RestInPeaceHttpException first = assertThrows(RestInPeaceHttpException.class,
+				() -> negativeCachingApi.getItem("42"));
+		RestInPeaceHttpException second = assertThrows(RestInPeaceHttpException.class,
+				() -> negativeCachingApi.getItem("42"));
+
+		assertEquals(404, first.getStatus());
+		assertEquals(404, second.getStatus());
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void withoutNegativeCachingConfigured_confirmedNotFound_isNeverCached() {
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{\"error\":\"not found\"}"));
+
+		assertThrows(RestInPeaceHttpException.class, () -> api.getItem("42"));
+		assertThrows(RestInPeaceHttpException.class, () -> api.getItem("42"));
+
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void negativeCaching_isSkippedByNoCacheTheSameWayAsOrdinaryCaching() {
+		CacheTestApi negativeCachingApi = RIP.getClient(CacheTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).cache(cache).negativeCacheTtlMillis(60_000).build());
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{}"));
+
+		assertThrows(RestInPeaceHttpException.class, () -> negativeCachingApi.getItemNoCache("42"));
+		assertThrows(RestInPeaceHttpException.class, () -> negativeCachingApi.getItemNoCache("42"));
+
+		assertEquals(2, server.requestCount());
 	}
 
 }

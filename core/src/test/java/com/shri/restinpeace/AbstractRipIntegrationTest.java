@@ -194,6 +194,10 @@ abstract class AbstractRipIntegrationTest {
 		@NoCache
 		String getCacheableNoCache(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/cacheable/{id}")
+		String getCacheableWithQuery(@PathParam("port") int port, @PathParam("id") String id,
+				@QueryParam("v") String v);
+
 		@GET("http://localhost:{port}/items/{id}")
 		String getWithMultiValueQuery(@PathParam("port") int port, @PathParam("id") String id,
 				@QueryParam("tag") List<String> tags);
@@ -216,6 +220,19 @@ abstract class AbstractRipIntegrationTest {
 		@GET("http://localhost:{port}/payload/{id}")
 		Payload getPayload(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/payload-list/{id}")
+		List<Payload> getPayloadList(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload-list/{id}")
+		CompletableFuture<List<Payload>> getPayloadListAsync(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload-list/{id}")
+		RipResponse<List<Payload>> getPayloadListWithResponse(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/payload-list/{id}")
+		CompletableFuture<RipResponse<List<Payload>>> getPayloadListWithResponseAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
+
 		@GET("http://localhost:{port}/items/{id}")
 		void ping(@PathParam("port") int port, @PathParam("id") String id);
 
@@ -236,6 +253,9 @@ abstract class AbstractRipIntegrationTest {
 		@GET("http://localhost:{port}/flaky/{id}")
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 }, idempotent = true)
 		String getFlakyIdempotent(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/flaky/{id}")
+		String getFlakyWithNoRetryAnnotation(@PathParam("port") int port, @PathParam("id") String id);
 
 		@GET("http://localhost:{port}/always-503/{id}")
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
@@ -396,6 +416,14 @@ abstract class AbstractRipIntegrationTest {
 			exchange.sendResponseHeaders(200, -1);
 		} else if (exchange.getRequestURI().getPath().startsWith("/payload/")) {
 			byte[] response = "{\"name\":\"Shrinivas\",\"age\":1993}".getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			exchange.sendResponseHeaders(200, response.length);
+			try (OutputStream os = exchange.getResponseBody()) {
+				os.write(response);
+			}
+		} else if (exchange.getRequestURI().getPath().startsWith("/payload-list/")) {
+			byte[] response = "[{\"name\":\"Shrinivas\",\"age\":1993},{\"name\":\"Alice\",\"age\":30}]"
+					.getBytes(StandardCharsets.UTF_8);
 			exchange.getResponseHeaders().set("Content-Type", "application/json");
 			exchange.sendResponseHeaders(200, response.length);
 			try (OutputStream os = exchange.getResponseBody()) {

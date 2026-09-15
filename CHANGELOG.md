@@ -8,6 +8,211 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Generic `Type`-based response decoding - a method returning `List<User>`
+  (or `RipResponse<List<User>>`/`CompletableFuture<List<User>>`/
+  `CompletableFuture<RipResponse<List<User>>>`) now decodes each element
+  into the declared type instead of erasing to raw `List`/`LinkedTreeMap`s.
+  The reflective dispatch path now reads `Method.getGenericReturnType()`
+  instead of the type-erased `getReturnType()`, and decodes through a new
+  internal `RuntimeGenericType`, which adapts an arbitrary runtime `Type`
+  into `kong.unirest.GenericType` for `ObjectMapper.readValue(String,
+  GenericType)` - `GenericType` normally only supports the
+  `new GenericType<List<User>>(){}` anonymous-subclass pattern, since it
+  assumes the type is always known at the call site; `RuntimeGenericType`
+  works around that with a one-time reflective field overwrite instead,
+  since the actual type isn't known until a method is actually invoked.
+  Compile-time codegen is unaffected by design - such a method still falls
+  back to the reflective proxy per the existing partial-codegen mechanism,
+  since an annotation processor has no `Class<?>` literal to write for "a
+  list of `User`"; every other method on the same interface still gets a
+  real generated implementation. `Class<?>`-returning methods are
+  unaffected either way, since `Class` already satisfies `Type`.
+- `RequestInterceptor.shortCircuit(RequestContext)` skips the network call
+  entirely, handing back a synthetic `ShortCircuitResponse` instead - a
+  feature-flag bypass, a canary short-circuit, or a lightweight
+  record/replay mode built on the interceptor chain. Called after every
+  registered interceptor's `beforeRequest` has already run (same FIFO
+  order); the first interceptor to return non-`null` wins, and the request
+  is never sent. The synthetic response is decoded exactly like a real one
+  (including throwing `RestInPeaceHttpException` for a non-2xx
+  `ShortCircuitResponse.status(...)`), and every registered interceptor's
+  `afterResponse` still runs afterward. Wired into every dispatch path -
+  reflective and compile-time-generated, sync and async, plain/`byte[]`/
+  `File`/`RipResponse<T>` returns - so it applies uniformly regardless of a
+  method's shape. A short-circuited response still goes through this
+  client's own caching/retry configuration like a real one would (may get
+  cached, or "retried" by re-invoking `shortCircuit` again - harmless,
+  since no network round trip happens either way). A new default method on
+  `RequestInterceptor`, so every existing implementation is unaffected
+  (defaults to never short-circuiting).
+- `OpenApiClientGenerator` - the opposite direction of compile-time proxy
+  generation: reads an OpenAPI 3.x JSON document and generates a
+  `@RestClient` interface (annotations and all) instead of hand-writing
+  one. `servers[0].url` becomes `@BaseUrl`; each `get`/`post`/`put`/
+  `delete`/`patch` operation becomes a method (named from its own
+  `operationId` if present, otherwise synthesized from the HTTP method and
+  path, deduplicated on collision); a `parameters` entry with `in: path`/
+  `in: query` becomes a `@PathParam`/`@QueryParam`; any `requestBody`
+  becomes one `@Body` parameter. A skeleton generator, not a full
+  schema-to-POJO tool - every parameter and body is generated as `String`;
+  narrowing a type or replacing a body with your own POJO is a normal
+  hand-edit of the generated file afterward. Also runnable from the
+  command line (`java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator
+  <specFile> <outputDirectory> <packageName> <interfaceName>`). Backed by
+  Gson for JSON parsing - already an unconditional transitive compile-scope
+  dependency via `unirest-java`, now declared directly; adds no new jar to
+  any consumer's classpath.
+- `RipClientConfig.Builder#retryBudget(int maxRetries, long windowMillis)`
+  caps the *total* number of retries a client performs across every call
+  within a rolling window - not a per-call limit, which is still each
+  call's own `@Retry#times()` (or the client's `RetryConfig` default).
+  Tokens refill continuously (a token bucket, not a once-per-window burst):
+  starting full at `maxRetries`, regaining `maxRetries / windowMillis`
+  tokens per elapsed millisecond, capped at `maxRetries`. Once exhausted, a
+  call that would otherwise retry instead returns (or throws) its current
+  outcome immediately, exactly as if it had reached its own `times()`.
+  Addresses a retry storm amplifying an outage: many concurrently failing
+  calls each retrying independently no longer multiply an
+  already-struggling downstream's request volume. Not called at all (the
+  default) means no cap beyond each call's own `times()`, byte-for-byte
+  today's behavior.
+- `RedactingLoggingInterceptor` - a `LoggingInterceptor`-style pre-built
+  interceptor that also logs the request and response bodies, masking a
+  configured set of field names (`password`, `token`, `secret`, `apiKey`,
+  `ssn`, `authorization` by default) case-insensitively instead of printing
+  them verbatim. The request body comes from `RequestContext.getBody()`
+  (unchanged from its existing scope: a `String`/POJO `@Body` only); the
+  response body is converted with `String.valueOf(...)` first, so masking
+  is reliable for a `String`/JSON body and best-effort for a decoded
+  POJO's own `toString()`. Masking is a regex match over
+  `"fieldName": value`-shaped text, not a real JSON parser, so a sensitive
+  field whose value is itself a nested object/array is only masked up to
+  that value's first `,`/`}`/`]`.
+- `RipClientConfig.Builder#negativeCacheTtlMillis(long)` (and
+  `RIP.setNegativeCacheTtlMillis(long)` for a shared default) opts a client
+  into negatively caching a confirmed `404` for a fixed TTL, regardless of
+  whatever (if anything) the response's own `Cache-Control`/`ETag`/
+  `Last-Modified` say - unlike every other cached status, which is only
+  ever stored because the server's own headers say so - so a client that
+  already asked once for a resource that doesn't exist stops hammering the
+  downstream asking again. Has no effect on a client with no `Cache`
+  configured at all, and is skipped the same way as ordinary caching by
+  `@NoCache`. Not set at all (the default) means no negative caching,
+  byte-for-byte today's behavior.
+- Response caching now honors `Cache-Control: stale-while-revalidate=N`: once
+  an entry goes stale, it's still served immediately for up to `N` further
+  seconds, refreshed in the background instead of blocking the caller on a
+  synchronous revalidation round trip. A synchronous (non-`CompletableFuture`)
+  call's background refresh runs on a small internal daemon-thread pool
+  (created lazily on first use); a `CompletableFuture`-returning call needs
+  none, since the refresh is simply chained onto the same future the caller
+  never blocks on. A failed background refresh is silently swallowed - the
+  stale entry keeps serving until it ages out of its own window too, exactly
+  as if the attempt had never run. `CachedResponse` gained a new six-arg
+  constructor carrying an explicit stale-while-revalidate deadline
+  (`getStaleWhileRevalidateUntilEpochMillis()`/`isWithinStaleWhileRevalidateWindow()`);
+  both existing constructors are unchanged and default to no window at all.
+- `MockRestServerExtension.reportUnhitRoutes()` opts into printing every
+  route still unhit (`MockRestServer.getUnhitRoutes()`) to `System.err` when
+  the test class finishes, turning dead route setup into a free signal
+  instead of requiring the coverage check to be called by hand. Only takes
+  effect with the `static @RegisterExtension` field style, since
+  `@ExtendWith(MockRestServerExtension.class)` has JUnit construct the
+  extension itself with no way to call `reportUnhitRoutes()` first; purely
+  a diagnostic, it never fails the test class either way.
+- `MockRestServer`'s unmatched-request failure message now names the closest
+  registered route for the same HTTP method (by edit distance) when one
+  exists - `"no response was queued or registered for POST /orders. Did
+  you mean: POST /order?"` - instead of leaving the test author to grep
+  their own setup for the typo. No suggestion is added when no route at all
+  is registered for that method.
+- `RestInPeaceHttpException.isRedirect()` (300-399) joins `isClientError()`/
+  `isServerError()`; `getRetryAfterMillis()` surfaces the response's own
+  `Retry-After` header (delta-seconds or an HTTP-date), parsed to
+  milliseconds via the exact same logic `@Retry` already uses internally -
+  for a method with no `@Retry` at all, or one that exhausted its retries,
+  to honor the server's backoff hint manually. A new
+  `RestInPeaceHttpException(status, rawBody, errorBody, retryAfterMillis)`
+  constructor carries it; the existing three-arg constructor is unchanged
+  and always passes `null`.
+- `RequestContext.toCurlCommand()` / `toCurlCommand(RequestContext.CurlVerbosity)`
+  render a call as a copy-pasteable `curl` command (method, URL, headers,
+  body) for pasting into a bug report or reproducing a failure outside the
+  JVM. `CurlVerbosity` has six levels: `NONE` (default, no extra flag),
+  `VERBOSE` (`-v`, request/response headers), `VV`/`VVV`/`VVVV` (repeated
+  `-v`, escalating through per-line timestamps, a raw hex-offset wire
+  dump, and finally `curl`'s own internal DNS/TCP/engine-state tracing -
+  verified this caps out at four repeats, a fifth adds nothing further),
+  and `TRACE` (`--trace-ascii - --trace-time`, a full, per-line-timestamped
+  trace of everything on the wire including both bodies). `VV`/`VVV`/`VVVV`
+  are real, reproducible behavior (verified against `curl 8.22.0`) but,
+  unlike every other level, aren't documented in `curl`'s own `--help`/man
+  page - `TRACE` is the stable alternative when that matters more than
+  matching what someone would type by hand.
+- `RipClientConfig.Builder.cacheKeyIncludesQueryString(boolean)` (per client)
+  and `RIP.setCacheKeyIncludesQueryString(boolean)` (shared default) let the
+  cache key's query string be turned off - `true` by default, matching
+  RIP's existing behavior of keying `/items?page=1` and `/items?page=2`
+  separately; turning it off collapses every query-string variant of a path
+  onto one cache entry, for an endpoint whose query params don't affect the
+  response.
+- `InMemoryCache(long maxEntryAgeMillis)` evicts an entry once it's older
+  than that, independent of server-driven `Cache-Control`/`ETag` freshness -
+  checked lazily on the next `get()` for that key, no background thread.
+  The existing no-arg `InMemoryCache()` is unaffected (no age-based eviction).
+- `Cache.key(HTTPMethod, String url)` exposes the exact formula
+  `CacheCoordinator` uses internally, so application code can compute a
+  cache key and call the already-public `Cache.evict(key)` to manually
+  invalidate one entry (e.g. right after a write that makes a specific
+  cached `GET` stale) - RIP deliberately does not auto-invalidate cached
+  `GET`s on a write to a related-looking URL; see the
+  [Response caching](README.md#time-based-and-manual-eviction) docs for why.
+- `RetryConfig` + `RipClientConfig.Builder.retry(RetryConfig)` set a
+  client-wide default retry policy for every method with no `@Retry` of its
+  own, below a method's own `@Retry` and an interface-level `@Retry` in
+  precedence.
+- `@Retry`/`@Timeout` can now be declared on the `@RestClient` interface
+  itself (`@Target` now includes `TYPE`) as a default every method without
+  its own annotation falls back to, mirroring `@BaseUrl`'s existing
+  interface-level-default pattern. A method's own `@Retry`/`@Timeout` is
+  still used in full instead of the interface's - the two are never merged
+  field-by-field.
+- `RequestContext.getBody()` exposes the outgoing request body to
+  `beforeRequest` - the raw string for a `@Body String` method, the
+  serialized JSON for a POJO `@Body`, `null` for a method with no `@Body`
+  (a `@FormUrlEncoded`/`@Multipart` body isn't captured this way).
+- `RestInPeaceHttpException.isClientError()`/`isServerError()`/`is(int)`
+  convenience checks for branching on a status range in a `catch` block.
+
+### Changed
+
+- `RestClientProcessor`'s compile-time codegen no longer disqualifies an
+  entire `@RestClient` interface's codegen over one method outside its
+  supported shape (a generic collection return type like `List<User>`, a
+  raw `CompletableFuture`, ...) - only that one method now falls back,
+  delegating to a lazily-built internal reflective proxy that shares this
+  same client's config, while every other method on the same interface
+  still gets a real generated implementation. A default method needs no
+  fallback at all (ordinary Java default-method dispatch already resolves
+  it via the generated class's own inherited implementation), and a static
+  method needs nothing generated for it either - so an interface with a
+  default/static method mixed with otherwise-fully-supported methods now
+  gets real codegen too, instead of falling back to the reflective proxy
+  entirely. An interface with *no* codegen-eligible method at all still
+  isn't generated for.
+
+### Fixed
+
+- Response caching's key now includes the request's query string -
+  previously it was computed from the pre-`@QueryParam`/`@QueryMap` URL, so
+  e.g. `GET /items?page=1` and `GET /items?page=2` collided on the same
+  cache entry and the second call wrongly got back the first page's cached
+  body.
+
+## [1.0.0.37] - 2026-09-13
+
+### Added
+
 - `@Retry` honors a failed response's own `Retry-After` header (delta-seconds
   or an HTTP-date) for that attempt's wait instead of the computed
   `delayMillis`/`backoffMultiplier` one, and gained `jitterFactor` (default
@@ -54,6 +259,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   validation, and a `@PathParam` combined with `@Url` (which ignores it
   entirely) is now itself a validation error.
 
+## [1.0.0.35] - 2026-09-12
+
 ### Changed
 
 - **Breaking (build layout, not runtime API):** `core/` and
@@ -65,118 +272,97 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   [`docs/design/spring-boot-starter.md`](docs/design/spring-boot-starter.md#81-superseded-independent-versioning-post-chunk-8)
   for what changed and why.
 
+## [1.0.0.30] - 2026-09-07
+
 ### Added
 
-- `CONTRIBUTING.md` and this changelog.
-- `@Retry(times, delayMillis, backoffMultiplier, retryOnStatus)` re-issues a
-  request that fails with a transport error or a matching status code, for
-  both synchronous and `CompletableFuture` return types.
-- `@BaseUrl` on a `@RestClient` interface, so methods can use a relative
-  path instead of repeating the full URL. An absolute method URL ignores
-  `@BaseUrl` and is used as-is.
-- `RIP.getClient(Class, String)` resolves relative method URLs against a
-  base URL supplied at call time, for multi-environment deployments where
-  the base URL isn't known until runtime. Takes priority over `@BaseUrl`.
-- `@ErrorType(SomeClass.class)` deserializes a non-2xx response's error body
-  into that class instead of the raw string.
-- `@QueryMap`/`@HeaderMap` add one query param/header per entry of an
-  annotated `Map<String, ?>` parameter, for a set of names not known until
-  runtime. Combines with fixed `@QueryParam`/`@HeaderParam` on the same
-  method.
-- `@Multipart`/`@Part` send a `multipart/form-data` body - a `String` part
-  as a plain form field, a `File`/`byte[]`/`InputStream` part as a file
-  upload (`@Part`'s `fileName` names a `byte[]`/`InputStream` part or
-  overrides a `File`'s own name) - instead of `@Body`'s JSON/raw-string body.
-- `@PartMap` adds one multipart part per entry of an annotated
-  `Map<String, ?>` parameter, for a set of part names not known until
-  runtime. Combines with fixed `@Part`s on the same method. Wrap a
-  `File`/`byte[]`/`InputStream` entry value in `PartValue.of(value,
-  fileName)` to send it under a name other than its map key.
-- `RipResponse<T>` return type (or `CompletableFuture<RipResponse<T>>` for
-  an async method) wraps `T` with the response's status code and headers,
-  for a method that needs more than just the body. `T` is decoded by the
-  same rules as a plain return type. A non-2xx response still throws
-  `RestInPeaceHttpException` rather than being wrapped.
-- `@Timeout(connectMillis, readMillis)` overrides the connect/read timeout
-  for one method's calls only.
-- `RipClientConfig`, passed to a new `RIP.getClient(Class, RipClientConfig)`
-  overload, overrides base URL, connect/read timeout, and proxy for one
-  client. `@Timeout` takes priority over `RipClientConfig`'s timeout, which
-  takes priority over the shared client's own configured default.
-- `byte[]` return type (or `CompletableFuture<byte[]>`/`RipResponse<byte[]>`)
-  for a binary response, decoded as exact bytes instead of being corrupted
-  by the previous always-`String` decoding.
-- `File` return type with a `@Destination File` parameter streams a binary
-  response straight to disk instead of buffering it into a `byte[]`, for
-  both synchronous and `CompletableFuture<File>` methods.
-- `DownloadProgressListener` parameter reports `bytesWritten`/`totalBytes`
-  as a `byte[]`/`File` method's response streams in.
-- `UploadProgressListener` parameter reports `field`/`bytesWritten`/
-  `totalBytes` as a `@Multipart` method's `File`/`InputStream` parts are
-  written to the request body.
-- A `Collection` argument to `@QueryParam`/a `@QueryMap` entry now repeats
-  the query param once per element (`?tag=a&tag=b`) instead of being sent
-  as one mangled value.
-- `@Url` binds a full URL as a `String` parameter, bypassing `@BaseUrl`/a
-  runtime base URL/`@PathParam` entirely, for a call whose URL isn't a
-  fixed template - a pagination `next` link, a HATEOAS action link from a
-  previous response. Only valid alongside an HTTP method annotation with
-  no static `value()`; `@QueryParam`/`@HeaderParam`/etc. still work
-  normally, appended to the given URL.
-- `RIP.setObjectMapper(ObjectMapper)` sets the JSON `ObjectMapper` used by
-  every client sharing the app-wide static Unirest client (Jackson, a
-  configured Gson, ...) instead of Unirest's default Gson-backed one.
-  `RipClientConfig.builder().objectMapper(...)` sets one for a single
-  `RipClientConfig`-configured client instead, since that client's own
-  dedicated Unirest instance isn't reachable via `RIP.setObjectMapper(...)`.
-- `@Headers({"Name: Value", ...})` sets one or more fixed headers on a
-  method, for a header whose value never varies (`Accept`, `Cache-Control`,
-  an API version) - unlike `@HeaderParam`/`@HeaderMap`, no call argument is
-  involved. Each entry is split on its first `:` with whitespace trimmed
-  around both sides. Combines with `@HeaderParam`/`@HeaderMap` on the same
-  method, which win over a `@Headers` entry of the same name.
-- (Step 1 of the "compile-time proxy generation" roadmap item) A
-  `RestClientProcessor` annotation processor now generates a real
-  `<Interface>_RipImpl` class - instead of a `java.lang.reflect.Proxy` - for
-  a `@RestClient` interface whose methods are all a single fixed HTTP verb
-  with only `@PathParam`/plain `@QueryParam` params and a
-  `void`/`String`/POJO return type; `RIP.getClient(...)` prefers it when
-  present. An interface with any method outside that shape is left entirely
-  to the existing reflective proxy - see
-  `docs/design/compile-time-proxy-generation.md`.
-- `samples/compile-time-proxy-consumer`, a standalone project (built and run
-  in CI on every push/PR) showing the feature above from a real downstream
-  consumer's point of view - see its README.
-- Compile-time proxy generation now also covers `@Timeout` and `@Retry` -
-  a method combining the step-1 supported shape with either annotation is
-  generated for (honoring it) instead of falling back to the reflective
-  proxy.
-- Compile-time proxy generation now also covers `@Headers`, `@HeaderParam`,
-  `@HeaderMap`, `@QueryMap`, required-or-defaulted `@QueryParam`/
-  `@HeaderParam`, `@Body`, `@Url`, and `@ErrorType`.
-- Compile-time proxy generation now also covers `@Multipart`, `@Part`,
-  `@PartMap`, and `UploadProgressListener`.
-- Compile-time proxy generation now also covers `byte[]`, `File` (with
-  `@Destination`/`DownloadProgressListener`), and `RipResponse<T>` return
-  types - only `CompletableFuture<T>` (async) remains unsupported.
-- Compile-time proxy generation now also covers `CompletableFuture<T>`
-  (async), for every supported return-type shape - `String`/POJO,
-  `byte[]`, `File`, and `RipResponse<T>` alike. This was the last item on
-  the design doc's feature-parity table: compile-time proxy generation now
-  has full feature parity with the reflective proxy.
-- A native-image smoke test: `samples/compile-time-proxy-consumer` gained
-  a `native` Maven profile and CI job building it into a real GraalVM
-  native executable, the concrete proof that compile-time proxy
-  generation's covered path is genuinely reflection-free under
-  native-image's closed-world analysis, with zero hand-written
-  configuration in the consumer project.
-- A compile-testing validation suite: a `@RestClient` interface that fails
-  `RestClientValidator`'s semantic rules at runtime (an invalid `@Retry`, a
-  malformed `@Headers` entry, an unmatched path param, ...) now fails
-  **compilation** outright, with a matching error message, via a new
-  compile-time counterpart of that validator. This was the exit criterion
-  for the "compile-time proxy generation" roadmap item - full feature
-  parity plus this validation suite - which is now complete.
+- `RipClientConfig.Builder.interceptors(List<RequestInterceptor>)` sets
+  interceptors for one client only, for a concern specific to that client
+  (e.g. one service's own auth scheme) instead of every call RIP makes.
+  Previously `RIP.addInterceptor(...)` was the only registration path, and
+  it applied globally with no way to scope it to a single client. Runs in
+  addition to, not instead of, every globally registered interceptor -
+  global interceptors bracket everything, including a client's own, the
+  same "onion" ordering already documented for global interceptors.
+
+## [1.0.0.29] - 2026-09-07
+
+### Changed
+
+- **Breaking:** `UploadProgressListener` moved from
+  `com.shri.restinpeace.multipart` to `com.shri.restinpeace.upload` -
+  update the import in any `@RestClient` interface method that declares
+  this parameter. Done for consistency with `DownloadProgressListener`,
+  which already has its own top-level `com.shri.restinpeace.download`
+  package; `UploadProgressListener` was previously the odd one out, nested
+  under `multipart` instead. The class itself, its behavior, and its
+  method signature are all unchanged - only the package.
+
+## [1.0.0.28] - 2026-09-07
+
+### Added
+
+- `MetricsInterceptor` times every request and reports it, once its
+  response comes back, to a `MetricsSink` (`recordCall(httpMethod, url,
+  status, durationMillis)`) - the metrics counterpart of
+  `LoggingInterceptor`, for wiring RIP's calls into Micrometer or any other
+  metrics registry without RIP depending on one itself.
+
+## [1.0.0.27] - 2026-09-06
+
+### Added
+
+- `@Retry(idempotent = true)` sends a stable `Idempotency-Key` header - one
+  randomly generated value per call, held identical across every retry
+  attempt - so a server that honors idempotency keys (Stripe, PayPal,
+  Adyen, Square) can recognize a retried `POST`/`PATCH` as the same
+  logical request instead of executing it twice. Default `false`.
+
+## [1.0.0.26] - 2026-09-06
+
+### Added
+
+- Response caching for `GET` requests, honoring the server's own
+  `Cache-Control`/`ETag`/`Last-Modified` instead of hitting the network
+  every time. Attach a `com.shri.restinpeace.cache.Cache` via
+  `RipClientConfig.Builder.cache(Cache)` (one client) or
+  `RIP.setCache(Cache)` (the shared default) - `InMemoryCache` ships as
+  the default implementation. A fresh entry is served with no network
+  call; a stale entry with an `ETag`/`Last-Modified` is revalidated via
+  `If-None-Match`/`If-Modified-Since`, and a `304 Not Modified` refreshes
+  it and returns the cached body. `@NoCache` opts a single method out.
+  Scoped to `String`/POJO `GET` responses for now, not `byte[]`/`File`
+  downloads.
+- `MockResponse.notModified()` - a `304 Not Modified` shorthand, for
+  scripting a mock server's conditional-GET revalidation response.
+- Response caching now honors `Vary` - a cached `GET` response whose
+  `Vary` header names request headers (e.g. `Vary: Accept-Language`) is
+  never served to a request whose current values for those headers
+  differ from the ones in effect when it was stored, so different
+  language/format variants of the same URL no longer clobber each
+  other's cache. `Vary: *` is never cached at all.
+
+## [1.0.0.25] - 2026-09-05
+
+### Added
+
+- `@FormUrlEncoded`/`@Field`/`@FieldMap` send an
+  `application/x-www-form-urlencoded` body - the `@Field` counterpart to
+  `@Multipart`/`@Part`, for OAuth token endpoints and classic HTML-form
+  APIs. `@FieldMap` adds one form field per entry of an annotated
+  `Map<String, ?>` parameter, combining with fixed `@Field`s on the same
+  method; a `Collection`-valued `@Field`/`@FieldMap` entry repeats the key
+  once per element (`tag=a&tag=b`), the same convention `@QueryParam`
+  uses. Can't combine `@FormUrlEncoded` with a `@Body` parameter or
+  `@Multipart` on the same method.
+- `RecordedRequest.getFormFields()` decodes an
+  `application/x-www-form-urlencoded` body into its field name/value
+  pairs, the `@FormUrlEncoded` counterpart to `getParts()`.
+
+## [1.0.0.24] - 2026-09-05
+
+### Added
+
 - `com.shri.restinpeace.mock.MockRestServer` - a real, local HTTP server for
   unit-testing code that calls a `@RestClient` interface without a real
   network dependency. `MockRestServer.on(...)` registers a sticky response
@@ -246,105 +432,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   can verify `@Retry`'s `backoffMultiplier` actually grows the delay
   between attempts, instead of only counting how many attempts were
   made.
-- `@FormUrlEncoded`/`@Field`/`@FieldMap` send an
-  `application/x-www-form-urlencoded` body - the `@Field` counterpart to
-  `@Multipart`/`@Part`, for OAuth token endpoints and classic HTML-form
-  APIs. `@FieldMap` adds one form field per entry of an annotated
-  `Map<String, ?>` parameter, combining with fixed `@Field`s on the same
-  method; a `Collection`-valued `@Field`/`@FieldMap` entry repeats the key
-  once per element (`tag=a&tag=b`), the same convention `@QueryParam`
-  uses. Can't combine `@FormUrlEncoded` with a `@Body` parameter or
-  `@Multipart` on the same method.
-- `RecordedRequest.getFormFields()` decodes an
-  `application/x-www-form-urlencoded` body into its field name/value
-  pairs, the `@FormUrlEncoded` counterpart to `getParts()`.
-- Response caching for `GET` requests, honoring the server's own
-  `Cache-Control`/`ETag`/`Last-Modified` instead of hitting the network
-  every time. Attach a `com.shri.restinpeace.cache.Cache` via
-  `RipClientConfig.Builder.cache(Cache)` (one client) or
-  `RIP.setCache(Cache)` (the shared default) - `InMemoryCache` ships as
-  the default implementation. A fresh entry is served with no network
-  call; a stale entry with an `ETag`/`Last-Modified` is revalidated via
-  `If-None-Match`/`If-Modified-Since`, and a `304 Not Modified` refreshes
-  it and returns the cached body. `@NoCache` opts a single method out.
-  Scoped to `String`/POJO `GET` responses for now, not `byte[]`/`File`
-  downloads.
-- `MockResponse.notModified()` - a `304 Not Modified` shorthand, for
-  scripting a mock server's conditional-GET revalidation response.
-- Response caching now honors `Vary` - a cached `GET` response whose
-  `Vary` header names request headers (e.g. `Vary: Accept-Language`) is
-  never served to a request whose current values for those headers
-  differ from the ones in effect when it was stored, so different
-  language/format variants of the same URL no longer clobber each
-  other's cache. `Vary: *` is never cached at all.
-- `@Retry(idempotent = true)` sends a stable `Idempotency-Key` header - one
-  randomly generated value per call, held identical across every retry
-  attempt - so a server that honors idempotency keys (Stripe, PayPal,
-  Adyen, Square) can recognize a retried `POST`/`PATCH` as the same
-  logical request instead of executing it twice. Default `false`.
-- `MetricsInterceptor` times every request and reports it, once its
-  response comes back, to a `MetricsSink` (`recordCall(httpMethod, url,
-  status, durationMillis)`) - the metrics counterpart of
-  `LoggingInterceptor`, for wiring RIP's calls into Micrometer or any other
-  metrics registry without RIP depending on one itself.
-- `RipClientConfig.Builder.interceptors(List<RequestInterceptor>)` sets
-  interceptors for one client only, for a concern specific to that client
-  (e.g. one service's own auth scheme) instead of every call RIP makes.
-  Previously `RIP.addInterceptor(...)` was the only registration path, and
-  it applied globally with no way to scope it to a single client. Runs in
-  addition to, not instead of, every globally registered interceptor -
-  global interceptors bracket everything, including a client's own, the
-  same "onion" ordering already documented for global interceptors.
-
-### Changed
-
-- A non-2xx response now always throws `RestInPeaceHttpException` (status +
-  raw body), whatever the method's return type - previously the response
-  flowed through as a normal return value with no error signal.
-- **Breaking:** `UploadProgressListener` moved from
-  `com.shri.restinpeace.multipart` to `com.shri.restinpeace.upload` -
-  update the import in any `@RestClient` interface method that declares
-  this parameter. Done for consistency with `DownloadProgressListener`,
-  which already has its own top-level `com.shri.restinpeace.download`
-  package; `UploadProgressListener` was previously the odd one out, nested
-  under `multipart` instead. The class itself, its behavior, and its
-  method signature are all unchanged - only the package.
 
 ### Fixed
 
-- Compile-time proxy generation: a method combining the supported shape
-  with `@Retry`, `@Timeout`, `@Headers`, or `@ErrorType` was silently
-  included in the generated implementation, which had no code path
-  applying any of the four - dropping that annotation's behavior entirely
-  instead of either honoring it or correctly falling back to the
-  reflective proxy. `@Timeout`/`@Retry` are now genuinely supported (see
-  above); `@Headers`/`@ErrorType` now correctly disqualify a method, same
-  as every other not-yet-supported feature.
-- Compile-time proxy generation: every generated `<Interface>_RipImpl`
-  class was silently unusable under GraalVM native-image - `RIP.getClient`
-  looks it up via a dynamically-computed `Class.forName`, which
-  native-image's static analysis can't resolve, so every call fell back
-  to the reflective proxy, which itself isn't registered for native-image
-  either, crashing. `RestClientProcessor` now emits a `reflect-config.json`
-  alongside every generated class, closing the gap with zero consumer
-  configuration.
-- Removed two long-unused methods from the internal `SampleApi` test
-  fixture that existed only to hold an invalid HTTP-method-annotation
-  combination for a different (reflective-path) test - coverage
-  `RestClientValidatorTest` already has via its own dedicated interfaces,
-  and which the new compile-time validator above now correctly flags as a
-  build error if left in place.
-- The hosted Javadoc site now always reflects the exact commit that was
-  released, instead of `master`'s post-release `-SNAPSHOT` version bump.
-- `@PathParam` values are now percent-encoded before being substituted
-  into the URL, instead of spliced in raw - a `/`, `?`, `#`, or a space in
-  the value previously produced a broken or subtly wrong URL (e.g. an
-  unencoded `?` silently starting a query string partway through the
-  path).
-- A response that fails to decode because no JSON `ObjectMapper` is
-  configured at all now throws `RestInPeaceException` naming the problem
-  and pointing at `RIP.setObjectMapper(...)`, instead of a bare
-  `kong.unirest.UnirestConfigException` with no mention of RIP.
 - `MockRestServer`'s registered routes list wasn't thread-safe, unlike
   its response queue and recorded-request list - a route registered via
   `.on(...)` while a prior async (`CompletableFuture`) request from the
@@ -362,6 +452,245 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (and query params, if given), silently appended a second,
   permanently-shadowed route instead of replacing the first - it now
   replaces the existing route in place.
+
+## [1.0.0.23] - 2026-09-05
+
+### Added
+
+- A native-image smoke test: `samples/compile-time-proxy-consumer` gained
+  a `native` Maven profile and CI job building it into a real GraalVM
+  native executable, the concrete proof that compile-time proxy
+  generation's covered path is genuinely reflection-free under
+  native-image's closed-world analysis, with zero hand-written
+  configuration in the consumer project.
+- A compile-testing validation suite: a `@RestClient` interface that fails
+  `RestClientValidator`'s semantic rules at runtime (an invalid `@Retry`, a
+  malformed `@Headers` entry, an unmatched path param, ...) now fails
+  **compilation** outright, with a matching error message, via a new
+  compile-time counterpart of that validator. This was the exit criterion
+  for the "compile-time proxy generation" roadmap item - full feature
+  parity plus this validation suite - which is now complete.
+
+### Fixed
+
+- Compile-time proxy generation: every generated `<Interface>_RipImpl`
+  class was silently unusable under GraalVM native-image - `RIP.getClient`
+  looks it up via a dynamically-computed `Class.forName`, which
+  native-image's static analysis can't resolve, so every call fell back
+  to the reflective proxy, which itself isn't registered for native-image
+  either, crashing. `RestClientProcessor` now emits a `reflect-config.json`
+  alongside every generated class, closing the gap with zero consumer
+  configuration.
+- Removed two long-unused methods from the internal `SampleApi` test
+  fixture that existed only to hold an invalid HTTP-method-annotation
+  combination for a different (reflective-path) test - coverage
+  `RestClientValidatorTest` already has via its own dedicated interfaces,
+  and which the new compile-time validator above now correctly flags as a
+  build error if left in place.
+
+## [1.0.0.22] - 2026-09-05
+
+### Added
+
+- Compile-time proxy generation now also covers `@Headers`, `@HeaderParam`,
+  `@HeaderMap`, `@QueryMap`, required-or-defaulted `@QueryParam`/
+  `@HeaderParam`, `@Body`, `@Url`, and `@ErrorType`.
+- Compile-time proxy generation now also covers `@Multipart`, `@Part`,
+  `@PartMap`, and `UploadProgressListener`.
+- Compile-time proxy generation now also covers `byte[]`, `File` (with
+  `@Destination`/`DownloadProgressListener`), and `RipResponse<T>` return
+  types - only `CompletableFuture<T>` (async) remains unsupported.
+- Compile-time proxy generation now also covers `CompletableFuture<T>`
+  (async), for every supported return-type shape - `String`/POJO,
+  `byte[]`, `File`, and `RipResponse<T>` alike. This was the last item on
+  the design doc's feature-parity table: compile-time proxy generation now
+  has full feature parity with the reflective proxy.
+
+## [1.0.0.21] - 2026-09-04
+
+### Added
+
+- Compile-time proxy generation now also covers `@Timeout` and `@Retry` -
+  a method combining the step-1 supported shape with either annotation is
+  generated for (honoring it) instead of falling back to the reflective
+  proxy.
+
+### Fixed
+
+- Compile-time proxy generation: a method combining the supported shape
+  with `@Retry`, `@Timeout`, `@Headers`, or `@ErrorType` was silently
+  included in the generated implementation, which had no code path
+  applying any of the four - dropping that annotation's behavior entirely
+  instead of either honoring it or correctly falling back to the
+  reflective proxy. `@Timeout`/`@Retry` are now genuinely supported (see
+  above); `@Headers`/`@ErrorType` now correctly disqualify a method, same
+  as every other not-yet-supported feature.
+
+## [1.0.0.20] - 2026-09-03
+
+### Added
+
+- (Step 1 of the "compile-time proxy generation" roadmap item) A
+  `RestClientProcessor` annotation processor now generates a real
+  `<Interface>_RipImpl` class - instead of a `java.lang.reflect.Proxy` - for
+  a `@RestClient` interface whose methods are all a single fixed HTTP verb
+  with only `@PathParam`/plain `@QueryParam` params and a
+  `void`/`String`/POJO return type; `RIP.getClient(...)` prefers it when
+  present. An interface with any method outside that shape is left entirely
+  to the existing reflective proxy - see
+  `docs/design/compile-time-proxy-generation.md`.
+- `samples/compile-time-proxy-consumer`, a standalone project (built and run
+  in CI on every push/PR) showing the feature above from a real downstream
+  consumer's point of view - see its README.
+
+## [1.0.0.19] - 2026-09-02
+
+### Added
+
+- `@Headers({"Name: Value", ...})` sets one or more fixed headers on a
+  method, for a header whose value never varies (`Accept`, `Cache-Control`,
+  an API version) - unlike `@HeaderParam`/`@HeaderMap`, no call argument is
+  involved. Each entry is split on its first `:` with whitespace trimmed
+  around both sides. Combines with `@HeaderParam`/`@HeaderMap` on the same
+  method, which win over a `@Headers` entry of the same name.
+
+## [1.0.0.16] - 2026-09-02
+
+### Added
+
+- `@Url` binds a full URL as a `String` parameter, bypassing `@BaseUrl`/a
+  runtime base URL/`@PathParam` entirely, for a call whose URL isn't a
+  fixed template - a pagination `next` link, a HATEOAS action link from a
+  previous response. Only valid alongside an HTTP method annotation with
+  no static `value()`; `@QueryParam`/`@HeaderParam`/etc. still work
+  normally, appended to the given URL.
+- `RIP.setObjectMapper(ObjectMapper)` sets the JSON `ObjectMapper` used by
+  every client sharing the app-wide static Unirest client (Jackson, a
+  configured Gson, ...) instead of Unirest's default Gson-backed one.
+  `RipClientConfig.builder().objectMapper(...)` sets one for a single
+  `RipClientConfig`-configured client instead, since that client's own
+  dedicated Unirest instance isn't reachable via `RIP.setObjectMapper(...)`.
+
+### Fixed
+
+- A response that fails to decode because no JSON `ObjectMapper` is
+  configured at all now throws `RestInPeaceException` naming the problem
+  and pointing at `RIP.setObjectMapper(...)`, instead of a bare
+  `kong.unirest.UnirestConfigException` with no mention of RIP.
+
+## [1.0.0.15] - 2026-09-02
+
+### Added
+
+- A `Collection` argument to `@QueryParam`/a `@QueryMap` entry now repeats
+  the query param once per element (`?tag=a&tag=b`) instead of being sent
+  as one mangled value.
+
+### Fixed
+
+- `@PathParam` values are now percent-encoded before being substituted
+  into the URL, instead of spliced in raw - a `/`, `?`, `#`, or a space in
+  the value previously produced a broken or subtly wrong URL (e.g. an
+  unencoded `?` silently starting a query string partway through the
+  path).
+
+## [1.0.0.14] - 2026-09-02
+
+### Added
+
+- `byte[]` return type (or `CompletableFuture<byte[]>`/`RipResponse<byte[]>`)
+  for a binary response, decoded as exact bytes instead of being corrupted
+  by the previous always-`String` decoding.
+- `File` return type with a `@Destination File` parameter streams a binary
+  response straight to disk instead of buffering it into a `byte[]`, for
+  both synchronous and `CompletableFuture<File>` methods.
+- `DownloadProgressListener` parameter reports `bytesWritten`/`totalBytes`
+  as a `byte[]`/`File` method's response streams in.
+- `UploadProgressListener` parameter reports `field`/`bytesWritten`/
+  `totalBytes` as a `@Multipart` method's `File`/`InputStream` parts are
+  written to the request body.
+
+## [1.0.0.13] - 2026-09-01
+
+### Added
+
+- `@Timeout(connectMillis, readMillis)` overrides the connect/read timeout
+  for one method's calls only.
+- `RipClientConfig`, passed to a new `RIP.getClient(Class, RipClientConfig)`
+  overload, overrides base URL, connect/read timeout, and proxy for one
+  client. `@Timeout` takes priority over `RipClientConfig`'s timeout, which
+  takes priority over the shared client's own configured default.
+
+## [1.0.0.11] - 2026-09-01
+
+### Added
+
+- `RipResponse<T>` return type (or `CompletableFuture<RipResponse<T>>` for
+  an async method) wraps `T` with the response's status code and headers,
+  for a method that needs more than just the body. `T` is decoded by the
+  same rules as a plain return type. A non-2xx response still throws
+  `RestInPeaceHttpException` rather than being wrapped.
+
+## [1.0.0.10] - 2026-09-01
+
+### Added
+
+- `@Multipart`/`@Part` send a `multipart/form-data` body - a `String` part
+  as a plain form field, a `File`/`byte[]`/`InputStream` part as a file
+  upload (`@Part`'s `fileName` names a `byte[]`/`InputStream` part or
+  overrides a `File`'s own name) - instead of `@Body`'s JSON/raw-string body.
+- `@PartMap` adds one multipart part per entry of an annotated
+  `Map<String, ?>` parameter, for a set of part names not known until
+  runtime. Combines with fixed `@Part`s on the same method. Wrap a
+  `File`/`byte[]`/`InputStream` entry value in `PartValue.of(value,
+  fileName)` to send it under a name other than its map key.
+
+## [1.0.0.9] - 2026-09-01
+
+### Added
+
+- `@QueryMap`/`@HeaderMap` add one query param/header per entry of an
+  annotated `Map<String, ?>` parameter, for a set of names not known until
+  runtime. Combines with fixed `@QueryParam`/`@HeaderParam` on the same
+  method.
+
+## [1.0.0.8] - 2026-08-31
+
+### Added
+
+- `RIP.getClient(Class, String)` resolves relative method URLs against a
+  base URL supplied at call time, for multi-environment deployments where
+  the base URL isn't known until runtime. Takes priority over `@BaseUrl`.
+- `@ErrorType(SomeClass.class)` deserializes a non-2xx response's error body
+  into that class instead of the raw string.
+
+### Changed
+
+- A non-2xx response now always throws `RestInPeaceHttpException` (status +
+  raw body), whatever the method's return type - previously the response
+  flowed through as a normal return value with no error signal.
+
+## [1.0.0.7] - 2026-08-31
+
+### Added
+
+- `@Retry(times, delayMillis, backoffMultiplier, retryOnStatus)` re-issues a
+  request that fails with a transport error or a matching status code, for
+  both synchronous and `CompletableFuture` return types.
+- `@BaseUrl` on a `@RestClient` interface, so methods can use a relative
+  path instead of repeating the full URL. An absolute method URL ignores
+  `@BaseUrl` and is used as-is.
+
+## [1.0.0.5] - 2026-08-30
+
+### Added
+
+- `CONTRIBUTING.md` and this changelog.
+
+### Fixed
+
+- The hosted Javadoc site now always reflects the exact commit that was
+  released, instead of `master`'s post-release `-SNAPSHOT` version bump.
 
 ## [1.0.0.4] - 2026-08-30
 

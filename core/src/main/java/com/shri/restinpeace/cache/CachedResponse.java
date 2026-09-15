@@ -16,6 +16,8 @@ public final class CachedResponse {
 	private final String body;
 	private final long freshUntilEpochMillis;
 	private final Map<String, String> varyRequestHeaders;
+	private final long storedAtEpochMillis;
+	private final long staleWhileRevalidateUntilEpochMillis;
 
 	/**
 	 * Creates a cached entry with no {@code Vary} header - equivalent to
@@ -42,6 +44,11 @@ public final class CachedResponse {
 	 * Creates a cached entry, snapshotting the request header values its
 	 * response's own {@code Vary} header named - so a later request whose
 	 * values for those same headers differ is never served this entry.
+	 * Equivalent to
+	 * {@link #CachedResponse(int, Map, String, long, Map, long)} with
+	 * {@code freshUntilEpochMillis} as the stale-while-revalidate deadline
+	 * too - i.e. no stale-while-revalidate window at all, this class's
+	 * original behavior.
 	 *
 	 * @param status                the original response's HTTP status code
 	 * @param headers               the original response's headers, keyed
@@ -58,11 +65,55 @@ public final class CachedResponse {
 	 */
 	public CachedResponse(int status, Map<String, List<String>> headers, String body, long freshUntilEpochMillis,
 			Map<String, String> varyRequestHeaders) {
+		this(status, headers, body, freshUntilEpochMillis, varyRequestHeaders, freshUntilEpochMillis);
+	}
+
+	/**
+	 * Creates a cached entry with an explicit stale-while-revalidate deadline
+	 * - a {@code Cache-Control: stale-while-revalidate=N} response may still
+	 * be served, stale, up until this epoch millisecond, while a background
+	 * revalidation refreshes the entry for the next call (see
+	 * {@link #isWithinStaleWhileRevalidateWindow()}).
+	 *
+	 * @param status                                the original response's
+	 *                                              HTTP status code
+	 * @param headers                               the original response's
+	 *                                              headers, keyed
+	 *                                              case-insensitively
+	 * @param body                                  the original response body
+	 * @param freshUntilEpochMillis                 the epoch millisecond
+	 *                                              after which this entry is
+	 *                                              stale and must be
+	 *                                              revalidated (or
+	 *                                              re-fetched) before being
+	 *                                              served again
+	 * @param varyRequestHeaders                    the request header values
+	 *                                              named by this response's
+	 *                                              own {@code Vary} header,
+	 *                                              at the time this entry was
+	 *                                              stored - empty if the
+	 *                                              response had no
+	 *                                              {@code Vary} header
+	 * @param staleWhileRevalidateUntilEpochMillis   the epoch millisecond up
+	 *                                              to which this entry may
+	 *                                              still be served stale
+	 *                                              while revalidating in the
+	 *                                              background - equal to
+	 *                                              {@code freshUntilEpochMillis}
+	 *                                              (no window) if the
+	 *                                              response named no
+	 *                                              {@code stale-while-revalidate}
+	 *                                              directive
+	 */
+	public CachedResponse(int status, Map<String, List<String>> headers, String body, long freshUntilEpochMillis,
+			Map<String, String> varyRequestHeaders, long staleWhileRevalidateUntilEpochMillis) {
 		this.status = status;
 		this.headers = headers;
 		this.body = body;
 		this.freshUntilEpochMillis = freshUntilEpochMillis;
 		this.varyRequestHeaders = varyRequestHeaders;
+		this.storedAtEpochMillis = System.currentTimeMillis();
+		this.staleWhileRevalidateUntilEpochMillis = staleWhileRevalidateUntilEpochMillis;
 	}
 
 	/**
@@ -123,6 +174,33 @@ public final class CachedResponse {
 	}
 
 	/**
+	 * Returns the epoch millisecond up to which this entry may still be
+	 * served stale while a background revalidation refreshes it, per a
+	 * {@code Cache-Control: stale-while-revalidate=N} response - equal to
+	 * {@link #getFreshUntilEpochMillis()} (no window at all) for an entry
+	 * whose response named no such directive.
+	 *
+	 * @return the stale-while-revalidate deadline, in epoch milliseconds
+	 */
+	public long getStaleWhileRevalidateUntilEpochMillis() {
+		return staleWhileRevalidateUntilEpochMillis;
+	}
+
+	/**
+	 * Whether this entry is stale ({@link #isFresh()} is {@code false}) but
+	 * still within its {@code stale-while-revalidate} window - safe to serve
+	 * immediately while a background revalidation refreshes it, rather than
+	 * blocking the caller on a synchronous revalidation round trip.
+	 *
+	 * @return {@code true} if this entry is stale but still
+	 *         stale-while-revalidate-eligible
+	 */
+	public boolean isWithinStaleWhileRevalidateWindow() {
+		long now = System.currentTimeMillis();
+		return now >= freshUntilEpochMillis && now < staleWhileRevalidateUntilEpochMillis;
+	}
+
+	/**
 	 * Returns the request header values this entry's {@code Vary} header
 	 * named, snapshotted at storage time.
 	 *
@@ -131,6 +209,25 @@ public final class CachedResponse {
 	 */
 	public Map<String, String> getVaryRequestHeaders() {
 		return varyRequestHeaders;
+	}
+
+	/**
+	 * Returns when this entry was constructed - at initial storage, or the
+	 * moment a stale entry was last successfully revalidated (a fresh
+	 * {@link CachedResponse} instance is created either way; this class is
+	 * immutable). A distinct notion of time from {@link #getFreshUntilEpochMillis()}:
+	 * this is "how long has RIP been holding onto this at all" (what a
+	 * {@link Cache} implementation wanting to bound its own memory use, like
+	 * {@link InMemoryCache}'s optional max-entry-age, would check), not "is
+	 * it still safe to serve without asking the server" - an entry stored
+	 * for revalidation only (e.g. {@code Cache-Control: no-cache}) is stale
+	 * from the moment it's stored, by design, but its stored time still
+	 * starts counting fresh here.
+	 *
+	 * @return the epoch millisecond this entry was created
+	 */
+	public long getStoredAtEpochMillis() {
+		return storedAtEpochMillis;
 	}
 
 }

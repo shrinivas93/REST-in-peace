@@ -871,3 +871,227 @@ up.
       been disabled entirely. Needs a proper, verified setup - PRs required
       into `master`, with a working bypass for `release.yml`'s own
       version-bump/tag push - before it's turned back on for real.
+
+## Excavation ideas (2026-09-14) — proposed, not yet designed or scoped
+
+A second full codebase excavation (mock server, internal encoders, both
+dispatch paths, pre-built interceptors, the Spring starter, samples, and the
+existing roadmap items above) turned up these as candidates - numbered here
+so they can be discussed/scoped/picked off individually rather than lost in
+chat history. None are started; sizes below are a rough guess, not a
+commitment.
+
+**Quick wins (small, self-contained):**
+
+- [x] **E1. `RequestContext.toCurlCommand()`** — `RequestContext` already
+      knows the method, URL, headers, and (since `RequestContext.getBody()`
+      shipped above) the body. One method turns a failed call into a
+      copy-pasteable `curl` repro for logs/bug reports. Shipped with a
+      six-level verbosity option, `toCurlCommand(RequestContext.CurlVerbosity)`:
+      `NONE` (default, no extra flag), `VERBOSE` (curl's own `-v`,
+      request/response headers), `VV`/`VVV`/`VVVV` (repeated `-v`,
+      escalating through per-line timestamps + a transfer/connection id,
+      then a raw hex-offset dump of the header/body bytes on the wire, then
+      curl's own internal DNS/TCP/connection-pool/multi-handle engine
+      tracing), and `TRACE` (curl's own `--trace-ascii - --trace-time`, a
+      full, per-line-timestamped wire-level trace including both bodies).
+      RIP doesn't invent its own verbosity scheme; each level just picks
+      which real, current `curl` flag(s) to include.
+      **Revised mid-implementation** after direct testing turned up a real
+      surprise: an initial pass (verified only against the sandbox's then-
+      installed curl 8.5.0) concluded `curl`'s `--verbose` was a plain
+      boolean with no `ssh`-style leveled behavior at all - `-v` and
+      `-vvvv` produced byte-identical output on that version. After
+      upgrading the sandbox's `curl` to the actual latest release (8.22.0,
+      built from source since apt's repo only carried 8.5.0) and re-testing,
+      repeated `-v` turned out to genuinely scale verbosity on the current
+      release (27/31/116/215 output lines for `-v`/`-vv`/`-vvv`/`-vvvv`
+      against the same request, confirmed to cap at four repeats - a fifth
+      adds nothing further) - so the "no such levels exist" conclusion was
+      simply wrong for the version that matters. Added `VV`/`VVV`/`VVVV` to
+      cover it, but with an explicit javadoc/doc caveat: unlike `-v`/
+      `--trace-ascii`/`--trace-time`, this scaling behavior is **not**
+      documented in `curl`'s own `--help`/man page - most likely an
+      internal `curl_trc` debug counter responding to how many times `-v`
+      was given, not a committed CLI contract, so it could change or
+      disappear in a future `curl` release without notice. `TRACE` remains
+      the recommended choice over `VVVV` when that stability matters more
+      than matching exactly what someone would type by hand.
+- [x] **E2. `RestInPeaceHttpException.isRedirect()` + `getRetryAfterMillis()`**
+      — `isClientError()`/`isServerError()` covered 4xx/5xx; 3xx had no
+      helper. `@Retry` already parsed a response's own `Retry-After`
+      (delta-seconds or HTTP-date) internally but discarded it once retries
+      were exhausted - the parsed value is now surfaced on the exception too
+      (`RetryExecutor.parseRetryAfterMillis` made package-private so
+      `ResponseDecoder` can share it instead of duplicating the parsing), via
+      a new four-arg constructor (`status, rawBody, errorBody,
+      retryAfterMillis`) - the existing three-arg one is unchanged and
+      always passes `null`, so no existing caller's behavior changes.
+- [x] **E3. Friendlier `MockRestServer` unmatched-request diagnostics** —
+      the unmatched-request failure message now appends `"Did you mean:
+      METHOD path?"` naming the closest registered route for the same
+      HTTP method, computed by a hand-rolled Levenshtein edit-distance
+      over the routes' stored path templates (no new dependency). No
+      suggestion is added when no route at all is registered for that
+      method, so the existing bare message is unchanged in that case.
+- [x] **E4. Auto-report `getUnhitRoutes()` in `MockRestServerExtension`** —
+      `reportUnhitRoutes()` opts into printing every unhit route to
+      `System.err` at `afterAll`, turning dead test setup into a free
+      signal instead of requiring `getUnhitRoutes()` to be called by hand.
+      Purely a diagnostic - never fails the test class. Only takes effect
+      with the `static @RegisterExtension` field style, since
+      `@ExtendWith(MockRestServerExtension.class)` has JUnit construct the
+      extension itself via the no-arg constructor with no way to call
+      `reportUnhitRoutes()` first - documented as a caveat alongside the
+      class's existing static-field registration note.
+
+**Medium features (new user-facing value):**
+
+- [x] **E5. Stale-while-revalidate caching mode** — `Cache-Control:
+      stale-while-revalidate=N` now serves a stale entry immediately for up
+      to `N` further seconds instead of blocking on a synchronous
+      revalidation round trip, refreshing the entry in the background for
+      the next call. The async (`CompletableFuture`) path gets this for
+      free by chaining the refresh onto the same future, never blocking the
+      response already being returned; the sync path uses a small,
+      lazily-created internal daemon-thread pool instead. A failed
+      background refresh is silently swallowed - the stale entry just keeps
+      serving until it ages out of its own window too. `CachedResponse`
+      gained a new six-arg constructor carrying the deadline explicitly;
+      both existing constructors are unchanged and default to no window.
+- [x] **E6. Negative caching** — `RipClientConfig.Builder#negativeCacheTtlMillis(long)`
+      (and `RIP.setNegativeCacheTtlMillis(long)` for a shared default) opts
+      a client into caching a confirmed `404` for a fixed TTL, so it stops
+      hammering a downstream for a resource it already confirmed doesn't
+      exist - regardless of whatever (if anything) the `404` response's own
+      `Cache-Control`/`ETag`/`Last-Modified` say, unlike every other cached
+      status. `CacheCoordinator.reconcileCache` stores it directly (bypassing
+      `isStorable`), reusing the existing `RestInPeaceHttpException` replay
+      path unchanged - a cached `404` is decoded exactly like a real one.
+- [x] **E7. `RedactingLoggingInterceptor`** — a direct payoff of
+      `RequestContext.getBody()` above: a pre-built interceptor that logs
+      the request (via `getBody()`) and response bodies the same way
+      `LoggingInterceptor` logs method/URL/status/duration, but masks a
+      configured set of field names (`password`, `token`, `secret`,
+      `apiKey`, `ssn`, `authorization` by default) case-insensitively via a
+      regex match over `"fieldName": value`-shaped text - reliable for a
+      flat field, best-effort once its value is itself a nested
+      object/array - so logging bodies is safe by default instead of a
+      footgun.
+- [x] **E8. Per-client retry budget** — `RipClientConfig.Builder#retryBudget(int,
+      long)` is a token-bucket cap on *total* retries across a client in a
+      rolling window, not per-call (still each call's own
+      `@Retry#times()`). Tokens refill continuously (not a once-per-window
+      burst); once exhausted, a call that would otherwise retry gives up
+      immediately instead, same as reaching its own `times()`. Wired into
+      `RetryExecutor`'s sync and async loops alike via a new internal
+      `RetryBudget` (a plain synchronized token bucket, no new dependency).
+      Addresses the actual production failure mode the circuit-breaker item
+      above is reacting to (a retry storm amplifying an outage) without the
+      complexity of a full circuit-breaker/bulkhead abstraction.
+
+**Bigger bets (real design work first):**
+
+- [x] **E9. Partial compile-time codegen** — one unsupported method (a
+      generic collection return type like `List<User>`, a raw
+      `CompletableFuture`, ...) used to disqualify the *entire* interface's
+      codegen (`RestClientProcessor`'s own former comment: "generating a
+      partially-correct implementation would be worse than not generating
+      one at all"). Now only that one method falls back, delegating to a
+      lazily-built internal `java.lang.reflect.Proxy` (backed by this same
+      client's own `RequestExecutor`, so it shares its retry/cache/
+      interceptor/timeout config) - every other method on the same
+      interface still gets a real generated implementation. Built directly
+      via `Proxy.newProxyInstance`/a new
+      `RestClientInvocationHandler(RequestExecutor)` constructor rather than
+      `RIP.getClient(...)`, which would look up this very generated class by
+      name again and recurse forever. A default method needed no such
+      mechanism at all once investigated - it's simply never overridden by
+      the generated class, so ordinary Java default-method dispatch already
+      resolves it via the class's own inherited implementation (a call back
+      into another interface method from inside it still reaches that
+      method's real generated override); a static method isn't part of the
+      implementing contract and needs nothing generated either - so an
+      interface mixing a default/static method with otherwise-fully-
+      supported methods now gets real codegen too, instead of falling back
+      to the reflective proxy entirely (a nested/private interface
+      declaration remains a separate, unrelated precondition that still
+      disqualifies the whole interface). An interface with *no*
+      codegen-eligible method at all still isn't generated for - the plain
+      reflective proxy already covers that with less indirection.
+      **Important scope note surfaced while implementing this (since fixed
+      by E12 below):** at the time this item landed, it did *not*, by
+      itself, make `List<User>` correctly decodable - RIP's response
+      decoding was `Class<?>`-based on *both* dispatch paths, so
+      delegating to the reflective proxy fixed only the "does one
+      unsupported method disqualify everything else" ergonomics problem,
+      not the underlying decoding gap. E12 closed that gap on the
+      reflective path (see its own entry below); compile-time codegen
+      still doesn't generate for such a method, by design - see the
+      README's
+      ["Why isn't `List<User>` code-generated?"](README.md#why-isnt-listuser-code-generated)
+      for the consumer-facing version of this explanation.
+- [x] **E10. OpenAPI → `@RestClient` interface generator** — flips the
+      current direction: `OpenApiClientGenerator` reads an OpenAPI 3.x JSON
+      document and generates the *interface itself* (annotations and all) -
+      spec-first client generation, not just annotation-first. A skeleton
+      generator, not a full schema-to-POJO tool like swagger-codegen -
+      every parameter and body is `String`; OpenAPI's own `{name}` path
+      placeholder already matches `@PathParam`'s exactly, so paths need no
+      translation. Backed by Gson (already an unconditional transitive
+      dependency via `unirest-java`, now declared directly - no new jar for
+      any consumer). Proven by a real `javac` compile of the generated
+      source through `RestClientProcessor` itself in the test suite, not
+      just string-matching the output.
+- [x] **E11. Interceptor short-circuit responses** — a new
+      `RequestInterceptor.shortCircuit(RequestContext)` default method
+      (backward compatible - `beforeRequest` itself couldn't change return
+      type without breaking every existing override) hands back a
+      synthetic `ShortCircuitResponse` to skip the network call entirely -
+      feature-flag bypasses, canary short-circuits, and a lightweight
+      record/replay mode built on the interceptor chain. Called after
+      every interceptor's `beforeRequest` (same FIFO order); first
+      non-`null` wins. Wired into all ~20 call sites across both dispatch
+      paths (reflective and compile-time-generated) and every return shape
+      (sync/async, plain/`byte[]`/`File`/`RipResponse<T>`) by wrapping each
+      one's innermost network supplier in `InterceptorDispatcher`, so
+      `notifyAfterResponse`/caching/retry all see a short-circuited
+      response exactly like a real one, with zero changes needed to
+      `RetryExecutor`/`CacheCoordinator` themselves.
+- [x] **E12. Generic `Type`-based response decoding** — fixes the decoding
+      gap E9 explicitly called out as out of scope: a method returning
+      `List<User>` (or wrapped in `RipResponse<T>`/`CompletableFuture<T>`,
+      including `CompletableFuture<RipResponse<List<User>>>`) now decodes
+      each element into the declared type, instead of the bare `List`/
+      `LinkedTreeMap`s type erasure otherwise leaves. The reflective
+      dispatch path (`RequestExecutor.processRestRequest`/`processAsync`)
+      now reads `Method.getGenericReturnType()` - a `java.lang.reflect.Type`
+      - instead of the type-erased `getReturnType()`, threaded through
+      `ResponseDecoder`/`RetryExecutor`/`InterceptorDispatcher` by widening
+      their `Class<?> returnType` parameters to `Type` in place (a
+      `Class<?>` already satisfies `Type`, so every existing call site
+      passing one compiles and behaves unchanged). Decoding itself goes
+      through a new internal `RuntimeGenericType`, which adapts an
+      arbitrary runtime `Type` into `kong.unirest.GenericType` for
+      Unirest's own `ObjectMapper.readValue(String, GenericType)` - the
+      already-correct Gson-backed mechanism the zero-config default
+      `JsonObjectMapper` needed no change to use, since `GenericType` only
+      exposes the `new GenericType<List<User>>(){}` anonymous-subclass
+      pattern (no constructor/factory accepting a `Type` value directly,
+      since that pattern assumes the type is always known at the call
+      site); worked around with a one-time reflective overwrite of its
+      already-`protected` `type` field instead of inferring it from a
+      generic superclass. Compile-time codegen deliberately keeps its
+      existing E9 behavior rather than gaining an equivalent
+      generic-signature-aware code path: such a method still falls back to
+      the reflective proxy (now correctly decoding it), since an annotation
+      processor has no `Class<?>` literal to emit for "a list of `User`" -
+      a fundamentally different problem than decoding a `Type` at runtime.
+      `ReflectiveRestClientValidator`'s own return-type check was relaxed
+      the same way (a `ParameterizedType` inner type is now accepted
+      alongside a plain `Class`), so a previously-rejecting-at-validation
+      shape like `RipResponse<List<User>>` no longer fails
+      `RIP.getClient(...)` up front. See the README's
+      [Generic collection return types](README.md#generic-collection-return-types-listuser)
+      and the updated
+      ["Why isn't `List<User>` code-generated?"](README.md#why-isnt-listuser-code-generated).

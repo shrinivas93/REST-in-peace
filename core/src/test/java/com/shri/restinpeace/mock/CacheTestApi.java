@@ -7,6 +7,7 @@ import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.PathParam;
+import com.shri.restinpeace.annotation.request.QueryParam;
 
 /**
  * A minimal {@code @RestClient} interface for {@link ResponseCachingTest} -
@@ -29,5 +30,8 @@ public interface CacheTestApi {
 
 	@GET("/localized/{id}")
 	String getLocalizedItem(@PathParam("id") String id, @HeaderParam("Accept-Language") String language);
+
+	@GET("/search")
+	String search(@QueryParam("page") String page);
 
 }

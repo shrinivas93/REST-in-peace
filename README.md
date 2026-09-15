@@ -66,21 +66,32 @@ test server for unit tests.
   - [`@Multipart` / `@Part` / `@PartMap`](#multipart--part--partmap)
   - [`@FormUrlEncoded` / `@Field` / `@FieldMap`](#formurlencoded--field--fieldmap)
 - [Return types](#return-types)
+  - [Generic collection return types: `List<User>`](#generic-collection-return-types-listuser)
   - [Binary downloads: `byte[]` and `File`](#binary-downloads-byte-and-file)
   - [Response headers and status: `RipResponse<T>`](#response-headers-and-status-ripresponset)
 - [Error handling](#error-handling)
 - [Async](#async)
 - [Retries](#retries)
+  - [Retry budget](#retry-budget)
   - [Idempotency keys](#idempotency-keys)
+  - [Interface-level and client-wide defaults](#interface-level-and-client-wide-defaults)
 - [Timeouts](#timeouts)
 - [Per-client configuration: timeout and proxy](#per-client-configuration-timeout-and-proxy)
   - [JSON `ObjectMapper`](#json-objectmapper)
 - [Response caching](#response-caching)
+  - [Stale-while-revalidate](#stale-while-revalidate)
+  - [Negative caching](#negative-caching)
   - [`@NoCache`](#nocache)
+  - [Time-based and manual eviction](#time-based-and-manual-eviction)
+  - [Query string in the cache key](#query-string-in-the-cache-key)
 - [Interceptors](#interceptors)
+  - [Short-circuiting a request](#short-circuiting-a-request)
+  - [Reproducing a call with `curl`](#reproducing-a-call-with-curl)
   - [Per-client interceptors](#per-client-interceptors)
   - [Pre-built interceptors](#pre-built-interceptors)
 - [Compile-time proxy generation](#compile-time-proxy-generation)
+  - [Why isn't `List<User>` code-generated?](#why-isnt-listuser-code-generated)
+- [OpenAPI to `@RestClient` generator](#openapi-to-restclient-generator)
 - [Testing with `MockRestServer`](#testing-with-mockrestserver)
   - [JUnit 5 extension](#junit-5-extension)
 - [Integrating with your project](#integrating-with-your-project)
@@ -166,7 +177,10 @@ for what actually happens under `getUser(...)`.
 - Request bodies: raw strings are sent as-is, other objects are
   JSON-serialized automatically
 - Responses: a `String` return type gives you the raw body; any other
-  return type is deserialized from JSON automatically
+  return type is deserialized from JSON automatically, including a generic
+  collection like `List<User>` (decoded element-by-element into the
+  declared type, not left as raw maps) - also inside `RipResponse<T>`/
+  `CompletableFuture<T>`; see [Generic collection return types](#generic-collection-return-types-listuser)
 - `byte[]` and `File` (via `@Destination`) return types for binary
   downloads, with an optional `DownloadProgressListener` for progress
   reporting
@@ -180,23 +194,42 @@ for what actually happens under `getUser(...)`.
   `Idempotency-Key` header held identical across every attempt, so a
   server that honors idempotency keys (Stripe, PayPal, Adyen, Square) can
   treat a retried `POST`/`PATCH` as the same logical request instead of
-  executing it twice
+  executing it twice. `@Retry`/`@Timeout` can also be declared once on the
+  `@RestClient` interface as a default every method without its own falls
+  back to, same as `@BaseUrl`; a `RetryConfig` on `RipClientConfig` sets a
+  client-wide default below that. `retryBudget(maxRetries, windowMillis)`
+  caps the *total* retries a client performs across every call in a rolling
+  window, on top of each call's own `times()`
 - `@Timeout` overrides the connect/read timeout for one method;
   `RipClientConfig` overrides base URL, timeout, proxy, cache, JSON
-  `ObjectMapper`, and interceptors for one client (e.g. one per deployment
-  environment). `RIP.setObjectMapper(...)` sets a custom mapper (Jackson, a
-  configured Gson, ...) for the shared client
+  `ObjectMapper`, retry policy, and interceptors for one client (e.g. one
+  per deployment environment). `RIP.setObjectMapper(...)` sets a custom
+  mapper (Jackson, a configured Gson, ...) for the shared client
 - Response caching honors the server's own `Cache-Control`/`ETag`/
   `Last-Modified` headers for `GET` requests — a fresh entry is served with
   zero network call, a stale revalidatable one sends
-  `If-None-Match`/`If-Modified-Since` automatically. `Vary`-aware, with
-  `@NoCache` to opt a single method out even when its client has a cache
-  configured
+  `If-None-Match`/`If-Modified-Since` automatically, and
+  `stale-while-revalidate=N` serves the stale entry immediately while
+  refreshing it in the background. `negativeCacheTtlMillis` opts a client
+  into caching a confirmed `404` too, regardless of its own headers.
+  `Vary`-aware, with `@NoCache` to opt a single method out even when its
+  client has a cache configured. `InMemoryCache` also supports a max-age
+  constructor for time-based eviction regardless of server freshness, plus
+  manual eviction
+  of one entry via the public `Cache.key(...)` formula. Whether the cache
+  key includes the query string is configurable per client or as a shared
+  default via `cacheKeyIncludesQueryString(...)`
+- `RestInPeaceHttpException.isClientError()`/`isServerError()`/`isRedirect()`/`is(int)`
+  for branching on a status range in a `catch` block, plus
+  `getRetryAfterMillis()` to read the response's own `Retry-After` header
+  even for a method with no `@Retry`
 - Global interceptors for cross-cutting concerns (auth headers, logging,
   metrics) without touching individual `@RestClient` interfaces;
   `RipClientConfig.Builder.interceptors(...)` adds interceptors for one
   client only (e.g. that service's own auth scheme), running in addition to
-  every global one, not instead of them
+  every global one, not instead of them. `shortCircuit` skips the network
+  call entirely with a synthetic response - a feature-flag bypass, a canary
+  short-circuit, or a lightweight record/replay mode
 - Optional **compile-time proxy generation** — an annotation processor
   emits a real, reflection-free implementation for a supported
   `@RestClient` interface at build time, with zero configuration and a
@@ -205,6 +238,10 @@ for what actually happens under `getUser(...)`.
 - `MockRestServer` — a real, local HTTP server for unit-testing
   `@RestClient` code without a real network dependency, with a JUnit 5
   extension for zero-boilerplate setup
+- **Spec-first client generation** — `OpenApiClientGenerator` reads an
+  OpenAPI 3.x JSON document and generates a `@RestClient` interface (paths,
+  HTTP methods, parameters, base URL) instead of hand-writing one; see
+  [OpenAPI to `@RestClient` generator](#openapi-to-restclient-generator)
 - Interfaces are validated up front — misconfigured clients fail fast at
   `RIP.getClient(...)` time with a clear error, not on the first call
 - Works from any JVM language (Java, Kotlin, Scala, ...) since it's just an
@@ -749,6 +786,27 @@ discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies. These
 rules apply to a successful (2xx) response — see below for anything else.
 
+### Generic collection return types: `List<User>`
+
+A plain generic collection works too — decoded element-by-element into the
+declared type parameter, not left as raw `LinkedTreeMap`s:
+
+```java
+@GET("https://api.example.com/users")
+List<User> listUsers();
+```
+
+This also works wrapped in `RipResponse<List<User>>` or
+`CompletableFuture<List<User>>` (including
+`CompletableFuture<RipResponse<List<User>>>`), the same as any other return
+shape. Internally this reads the method's *generic* return type
+(`Method.getGenericReturnType()`) rather than the type-erased
+`getReturnType()`, and decodes through `kong.unirest.GenericType` instead
+of a plain `Class<?>` whenever the two differ - see
+[Why isn't `List<User>` code-generated?](#why-isnt-listuser-code-generated)
+for the one place this still falls back to the reflective proxy rather than
+a fully generated implementation.
+
 ### Binary downloads: `byte[]` and `File`
 
 A `String` return type is fine for text, but decoding a binary response
@@ -864,6 +922,52 @@ a timeout) throws the underlying transport exception directly, not
 `RestInPeaceHttpException`, which specifically means "the server answered,
 and the answer was an error."
 
+`isClientError()` (400–499), `isServerError()` (500–599), `isRedirect()`
+(300–399), and `is(int status)` are small convenience checks on the
+exception itself, for when a `catch` block only needs to branch on the
+status range rather than compare `getStatus()` to specific numbers:
+
+```java
+catch (RestInPeaceHttpException e) {
+    if (e.isServerError()) {
+        scheduleRetryLater();
+    } else if (e.isClientError()) {
+        throw new IllegalArgumentException("Bad request: " + e.getRawBody());
+    }
+}
+```
+
+**Ordering pitfall:** check `is(specificStatus)` *before* `isClientError()`/
+`isServerError()`, not after — every status either of those two covers
+already falls in its range, so a specific-status branch placed after one is
+unreachable dead code:
+
+```java
+// Wrong - e.is(429) never runs, since isClientError() already matched it
+if (e.isClientError()) { ... }
+else if (e.is(429)) { ... }
+
+// Right - the specific case is checked first
+if (e.is(429)) { ... }
+else if (e.isClientError()) { ... }
+```
+
+`getRetryAfterMillis()` returns the response's own `Retry-After` header
+(delta-seconds or an HTTP-date, per RFC 1123) parsed to milliseconds from
+now — the exact same parsing `@Retry` itself uses internally to honor a
+server's backoff hint, surfaced here for a method with no `@Retry` at all
+(or one that gave up after exhausting its attempts) that wants to honor it
+manually. `null` if the header was absent or in neither supported format:
+
+```java
+catch (RestInPeaceHttpException e) {
+    if (e.is(429) && e.getRetryAfterMillis() != null) {
+        Thread.sleep(e.getRetryAfterMillis());
+        return retryManually();
+    }
+}
+```
+
 ## Async
 
 Return `CompletableFuture<T>` instead of `T` to fire the request without
@@ -968,6 +1072,64 @@ attempt as the same logical request instead of a new one. Default `false` —
 harmless (but redundant) to set on `GET`/`PUT`/`DELETE`, most meaningful on
 `POST`/`PATCH`.
 
+### Interface-level and client-wide defaults
+
+Put `@Retry` on the `@RestClient` interface itself instead of repeating it
+on every method — a method with its own `@Retry` uses that one *in full*
+instead (the two are never merged field-by-field), same as `@BaseUrl`:
+
+```java
+@RestClient
+@Retry(times = 3, delayMillis = 200, retryOnStatus = { 503 })
+public interface UserApi {
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);   // uses the interface's @Retry
+
+    @GET("/users/{id}/avatar")
+    @Retry(times = 1)
+    byte[] getAvatar(@PathParam("id") String id);   // its own @Retry wins instead
+}
+```
+
+For a default that applies across every interface a given client talks to,
+pass a `RetryConfig` on `RipClientConfig` instead — this is the lowest
+priority of the three: a method's own `@Retry` wins over the interface's,
+which wins over the client's `RetryConfig`:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retry(RetryConfig.builder().times(3).delayMillis(200).retryOnStatus(503).build())
+        .build());
+```
+
+`RetryConfig.builder()` exposes the same fields as `@Retry`
+(`times`/`delayMillis`/`backoffMultiplier`/`jitterFactor`/`retryOnStatus`/
+`idempotent`), with the same defaults and validation.
+
+### Retry budget
+
+`@Retry#times()` (or a client's `RetryConfig`) caps how many attempts *one
+call* makes. `retryBudget` caps something different: the *total* number of
+retries the whole client performs across every call, in a rolling window —
+so many concurrently failing calls each retrying independently don't
+multiply an already-struggling downstream's request volume into a full
+retry storm:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .retryBudget(50, TimeUnit.MINUTES.toMillis(1))   // at most 50 retries/minute, client-wide
+        .build());
+```
+
+Tokens refill continuously (a token bucket, not a once-a-minute burst):
+starting full at `maxRetries`, regaining `maxRetries / windowMillis` tokens
+per elapsed millisecond, capped at `maxRetries`. Once the budget is
+exhausted, a call that would otherwise retry instead returns (or throws)
+its current outcome immediately — exactly like reaching its own
+`@Retry#times()`, just for a different reason. Not called at all (the
+default) means no cap beyond each call's own `times()`, byte-for-byte
+today's behavior.
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for
@@ -983,10 +1145,15 @@ String exportReport();
 
 `connectMillis` and `readMillis` are independent — set one, both, or
 neither — and both default to `-1`, meaning "leave this one at whatever it
-would otherwise be." `@Timeout` takes priority over a
+would otherwise be." `@Timeout` can also be declared on the `@RestClient`
+interface itself as a default every method without its own `@Timeout` falls
+back to, the same interface-level pattern `@Retry` supports above — a
+method's own `@Timeout` is still used in full instead of the interface's.
+Precedence overall: a method's own `@Timeout`, then the interface's
+`@Timeout`, then a
 [`RipClientConfig`](#per-client-configuration-timeout-and-proxy)'s timeout,
-which in turn takes priority over the shared client's own configured
-default. A negative value other than `-1` fails validation.
+then the shared client's own configured default. A negative value other
+than `-1` fails validation.
 
 ## Per-client configuration: timeout and proxy
 
@@ -1083,11 +1250,69 @@ the server never asked for:
   from the one in force when it was stored, so a cache never serves the
   wrong language/format variant. `Vary: *` is never cached at all, same as
   `no-store`.
+- A response naming `Cache-Control: stale-while-revalidate=N` is, once
+  stale, still served immediately for up to `N` further seconds — the
+  network round trip happens in the background instead of blocking the
+  caller, and the entry is transparently refreshed for the *next* call. See
+  [Stale-while-revalidate](#stale-while-revalidate) below.
 
 `InMemoryCache` (a `ConcurrentHashMap`-backed, process-local store) ships as
 the default `Cache` implementation — zero new dependency. Implement `Cache`
 yourself (`get`/`put`/`evict`/`clear`) to back it with Redis, Caffeine, or
 anything else.
+
+### Stale-while-revalidate
+
+A stale entry normally blocks the caller on a synchronous revalidation
+round trip (or a full re-fetch). A response naming
+`Cache-Control: stale-while-revalidate=N` opts out of that: once stale, the
+entry is still served as-is for up to `N` further seconds, while the real
+network call happens in the background and refreshes the entry for the
+*next* call — this call never sees the new response at all, only ever the
+one already in hand:
+
+```java
+// Cache-Control: max-age=60, stale-while-revalidate=30
+Item item = api.getItem("42");   // fresh for 60s, then still instantly
+                                  // servable (stale) for 30s more while a
+                                  // background call refreshes the entry
+```
+
+For a synchronous (non-`CompletableFuture`) call, the background refresh
+runs on a small internal daemon-thread pool, created lazily on first use -
+a `CompletableFuture`-returning call needs no such pool at all, since it's
+already asynchronous; the refresh is simply chained onto the same future
+without blocking the response already being handed back. Either way, a
+failed background refresh (a thrown exception, a non-2xx/non-304 response
+with no caching headers) is silently swallowed - the stale entry just keeps
+being served until it ages out of its own stale-while-revalidate window
+too, exactly as if the background attempt had never run. Once a call
+arrives after that window has fully elapsed, caching falls back to the
+usual synchronous revalidation (or re-fetch) described above.
+
+### Negative caching
+
+Every cached status above is only ever stored because the *server* said so
+via its own `Cache-Control`/`ETag`/`Last-Modified`. A confirmed `404` is
+different: `negativeCacheTtlMillis` opts a client into storing one anyway,
+for a fixed TTL, regardless of whatever (if anything) the `404` response's
+own headers say — so a client that already asked once for a resource that
+doesn't exist stops hammering the downstream asking again:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .negativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1))   // a confirmed 404 stays cached for 1 minute
+        .build());
+
+api.getUser("does-not-exist");   // throws RestInPeaceHttpException(404, ...) - one real network call
+api.getUser("does-not-exist");   // throws the same exception again - served from cache, zero network calls
+```
+
+Or as a shared default for every client without its own, via
+`RIP.setNegativeCacheTtlMillis(long)`. Has no effect on a client with no
+`Cache` configured at all, and is skipped the same way as ordinary caching
+by `@NoCache`.
 
 ### `@NoCache`
 
@@ -1104,6 +1329,62 @@ Price getLivePrice(@PathParam("symbol") String symbol);
 
 Response caching is scoped to `String`/POJO `GET` responses for now — not
 `byte[]`/`File` downloads.
+
+### Time-based and manual eviction
+
+Everything above is about *freshness* — whether a cached entry is safe to
+serve without asking the server again. Separately, `InMemoryCache` can also
+cap how long it holds on to an entry at all, regardless of freshness, via an
+optional max-age constructor argument:
+
+```java
+RIP.setCache(new InMemoryCache(TimeUnit.MINUTES.toMillis(10)));   // evict anything older than 10 minutes
+```
+
+An entry older than that is dropped the next time it's looked up (no
+background thread) — the default no-arg `InMemoryCache()` never ages
+entries out this way, relying solely on `Cache-Control`/`ETag` freshness.
+
+To evict a specific entry on demand — after a write your code knows should
+invalidate a particular cached `GET`, for instance — compute the same key
+`CacheCoordinator` uses internally with the public `Cache.key(...)` helper
+and pass it to `evict(...)`:
+
+```java
+cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42"));
+```
+
+The key is `"<HTTP method> <full URL, including any query string>"` — RIP
+deliberately does *not* auto-invalidate cached `GET`s when a `POST`/`PUT`/
+`DELETE` call is made to a related-looking URL, since guessing which cached
+entries a given write should invalidate is a heuristic that's wrong in
+either direction (URLs that look related but aren't, and unrelated-looking
+URLs that actually are). `cache.clear()` drops every entry unconditionally.
+
+### Query string in the cache key
+
+By default the cache key includes the query string, so `/items?page=1` and
+`/items?page=2` are cached under separate entries — the right default for
+an endpoint whose query params change what comes back. For one whose query
+params don't (an analytics/tracking param, say, that the server ignores
+when producing the response), that's wasted cache misses: turn it off per
+client, or as a shared default:
+
+```java
+RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .cacheKeyIncludesQueryString(false)   // this client only
+        .build());
+
+RIP.setCacheKeyIncludesQueryString(false);   // shared default for every client without its own setting
+```
+
+With it off, every query-string variant of the same path shares one cache
+entry instead — trading that precision for a higher hit rate. It has no
+effect on a client with no `Cache` configured at all, and (per the
+per-client/shared-default precedence every other `RipClientConfig` setting
+follows) a client's own `cacheKeyIncludesQueryString(...)` wins over
+`RIP.setCacheKeyIncludesQueryString(...)`.
 
 ## Interceptors
 
@@ -1128,7 +1409,14 @@ Both methods are observers: `beforeRequest` can add headers or abort the
 call by throwing, and `afterResponse` sees the status and response body (a
 `String`, a deserialized object, or `null` for `void` methods) once the
 response is back — but neither can cause a request to be re-sent on its
-own; see [`@Retry`](#retries) above for that. On an error response,
+own; see [`@Retry`](#retries) above for that. `beforeRequest` can also
+inspect the outgoing request body via `context.getBody()` — the raw string
+for a `@Body String` method, or the JSON it'll be serialized to for a POJO
+`@Body`; `null` for a method with no `@Body` at all (a `@FormUrlEncoded`/
+`@Multipart` body isn't captured this way). It's read-only in effect —
+calling `context.setBody(...)` from an interceptor doesn't change what's
+actually sent, since the request is already built by the time interceptors
+run. On an error response,
 `afterResponse` still runs and sees the same body a catch block would get
 from [`RestInPeaceHttpException.getErrorBody()`](#error-handling) - the raw
 body, or the `@ErrorType`-deserialized one if the method declares it - the
@@ -1142,6 +1430,89 @@ the response. Register an interceptor first if it needs to bracket everything
 else's work (e.g. a timer measuring total call overhead); register it last if
 it needs to sit closest to the actual network call (e.g. a timer measuring
 only network latency).
+
+### Short-circuiting a request
+
+`shortCircuit` skips the network call entirely, handing back a synthetic
+response instead — a feature-flag bypass, a canary short-circuit, or a
+lightweight record/replay mode built on the interceptor chain instead of a
+real network dependency:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public ShortCircuitResponse shortCircuit(RequestContext context) {
+        if (featureFlags.isEnabled("bypass-pricing-api")) {
+            return ShortCircuitResponse.ok("{\"price\":0}");
+        }
+        return null;   // let the call proceed normally
+    }
+});
+```
+
+Called after every registered interceptor's `beforeRequest` has already run
+(in that same FIFO order) — the first interceptor to return a non-`null`
+`ShortCircuitResponse` wins, and the request is never sent. The synthetic
+response is decoded exactly like a real one (including throwing
+`RestInPeaceHttpException` for a non-2xx `ShortCircuitResponse.status(...)`),
+and every registered interceptor's `afterResponse` still runs afterward,
+same as it would for a real response. `ShortCircuitResponse.ok(body)`/
+`.status(code, body)` build it; `.header(name, value)` adds response
+headers.
+
+A short-circuited response still goes through this client's own
+caching/retry configuration exactly like a real one would — it may get
+cached if it carries cacheable headers, or "retried" if its status matches
+`@Retry#retryOnStatus()` (which just re-invokes `shortCircuit` again
+instead of a real network call — harmless, if a little redundant, since no
+network round trip happens either way).
+
+### Reproducing a call with `curl`
+
+`context.toCurlCommand()` renders the exact method, URL, headers, and body
+(if any) as a copy-pasteable `curl` command — handy from `afterResponse` on
+an error status, or from a `catch` block, to attach a reproduction to a bug
+report without a screenshot:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void afterResponse(RequestContext context, int status, Object body) {
+        if (status >= 400) {
+            System.err.println("Reproduce with:\n" + context.toCurlCommand());
+        }
+    }
+});
+// curl -X POST 'https://api.example.com/charges' -H 'Content-Type: application/json' -d '{"amount":500}'
+```
+
+Pass a `RequestContext.CurlVerbosity` to add one of `curl`'s own diagnostic
+flags when the plain reproduction doesn't explain the failure:
+
+| Level | Flag(s) | Adds |
+|---|---|---|
+| `NONE` (default) | *(none)* | just the method/URL/headers/body |
+| `VERBOSE` | `-v` | request/response headers + connection info |
+| `VV` | `-vv` | + per-line timestamps and a transfer/connection id |
+| `VVV` | `-vvv` | + a raw hex-offset dump of the header/body bytes on the wire |
+| `VVVV` | `-vvvv` | + `curl`'s own internal engine tracing (DNS, TCP, connection pool, ...) — the ceiling; a fifth+ `-v` adds nothing further |
+| `TRACE` | `--trace-ascii - --trace-time` | a full, per-line-timestamped trace of everything on the wire, headers and both bodies |
+
+```java
+context.toCurlCommand(RequestContext.CurlVerbosity.VERBOSE);
+// curl -X POST -v 'https://api.example.com/charges' -H 'Content-Type: application/json' -d '{"amount":500}'
+```
+
+**A caveat on `VV`/`VVV`/`VVVV`:** repeating `-v` to escalate verbosity is
+real, reproducible behavior (verified directly against `curl 8.22.0`, the
+latest release at the time of writing) — but it's *not* documented in
+`curl`'s own `--help`/man page the way plain `-v` and `--trace-ascii` are.
+It's most likely an internal debug counter that happens to respond to how
+many times `-v` was given, not a committed CLI contract, so it could
+plausibly change in a future `curl` release without notice. `TRACE` covers
+similar ground (a full wire-level trace including both bodies) using only
+documented, stable flags — prefer it over `VVVV` when that stability
+matters more than matching exactly what someone would type by hand.
 
 ### Per-client interceptors
 
@@ -1197,6 +1568,17 @@ RIP.addInterceptor(new LoggingInterceptor());
 // Or route log lines wherever you want instead of System.out.
 RIP.addInterceptor(new LoggingInterceptor(logger::info));
 
+// LoggingInterceptor never logs bodies at all. RedactingLoggingInterceptor
+// does the same before/after logging but also includes the request and
+// response bodies, masking configured field names (password, token,
+// secret, apiKey, ssn, authorization by default) instead of printing
+// them verbatim.
+RIP.addInterceptor(new RedactingLoggingInterceptor());
+
+// Or a custom set of field names to mask, and/or a custom sink.
+Set<String> sensitiveFields = new HashSet<>(Arrays.asList("password", "creditCardNumber"));
+RIP.addInterceptor(new RedactingLoggingInterceptor(sensitiveFields, logger::info));
+
 // Attach a fresh correlation/request ID to every call - useful for
 // tracing across service boundaries. Defaults to a random UUID under
 // the X-Request-Id header.
@@ -1223,6 +1605,16 @@ response — a transport failure (no response at all) never reaches
 sample per attempt, not just the final one, since every attempt gets its
 own `afterResponse` notification.
 
+`RedactingLoggingInterceptor`'s masking is a regex match over
+`"fieldName": value`-shaped text, not a real JSON parser — reliable for the
+common case of a flat sensitive field, best-effort for one whose value is
+itself a nested object or array. The request body comes from
+`RequestContext.getBody()` (a `String`/POJO `@Body` only — `null` for
+`@FormUrlEncoded`/`@Multipart`); the response body is converted with
+`String.valueOf(...)` first, so masking a decoded POJO response depends on
+its own `toString()` happening to render matching `"fieldName": value`
+pairs.
+
 ## Compile-time proxy generation
 
 Every `@RestClient` interface works out of the box via a reflective JDK
@@ -1237,9 +1629,39 @@ You don't opt in to anything — if your build already runs annotation
 processing (the Maven/Gradle default for a dependency that ships one), the
 generated class exists on your classpath and is used automatically; there's
 nothing to configure and nothing changes about how you call the client. If
-a method's shape isn't yet covered by the processor, that one interface
-transparently falls back to the reflective proxy — same behavior, just
-without the compile-time class.
+a method's shape isn't yet covered by the processor (a generic collection
+return type like `List<User>`, say — see [below](#why-isnt-listuser-code-generated)
+for why), only *that* method falls back — internally, to a lazily-built
+reflective proxy sharing this same client's config — while every other
+method on the same interface still gets a real generated implementation.
+An interface with *no* codegen-eligible method at all still falls back to
+the plain reflective proxy in its entirety, the same as before.
+
+### Why isn't `List<User>` code-generated?
+
+`List<User>` (and `RipResponse<List<User>>`/`CompletableFuture<List<User>>`)
+decode correctly — that part isn't the limitation. The reflective proxy
+reads a method's *generic* return type (`Method.getGenericReturnType()`,
+not the type-erased `getReturnType()`) and, for anything beyond a plain
+`Class<?>`, decodes through `kong.unirest.GenericType` instead — the same
+mechanism Unirest's own `ObjectMapper.readValue(String, GenericType)`
+extension point exists for, adapted to accept an arbitrary runtime `Type`
+(there's no public constructor for that on `GenericType` itself, since it
+normally infers `T` from an anonymous subclass's compile-time signature —
+worked around with a one-time reflective field overwrite, isolated in
+`RuntimeGenericType`). So `List<User>` works today, on the reflective path,
+for a plain return, `RipResponse<T>`, and `CompletableFuture<T>` alike.
+
+What such a method still doesn't get is *compile-time codegen* — the
+annotation processor runs before any request is ever made, so it needs a
+`Class<?>` it can write as a literal into generated source
+(`User.class`); "a list of `User`" has no such literal the way a plain POJO
+does. That's a fundamentally different problem from decoding a `Type` at
+runtime, and not one a generated `.java` file can solve by itself. So a
+method shaped like `List<User>` (or wrapping one) still falls back — just
+that *one* method — to the reflective proxy described above, which decodes
+it correctly; every other method on the same interface still gets a real
+generated implementation.
 
 This matters most for:
 
@@ -1260,6 +1682,48 @@ of what each rollout step actually landed as), and
 for a standalone project showing exactly what a downstream consumer sees —
 including a GraalVM native-image build and run, exercised by CI's
 `native-image-smoke-test` job on every push.
+
+## OpenAPI to `@RestClient` generator
+
+The opposite direction: instead of hand-writing an interface and letting
+`RestClientProcessor` generate the *implementation* (above),
+`OpenApiClientGenerator` reads an existing API's OpenAPI 3.x JSON document
+and generates the *interface itself* — spec-first client generation, for
+pointing this at a large API's spec instead of transcribing every
+path/parameter by hand:
+
+```java
+OpenApiClientGenerator.generate(
+        new File("petstore-openapi.json"),   // the spec - JSON, not YAML
+        new File("src/main/java"),           // output directory
+        "com.example.client",                // package
+        "PetStoreApi");                      // interface simple name
+```
+
+produces `src/main/java/com/example/client/PetStoreApi.java`, a ready-to-compile
+`@RestClient` interface: `servers[0].url` becomes `@BaseUrl`, each
+`get`/`post`/`put`/`delete`/`patch` operation becomes a method (named from
+its own `operationId` if present, otherwise synthesized from the HTTP
+method and path), and OpenAPI's own `{name}` path-template placeholder
+syntax already matches `@PathParam`'s exactly — no translation needed at
+all.
+
+**Scope:** this is a skeleton generator, not a full schema-to-POJO tool
+like swagger-codegen/OpenAPI Generator — every parameter and every
+request/response body is generated as `String`. What it gets right (the
+paths, HTTP methods, parameter names/locations, and base URL) is the
+tedious, error-prone part of a large API; narrowing a specific parameter's
+type, or replacing a body's `String` with your own POJO, is a normal
+hand-edit of the generated file afterward. A `parameters` entry with
+`in: header`/`in: cookie` is skipped (not part of the interface shape — a
+per-call/interceptor concern instead), and only `application/json`-style
+request bodies are recognized (any `requestBody` at all becomes one
+`@Body String` parameter, regardless of its declared schema).
+
+Also runnable from the command line — `java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator
+<specFile> <outputDirectory> <packageName> <interfaceName>` — for wiring
+into a build via `exec-maven-plugin`/a Gradle `JavaExec` task, or just
+running it once by hand and committing the result.
 
 ## Testing with `MockRestServer`
 
@@ -1283,9 +1747,17 @@ server.close();
 `on(...)` registers a sticky response for a method+path, with `{name}`
 placeholder matching the same as a real `@GET`/`@PathParam` template; an
 unmatched request fails loudly (a `500` with a clear message) instead of
-silently succeeding for the wrong reason. `MockResponse.ok(body)`,
-`.json(object)`, `.status(code, body)`, `.noContent()`, and `.notModified()`
-cover the common status shapes.
+silently succeeding for the wrong reason. When a route is registered for
+the same HTTP method but a different path, the failure message names the
+closest one by edit distance — usually the typo that broke the test:
+
+```
+MockRestServer: no response was queued or registered for POST /orders.
+Did you mean: POST /order?
+```
+
+`MockResponse.ok(body)`, `.json(object)`, `.status(code, body)`,
+`.noContent()`, and `.notModified()` cover the common status shapes.
 
 For scripting a sequence of responses — proving `@Retry` actually
 recovers — `enqueueFor(...)` scripts a one-time response ahead of a route's
@@ -1321,6 +1793,28 @@ class OrderApiTest {
         OrderApi api = RIP.getClient(OrderApi.class, server.baseUrl());
 
         assertEquals("shipped", api.getOrder("42").status);
+    }
+}
+```
+
+`reportUnhitRoutes()` opts into printing every route still unhit
+(`MockRestServer.getUnhitRoutes()`) when the test class finishes — a route
+left registered after the code path that used to exercise it was removed
+otherwise causes no failure at all. It only takes effect with the
+`static @RegisterExtension` field style, since `@ExtendWith(MockRestServerExtension.class)`
+has JUnit construct the extension itself, with no way to call
+`reportUnhitRoutes()` first:
+
+```java
+class OrderApiTest {
+
+    @RegisterExtension
+    static MockRestServerExtension extension = new MockRestServerExtension().reportUnhitRoutes();
+
+    @Test
+    void getOrder_returnsDecodedBody(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42", "shipped")));
+        // ...
     }
 }
 ```

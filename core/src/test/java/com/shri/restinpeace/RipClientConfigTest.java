@@ -27,7 +27,12 @@ class RipClientConfigTest {
 		assertNull(config.getProxyHost());
 		assertNull(config.getObjectMapper());
 		assertNull(config.getCache());
+		assertNull(config.getCacheKeyIncludesQueryString());
+		assertNull(config.getNegativeCacheTtlMillis());
+		assertNull(config.getRetryBudgetMaxRetries());
+		assertNull(config.getRetryBudgetWindowMillis());
 		assertTrue(config.getInterceptors().isEmpty());
+		assertNull(config.getRetry());
 	}
 
 	@Test
@@ -36,9 +41,11 @@ class RipClientConfigTest {
 		InMemoryCache cache = new InMemoryCache();
 		RequestInterceptor interceptor = new RequestInterceptor() {
 		};
+		RetryConfig retry = RetryConfig.builder().times(5).build();
 		RipClientConfig config = RipClientConfig.builder().baseUrl("https://api.example.com").connectTimeoutMillis(1_000)
 				.readTimeoutMillis(5_000).proxy("proxy.example.com", 8080, "user", "pass").objectMapper(objectMapper)
-				.cache(cache).interceptors(Collections.singletonList(interceptor)).build();
+				.cache(cache).cacheKeyIncludesQueryString(false).negativeCacheTtlMillis(30_000)
+				.retryBudget(5, 60_000).interceptors(Collections.singletonList(interceptor)).retry(retry).build();
 
 		assertEquals("https://api.example.com", config.getBaseUrl());
 		assertEquals(1_000, config.getConnectTimeoutMillis());
@@ -49,7 +56,12 @@ class RipClientConfigTest {
 		assertEquals("pass", config.getProxyPassword());
 		assertEquals(objectMapper, config.getObjectMapper());
 		assertEquals(cache, config.getCache());
+		assertEquals(Boolean.FALSE, config.getCacheKeyIncludesQueryString());
+		assertEquals(30_000L, config.getNegativeCacheTtlMillis());
+		assertEquals(5, config.getRetryBudgetMaxRetries());
+		assertEquals(60_000L, config.getRetryBudgetWindowMillis());
 		assertEquals(Collections.singletonList(interceptor), config.getInterceptors());
+		assertEquals(retry, config.getRetry());
 	}
 
 	@Test
@@ -67,6 +79,20 @@ class RipClientConfigTest {
 	@Test
 	void readTimeoutMillis_negative_throws() {
 		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().readTimeoutMillis(-1));
+	}
+
+	@Test
+	void negativeCacheTtlMillis_notPositive_throws() {
+		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().negativeCacheTtlMillis(0));
+		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().negativeCacheTtlMillis(-1));
+	}
+
+	@Test
+	void retryBudget_notPositive_throws() {
+		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().retryBudget(0, 60_000));
+		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().retryBudget(-1, 60_000));
+		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().retryBudget(5, 0));
+		assertThrows(IllegalArgumentException.class, () -> RipClientConfig.builder().retryBudget(5, -1));
 	}
 
 	@Test
