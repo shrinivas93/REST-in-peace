@@ -871,17 +871,20 @@ up.
       been disabled entirely. Needs a proper, verified setup - PRs required
       into `master`, with a working bypass for `release.yml`'s own
       version-bump/tag push - before it's turned back on for real.
-- [ ] **Codecov integration** — `jacoco-maven-plugin` (wired up on the root
-      `pom.xml`, inherited by both `core` and `spring-boot-starter`) already
-      produces the `jacoco.xml` report Codecov (or a similar service)
-      consumes; `ci.yml`/`spring-boot-starter-test.yml` currently just
-      upload it as a plain GitHub Actions build artifact, with no
-      badge/PR-diff-coverage/trend layer on top. Needs a public (or
-      self-hosted) Codecov account and an upload token
-      (`CODECOV_TOKEN` repo secret) plus a `codecov/codecov-action` step in
-      both workflows pointed at each module's `target/site/jacoco/jacoco.xml`
-      - account-level setup, not started, same category as the parked
-      Maven Central item above.
+- [x] **Codecov integration** — `codecov/codecov-action@v5` added to both
+      `ci.yml` and `spring-boot-starter-test.yml`, uploading each module's
+      already-generated `jacoco.xml` (from the JaCoCo item above) tagged
+      with a `core`/`spring-boot-starter` flag so the two stay distinguishable
+      in the Codecov UI rather than overwriting one report with the other.
+      `fail_ci_if_error: false` on both, so a Codecov outage or a
+      misconfigured token degrades to "no coverage uploaded this run"
+      instead of failing CI outright - the plain-artifact upload from the
+      JaCoCo item is unaffected either way. Needed a `CODECOV_TOKEN`
+      repository secret, generated from the repo's own Codecov settings
+      page after enabling it there - account-level setup only the repo
+      owner could do, unlike everything else in this item. A
+      [![codecov](https://codecov.io/gh/shrinivas93/REST-in-peace/branch/develop/graph/badge.svg)](https://codecov.io/gh/shrinivas93/REST-in-peace)
+      badge now lives in `README.md` alongside the CI badge.
 
 ## Excavation ideas (2026-09-14) — proposed, not yet designed or scoped
 

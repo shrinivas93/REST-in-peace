@@ -50,6 +50,16 @@ run. Pinned to `0.8.12`, not the newer `0.8.13`, since the plugin itself has
 to run under whatever JDK executes the build - `ci.yml`'s `core` job runs
 under a real JDK 8, and `0.8.13` raised its own minimum to JDK 11.
 
+Both workflows also upload the same `jacoco.xml` to Codecov
+(`codecov/codecov-action`, one upload per module tagged with a `core`/
+`spring-boot-starter` flag) for the badge/PR-diff-coverage/trend layer the
+plain build artifact doesn't provide - see
+[codecov.io/gh/shrinivas93/REST-in-peace](https://codecov.io/gh/shrinivas93/REST-in-peace).
+Needs a `CODECOV_TOKEN` repository secret (Settings → Secrets and variables →
+Actions), generated from the repo's own Codecov settings page; `fail_ci_if_error: false`
+means a Codecov outage or a missing/invalid token degrades to "no coverage
+uploaded this run" rather than failing CI outright.
+
 ## Code style
 
 - Tabs for indentation, matching the existing source.
