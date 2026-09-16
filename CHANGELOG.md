@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Codecov integration (`codecov/codecov-action@v5`, added to both `ci.yml`
+  and `spring-boot-starter-test.yml`) - uploads each module's already-
+  generated `jacoco.xml` (see the JaCoCo entry below), tagged with a
+  `core`/`spring-boot-starter` flag so the two stay distinguishable in the
+  Codecov UI. `fail_ci_if_error: false` on both, so a Codecov outage or a
+  misconfigured token degrades to "no coverage uploaded this run" instead
+  of failing CI outright - the plain-artifact upload from the JaCoCo entry
+  is unaffected either way. Needs a `CODECOV_TOKEN` repository secret,
+  generated from the repo's own Codecov settings page after enabling it
+  there. A coverage badge now lives in `README.md` alongside the CI badge.
+
+## [1.0.0.39] - 2026-09-16
+
+### Added
+
 - JaCoCo coverage reporting (`jacoco-maven-plugin`, configured once on the
   root `pom.xml`, inherited by both `core` and `spring-boot-starter`) -
   `mvn test` now also produces `target/site/jacoco/index.html`/`jacoco.xml`
