@@ -57,6 +57,38 @@
 					<autoVersionSubmodules>true</autoVersionSubmodules>
 				</configuration>
 			</plugin>
+			<!-- Declared here (not pluginManagement) so both core and
+			     spring-boot-starter inherit it automatically - no per-module
+			     repetition needed, same reasoning as maven-release-plugin above.
+			     0.8.12, not the newer 0.8.13, since this plugin itself must run
+			     under whatever JDK executes `mvn test` - ci.yml's core job runs
+			     under a real JDK 8 - and 0.8.13 raised its own minimum to JDK 11;
+			     0.8.12 is the last version verified to run on JDK 8. -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.12</version>
+				<executions>
+					<!-- Binds the coverage agent into surefire's argLine - no
+					     explicit <phase>, so it uses prepare-agent's own default
+					     (initialize, before any test runs). -->
+					<execution>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<!-- Generates target/site/jacoco/{index.html,jacoco.xml} right
+					     after tests finish, as part of the ordinary `mvn test` - not
+					     a separate goal a contributor has to remember to run. -->
+					<execution>
+						<id>report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 
