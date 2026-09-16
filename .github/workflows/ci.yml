@@ -29,8 +29,8 @@ jobs:
 
       # jacoco-maven-plugin (configured in the root pom.xml, inherited by
       # every module) generates this as part of the ordinary test phase -
-      # uploaded here so coverage is visible per-run without a Codecov
-      # account; see ROADMAP.md for that as a possible follow-up.
+      # uploaded here as a plain build artifact too, so the raw report is
+      # still inspectable even if the Codecov upload below ever fails.
       - name: Upload JaCoCo coverage report
         if: always()
         uses: actions/upload-artifact@v4
@@ -38,3 +38,19 @@ jobs:
           name: jacoco-report-core
           path: core/target/site/jacoco/
           if-no-files-found: ignore
+
+      # Feeds the same jacoco.xml to Codecov for the badge/PR-diff-coverage/
+      # trend layer plain artifact upload above doesn't provide. `flags: core`
+      # keeps this distinct from spring-boot-starter's own upload in the
+      # Codecov UI. CODECOV_TOKEN is a repo secret (Settings -> Secrets and
+      # variables -> Actions) - not needed for a public repo's tokenless
+      # upload, but used here for the more reliable/full-featured path.
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: core/target/site/jacoco/jacoco.xml
+          flags: core
+          fail_ci_if_error: false
+          verbose: true
