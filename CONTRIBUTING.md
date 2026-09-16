@@ -38,6 +38,18 @@ own:
 mvn javadoc:javadoc --file core/pom.xml
 ```
 
+### Coverage
+
+`mvn test` also generates a JaCoCo coverage report as a normal part of the
+`test` phase (`jacoco-maven-plugin` is configured once on the root `pom.xml`
+and inherited by both `core` and `spring-boot-starter` - no separate goal to
+remember). Open `core/target/site/jacoco/index.html` (or the equivalent path
+under `spring-boot-starter/target/`) in a browser after running tests; `ci.yml`
+and `spring-boot-starter-test.yml` also upload it as a build artifact on every
+run. Pinned to `0.8.12`, not the newer `0.8.13`, since the plugin itself has
+to run under whatever JDK executes the build - `ci.yml`'s `core` job runs
+under a real JDK 8, and `0.8.13` raised its own minimum to JDK 11.
+
 ## Code style
 
 - Tabs for indentation, matching the existing source.

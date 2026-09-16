@@ -26,3 +26,15 @@ jobs:
       # this job's JDK 8.
       - name: Run tests
         run: mvn -B test -pl core
+
+      # jacoco-maven-plugin (configured in the root pom.xml, inherited by
+      # every module) generates this as part of the ordinary test phase -
+      # uploaded here so coverage is visible per-run without a Codecov
+      # account; see ROADMAP.md for that as a possible follow-up.
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report-core
+          path: core/target/site/jacoco/
+          if-no-files-found: ignore
