@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- JaCoCo coverage reporting (`jacoco-maven-plugin`, configured once on the
+  root `pom.xml`, inherited by both `core` and `spring-boot-starter`) -
+  `mvn test` now also produces `target/site/jacoco/index.html`/`jacoco.xml`
+  as a normal part of the test phase, no separate goal to run. `ci.yml` and
+  `spring-boot-starter-test.yml` upload it as a build artifact on every run.
+  Pinned to `0.8.12` rather than the newer `0.8.13`, since the plugin itself
+  has to run under whatever JDK executes the build - `ci.yml`'s `core` job
+  runs under a real JDK 8, and `0.8.13` raised its own minimum to JDK 11.
+  Baseline coverage at the time this landed: `core` 84% instructions / 77%
+  branches, `spring-boot-starter` 92% instructions / 84% branches. Codecov
+  (or similar) integration on top of this, for a PR-comment/badge/trend
+  layer, is tracked as a separate `ROADMAP.md` item rather than bundled in
+  here, since it needs an external account/token this doesn't.
+
+## [1.0.0.38] - 2026-09-15
+
+### Added
+
 - Generic `Type`-based response decoding - a method returning `List<User>`
   (or `RipResponse<List<User>>`/`CompletableFuture<List<User>>`/
   `CompletableFuture<RipResponse<List<User>>>`) now decodes each element

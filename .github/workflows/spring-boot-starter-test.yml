@@ -36,6 +36,16 @@ jobs:
       - name: Build and test the Spring Boot starter
         run: mvn -B test -pl spring-boot-starter -am
 
+      # See ci.yml's own copy of this step for why - same jacoco-maven-plugin
+      # config, inherited from the root pom.xml, applies to this module too.
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report-spring-boot-starter
+          path: spring-boot-starter/target/site/jacoco/
+          if-no-files-found: ignore
+
   # samples/spring-boot-consumer (step 8 of
   # docs/design/spring-boot-starter.md's rollout plan) - a real, separate
   # downstream project depending on both the core library and the starter
