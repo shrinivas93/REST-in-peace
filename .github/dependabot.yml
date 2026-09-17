@@ -1,0 +1,65 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions in .github/workflows/*.yml current -
+  # Dependabot resolves a version bump straight to the new tag's commit SHA,
+  # so pinning to a SHA (rather than a floating major-version tag) doesn't
+  # trade away update visibility, just the ability for a re-tagged release to
+  # silently change what already-reviewed workflow code runs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # One entry per module with its own pom.xml - Dependabot's maven ecosystem
+  # doesn't resolve a multi-module reactor from the root POM alone, so the
+  # aggregator (/), core, spring-boot-starter, and both standalone samples
+  # each need to be scanned separately to see every dependency actually in
+  # use anywhere in the repo.
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      maven-parent:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /core
+    schedule:
+      interval: weekly
+    groups:
+      maven-core:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spring-boot-starter
+    schedule:
+      interval: weekly
+    groups:
+      maven-spring-boot-starter:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /samples/compile-time-proxy-consumer
+    schedule:
+      interval: weekly
+    groups:
+      maven-sample-compile-time-proxy-consumer:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /samples/spring-boot-consumer
+    schedule:
+      interval: weekly
+    groups:
+      maven-sample-spring-boot-consumer:
+        patterns:
+          - "*"

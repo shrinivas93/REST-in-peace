@@ -9,14 +9,20 @@ on:
 permissions:
   contents: read
 
+# See ci.yml's own copy of this block for why.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sample-consumer:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up JDK 8
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           java-version: '8'
           distribution: 'temurin'
@@ -68,9 +74,12 @@ jobs:
   # this job's GraalVM JDK doesn't affect that one's JDK 8 setup.
   native-image-smoke-test:
     runs-on: ubuntu-latest
+    # native-image ahead-of-time compilation is meaningfully slower than a
+    # plain JVM build; the other jobs' 15 minutes isn't enough headroom here.
+    timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # GraalVM's bundled JDK compiles this project's -source/-target 8
       # code just fine (it's simply reading older, always-forward-compatible
@@ -78,7 +87,7 @@ jobs:
       # the library and building the native executable, instead of juggling
       # two JDKs across the job.
       - name: Set up GraalVM
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@0426e2e191540e8514dff98dc52a5f5146a2a276 # v1
         with:
           java-version: '21'
           distribution: 'graalvm-community'

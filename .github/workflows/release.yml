@@ -16,9 +16,12 @@ jobs:
     permissions:
       contents: write
       actions: write
+    # release:prepare builds and tests the whole reactor before it ever
+    # tags/pushes anything, meaningfully longer than a plain test run.
+    timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: master
           fetch-depth: 0
@@ -28,7 +31,7 @@ jobs:
       # so this needs a JDK new enough for it - which also compiles core's
       # own -source/-target 8 code without issue.
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           java-version: '17'
           distribution: 'temurin'
