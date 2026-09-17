@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Significantly raised JaCoCo line coverage of `RestClientProcessor`
+  (66.2% -> 94.1%) and `CompileTimeRestClientValidator` (80.1% -> 99.1%),
+  the two classes behind compile-time proxy generation, by adding ~50 new
+  `CompileTimeValidationTest` cases compiling small in-memory `@RestClient`
+  fixtures through a real `javac` invocation - the only way to exercise
+  these two classes at all, since they only ever run during annotation
+  processing, not the ordinary Surefire test JVM `jacoco:prepare-agent`
+  instruments. New cases cover every previously-untested validator error
+  path (multiple HTTP method annotations, `@Body`/`@Multipart`/
+  `@FormUrlEncoded`/`@Destination`/`@Url`/`@QueryMap`/upload-and-download-
+  progress-listener misuse, an invalid URL, an unsupported
+  `CompletableFuture<T>` type argument), every HTTP verb besides
+  `GET`/`POST`, previously-uncovered param kinds (`@QueryMap`/`@HeaderMap`/
+  `@PartMap`/`@FieldMap`/`@HeaderParam`/`@QueryParam`/`@Url`/`@NoCache`),
+  every return-kind/sync-vs-async codegen branch (`byte[]`, `File`,
+  `RipResponse<T>`, `RipResponse<byte[]>`, all four in both sync and async
+  forms), an interface-level `@Timeout` default, `@ErrorType` resolution,
+  and the reflective-fallback path for a method outside the codegen-
+  supported shape (including one that takes a parameter, previously never
+  exercised). Deliberately skips validator-redundant branches inside
+  `RestClientProcessor` itself that `CompileTimeRestClientValidator`
+  already rejects earlier in the same call chain (e.g. `@Part` without
+  `@Multipart`) - those are unreachable in practice, not just untested.
+- Fixed a genuine codegen bug this uncovered: a method returning
+  `CompletableFuture<RipResponse<T>>` failed to compile with "inconvertible
+  types", since the generated code cast a `CompletableFuture<RipResponse<?>>`
+  intermediate straight to `CompletableFuture<RipResponse<T>>` - legal for
+  a *top-level* wildcard (as the synchronous `RipResponse<?>` case already
+  relies on) but not for one nested inside another parameterized type.
+
+## [1.0.0.40] - 2026-09-16
+
 ### Added
 
 - Codecov integration (`codecov/codecov-action@v5`, added to both `ci.yml`
