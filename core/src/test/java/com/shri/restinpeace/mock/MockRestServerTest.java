@@ -67,6 +67,7 @@ class MockRestServerTest {
 		assertEquals(HTTPMethod.GET, request.getHttpMethod());
 		assertEquals("/orders/abc123", request.getPath());
 		assertEquals("true", request.getQueryParam("verbose"));
+		assertNull(request.getQueryParam("missing"));
 	}
 
 	@Test
@@ -344,6 +345,9 @@ class MockRestServerTest {
 		assertEquals("file", file.getName());
 		assertEquals("data.bin", file.getFileName());
 		assertArrayEquals(new byte[] { 1, 2, 3, 4 }, file.getContent());
+		assertNotNull(file.getContentType());
+
+		assertTrue(request.getRawBody().length > 0);
 	}
 
 	@Test
@@ -354,6 +358,38 @@ class MockRestServerTest {
 
 		RecordedRequest request = server.takeRequest();
 		assertThrows(IllegalStateException.class, request::getParts);
+	}
+
+	@Test
+	void getParts_multipartContentTypeWithNoBoundary_throwsIllegalStateException() {
+		server.on(HTTPMethod.POST, "/orders", MockResponse.ok("{}"));
+
+		api.createOrderWithMultipartHeaderButNoBoundary("irrelevant");
+
+		RecordedRequest request = server.takeRequest();
+		IllegalStateException exception = assertThrows(IllegalStateException.class, request::getParts);
+		assertTrue(exception.getMessage().contains("No boundary found"));
+	}
+
+	@Test
+	void getParts_missingClosingBoundary_returnsNoPartsInsteadOfThrowing() {
+		server.on(HTTPMethod.POST, "/orders", MockResponse.ok("{}"));
+
+		api.createOrderWithTruncatedMultipart("--XYZ\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nvalue");
+
+		RecordedRequest request = server.takeRequest();
+		assertTrue(request.getParts().isEmpty());
+	}
+
+	@Test
+	void getQueryParam_valuelessFlag_returnsEmptyString() {
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}"));
+
+		api.getByUrl(server.baseUrl() + "/orders/abc123?debug&verbose=true");
+
+		RecordedRequest request = server.takeRequest();
+		assertEquals("", request.getQueryParam("debug"));
+		assertEquals("true", request.getQueryParam("verbose"));
 	}
 
 	@Test

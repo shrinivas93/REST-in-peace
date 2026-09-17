@@ -130,6 +130,41 @@ class RipMultipartIntegrationTest extends AbstractRipIntegrationTest {
 	}
 
 	@Test
+	void multipart_withStreamPartAndUploadProgressListener_stillReportsProgress() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		InputStream stream = new ByteArrayInputStream("stream contents".getBytes(StandardCharsets.UTF_8));
+		List<String> reportedFields = new ArrayList<>();
+
+		String result = api.uploadMultipartWithStreamAndProgress(port, "abc", stream, (field, bytesWritten, totalBytes) -> {
+			reportedFields.add(field);
+		});
+
+		assertEquals("ok", result);
+		assertFalse(reportedFields.isEmpty());
+	}
+
+	@Test
+	void multipart_withRenamedFileThatDoesNotExist_throwsRestInPeaceException() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		File missing = new File("/nonexistent-dir-xyz/missing.txt");
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> api.uploadMultipartWithRenamedFile(port, "abc", missing));
+		assertTrue(exception.getMessage().contains("does not exist"));
+	}
+
+	@Test
+	void partMap_withPartValueWrappingNull_throwsWithNullInTheMessage() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+		Map<String, Object> parts = new LinkedHashMap<>();
+		parts.put("bad", PartValue.of((File) null, "x"));
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> api.uploadMultipartWithPartMap(port, "abc", parts));
+		assertTrue(exception.getMessage().contains("Unsupported @Part/@PartMap value type null"));
+	}
+
+	@Test
 	void partMap_withMixedValueTypes_sendsEachAsAppropriatePart() {
 		LocalApi api = RIP.getClient(LocalApi.class);
 		Map<String, Object> parts = new LinkedHashMap<>();

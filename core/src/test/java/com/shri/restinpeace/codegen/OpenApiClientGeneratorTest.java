@@ -1,6 +1,7 @@
 package com.shri.restinpeace.codegen;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -142,6 +143,199 @@ class OpenApiClientGeneratorTest {
 		String source = readGenerated(outputDir, "CollisionApi");
 		assertTrue(source.contains("String getItems();"));
 		assertTrue(source.contains("String getItems2();"));
+	}
+
+	@Test
+	void generate_outputDirectoryCannotBeCreated_throwsIOException() throws IOException {
+		File specFile = writeSpec(SPEC);
+		File blockerFile = tempDir.resolve("blocker").toFile();
+		Files.write(blockerFile.toPath(), "not a directory".getBytes(StandardCharsets.UTF_8));
+		File outputDir = new File(blockerFile, "subdir");
+
+		assertThrows(IOException.class,
+				() -> OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "BlockedApi"));
+	}
+
+	@Test
+	void main_withValidArgs_generatesInterface() throws IOException {
+		File specFile = writeSpec(SPEC);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.main(
+				new String[] { specFile.getPath(), outputDir.getPath(), "com.example.generated", "MainInvokedApi" });
+
+		String source = readGenerated(outputDir, "MainInvokedApi");
+		assertTrue(source.contains("public interface MainInvokedApi"));
+	}
+
+	@Test
+	void generate_serverWithNoUrl_omitsBaseUrl() throws IOException {
+		String specWithUrllessServer = "{ \"servers\": [ {} ], \"paths\": { \"/items\": { \"get\": {} } } }";
+		File specFile = writeSpec(specWithUrllessServer);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "UrllessServerApi");
+
+		String source = readGenerated(outputDir, "UrllessServerApi");
+		assertFalse(source.contains("@BaseUrl"));
+	}
+
+	@Test
+	void generate_noPathsKey_generatesNoMethods() throws IOException {
+		String specWithoutPaths = "{ \"info\": { \"title\": \"x\" } }";
+		File specFile = writeSpec(specWithoutPaths);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "NoPathsApi");
+
+		String source = readGenerated(outputDir, "NoPathsApi");
+		assertTrue(source.contains("public interface NoPathsApi {"));
+		assertFalse(source.contains("@GET"));
+		assertFalse(source.contains("@POST"));
+	}
+
+	@Test
+	void generate_nonObjectPathValue_isSkipped() throws IOException {
+		String specWithBadPath = "" //
+				+ "{ \"paths\": {\n" //
+				+ "  \"/broken\": \"not-an-object\",\n" //
+				+ "  \"/items\": { \"get\": {} }\n" //
+				+ "} }";
+		File specFile = writeSpec(specWithBadPath);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "BadPathApi");
+
+		String source = readGenerated(outputDir, "BadPathApi");
+		assertTrue(source.contains("String getItems();"));
+		assertFalse(source.contains("broken"));
+	}
+
+	@Test
+	void generate_nonObjectOperationValue_isSkipped() throws IOException {
+		String specWithBadOperation = "" //
+				+ "{ \"paths\": {\n" //
+				+ "  \"/items\": { \"get\": \"oops\", \"post\": { \"operationId\": \"createItem\" } }\n" //
+				+ "} }";
+		File specFile = writeSpec(specWithBadOperation);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "BadOperationApi");
+
+		String source = readGenerated(outputDir, "BadOperationApi");
+		assertFalse(source.contains("@GET"));
+		assertTrue(source.contains("String createItem();"));
+	}
+
+	@Test
+	void generate_parameterMissingNameOrIn_isDropped() throws IOException {
+		String specWithBadParams = "" //
+				+ "{ \"paths\": { \"/items\": { \"get\": {\n" //
+				+ "  \"operationId\": \"listItems\",\n" //
+				+ "  \"parameters\": [\n" //
+				+ "    { \"in\": \"query\", \"schema\": { \"type\": \"string\" } },\n" //
+				+ "    { \"name\": \"orphan\" }\n" //
+				+ "  ]\n" //
+				+ "} } } }";
+		File specFile = writeSpec(specWithBadParams);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "BadParamsApi");
+
+		String source = readGenerated(outputDir, "BadParamsApi");
+		assertTrue(source.contains("String listItems();"));
+	}
+
+	@Test
+	void generate_requiredQueryParam_generatesRequiredTrue() throws IOException {
+		String specWithRequiredQuery = "" //
+				+ "{ \"paths\": { \"/items\": { \"get\": {\n" //
+				+ "  \"operationId\": \"listItems\",\n" //
+				+ "  \"parameters\": [\n" //
+				+ "    { \"name\": \"category\", \"in\": \"query\", \"required\": true, \"schema\": { \"type\": \"string\" } }\n" //
+				+ "  ]\n" //
+				+ "} } } }";
+		File specFile = writeSpec(specWithRequiredQuery);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "RequiredQueryApi");
+
+		String source = readGenerated(outputDir, "RequiredQueryApi");
+		assertTrue(
+				source.contains("String listItems(@QueryParam(value = \"category\", required = true) String category);"));
+	}
+
+	@Test
+	void generate_headerAndCookieParams_areSkipped() throws IOException {
+		String specWithHeaderParam = "" //
+				+ "{ \"paths\": { \"/items\": { \"get\": {\n" //
+				+ "  \"operationId\": \"listItems\",\n" //
+				+ "  \"parameters\": [\n" //
+				+ "    { \"name\": \"X-Api-Key\", \"in\": \"header\", \"schema\": { \"type\": \"string\" } },\n" //
+				+ "    { \"name\": \"session\", \"in\": \"cookie\", \"schema\": { \"type\": \"string\" } }\n" //
+				+ "  ]\n" //
+				+ "} } } }";
+		File specFile = writeSpec(specWithHeaderParam);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "HeaderParamApi");
+
+		String source = readGenerated(outputDir, "HeaderParamApi");
+		assertTrue(source.contains("String listItems();"));
+	}
+
+	@Test
+	void generate_uppercaseOperationId_getsFirstLetterLowerCased() throws IOException {
+		String specWithUppercaseId = "{ \"paths\": { \"/items\": { \"get\": { \"operationId\": \"GetItem\" } } } }";
+		File specFile = writeSpec(specWithUppercaseId);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "UppercaseIdApi");
+
+		String source = readGenerated(outputDir, "UppercaseIdApi");
+		assertTrue(source.contains("String getItem();"));
+	}
+
+	@Test
+	void generate_pathBasedFallbackNaming_stripsPathParamBraces() throws IOException {
+		String specWithoutOperationId = "{ \"paths\": { \"/widgets/{id}\": { \"delete\": {} } } }";
+		File specFile = writeSpec(specWithoutOperationId);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "FallbackNamingApi");
+
+		String source = readGenerated(outputDir, "FallbackNamingApi");
+		assertTrue(source.contains("String deleteWidgetsId();"));
+	}
+
+	@Test
+	void generate_nonIdentifierCharacters_getSanitizedToUnderscore() throws IOException {
+		String specWithHyphenParam = "" //
+				+ "{ \"paths\": { \"/items\": { \"get\": {\n" //
+				+ "  \"operationId\": \"listItems\",\n" //
+				+ "  \"parameters\": [\n" //
+				+ "    { \"name\": \"x-request-id\", \"in\": \"query\", \"schema\": { \"type\": \"string\" } }\n" //
+				+ "  ]\n" //
+				+ "} } } }";
+		File specFile = writeSpec(specWithHyphenParam);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "HyphenParamApi");
+
+		String source = readGenerated(outputDir, "HyphenParamApi");
+		assertTrue(source.contains("String x_request_id"));
+	}
+
+	@Test
+	void generate_emptyOperationId_sanitizesToUnderscoreMethodName() throws IOException {
+		String specWithEmptyOperationId = "{ \"paths\": { \"/items\": { \"get\": { \"operationId\": \"\" } } } }";
+		File specFile = writeSpec(specWithEmptyOperationId);
+		File outputDir = tempDir.resolve("out").toFile();
+
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "EmptyOperationIdApi");
+
+		String source = readGenerated(outputDir, "EmptyOperationIdApi");
+		assertTrue(source.contains("String _();"));
 	}
 
 	private File writeSpec(String json) throws IOException {

@@ -40,16 +40,26 @@ class MockRestServerExtensionTest {
 		assertEquals(0, server.requestCount());
 	}
 
+	@Test
+	void thirdTest_withAnotherParameterAlongsideTheServer_resolvesBothCorrectly(MockRestServer server,
+			org.junit.jupiter.api.TestInfo testInfo) {
+		assertEquals(0, server.requestCount());
+		assertEquals("thirdTest_withAnotherParameterAlongsideTheServer_resolvesBothCorrectly", testInfo.getTestMethod()
+				.map(java.lang.reflect.Method::getName).orElse(null));
+	}
+
 	@AfterAll
-	static void bothTestsSharedTheSameServerAndStartedWithResetState() {
-		assertEquals(2, baseUrlsSeen.size());
-		// Same base URL for both tests proves beforeAll started the server
+	static void allTestsSharedTheSameServerAndStartedWithResetState() {
+		assertEquals(3, baseUrlsSeen.size());
+		// Same base URL for every test proves beforeAll started the server
 		// once, not once per test.
 		assertEquals(baseUrlsSeen.get(0), baseUrlsSeen.get(1));
-		// Zero requests at the start of both proves beforeEach reset the
+		assertEquals(baseUrlsSeen.get(0), baseUrlsSeen.get(2));
+		// Zero requests at the start of every test proves beforeEach reset the
 		// shared server, not that each got a brand-new one.
 		assertEquals(0, (int) requestCountsAtStart.get(0));
 		assertEquals(0, (int) requestCountsAtStart.get(1));
+		assertEquals(0, (int) requestCountsAtStart.get(2));
 	}
 
 }

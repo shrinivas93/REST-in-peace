@@ -555,6 +555,25 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface ValidDownloadProgressListenerOnCompletableFutureBytes {
+		@GET("http://example.com")
+		CompletableFuture<byte[]> foo(DownloadProgressListener listener);
+	}
+
+	@RestClient
+	public interface ValidDownloadProgressListenerOnRipResponseBytes {
+		@GET("http://example.com")
+		RipResponse<byte[]> foo(DownloadProgressListener listener);
+	}
+
+	@RestClient
+	public interface HttpMethodAnnotationDeclaredAfterAnotherAnnotation {
+		@Headers("X-Fixed: value")
+		@GET("http://example.com")
+		String foo();
+	}
+
+	@RestClient
 	public interface ValidUploadProgressListener {
 		@POST("http://example.com")
 		@Multipart
@@ -1123,6 +1142,24 @@ class ReflectiveRestClientValidatorTest {
 				() -> ReflectiveRestClientValidator.validate(MultipleDownloadProgressListeners.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("more than one DownloadProgressListener parameter"));
+	}
+
+	@Test
+	void validate_validDownloadProgressListenerOnCompletableFutureBytes_passes() {
+		assertDoesNotThrow(
+				() -> ReflectiveRestClientValidator.validate(ValidDownloadProgressListenerOnCompletableFutureBytes.class));
+	}
+
+	@Test
+	void validate_validDownloadProgressListenerOnRipResponseBytes_passes() {
+		assertDoesNotThrow(
+				() -> ReflectiveRestClientValidator.validate(ValidDownloadProgressListenerOnRipResponseBytes.class));
+	}
+
+	@Test
+	void validate_httpMethodAnnotationDeclaredAfterAnotherAnnotation_stillFindsIt() {
+		assertDoesNotThrow(
+				() -> ReflectiveRestClientValidator.validate(HttpMethodAnnotationDeclaredAfterAnotherAnnotation.class));
 	}
 
 	@Test

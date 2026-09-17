@@ -125,6 +125,78 @@ class RipRetryIntegrationTest extends AbstractRipIntegrationTest {
 	}
 
 	@Test
+	void retry_asyncWithPermanentFailure_completesExceptionallyAfterConfiguredAttempts() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		CompletableFuture<String> future = api.getAlwaysFailingWithRetryAsync(port, "x");
+
+		ExecutionException exception = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
+		assertEquals(RestInPeaceHttpException.class, exception.getCause().getClass());
+		assertEquals(503, ((RestInPeaceHttpException) exception.getCause()).getStatus());
+		assertEquals(3, ALWAYS_FAILING_ATTEMPTS.get());
+	}
+
+	@Test
+	void retry_asyncDrivenPurelyByRipClientConfig_idempotentSendsAStableKeyAcrossEveryAttempt()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class, RipClientConfig.builder().retry(RetryConfig.builder().times(3)
+				.delayMillis(5).retryOnStatus(503).idempotent(true).build()).build());
+
+		String result = api.getFlakyWithNoRetryAnnotationAsync(port, "idempotent-async").get(5, TimeUnit.SECONDS);
+
+		assertEquals("ok", result);
+		assertEquals(3, IDEMPOTENCY_KEYS_SEEN.size());
+		assertNotNull(IDEMPOTENCY_KEYS_SEEN.get(0));
+		assertEquals(IDEMPOTENCY_KEYS_SEEN.get(0), IDEMPOTENCY_KEYS_SEEN.get(1));
+		assertEquals(IDEMPOTENCY_KEYS_SEEN.get(0), IDEMPOTENCY_KEYS_SEEN.get(2));
+	}
+
+	@Test
+	void retry_asyncWithExhaustedRetryBudget_stopsRetryingEarlyAndFails()
+			throws InterruptedException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class, RipClientConfig.builder().retryBudget(1, 60_000).build());
+
+		CompletableFuture<String> future = api.getFlakyAsync(port, "budget");
+
+		ExecutionException exception = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
+		assertEquals(RestInPeaceHttpException.class, exception.getCause().getClass());
+		// The 1-retry budget lets attempt 2 happen but blocks attempt 3, so the
+		// flaky endpoint (which only succeeds from its 3rd call onward) never
+		// gets the chance to return 200.
+		assertEquals(2, FLAKY_ATTEMPTS.get());
+	}
+
+	@Test
+	void retry_withJitterFactor_stillSucceedsAfterRetrying() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getFlakyWithJitter(port, "jitter");
+
+		assertEquals("ok", result);
+		assertEquals(3, FLAKY_ATTEMPTS.get());
+	}
+
+	@Test
+	void retry_withHttpDateRetryAfterHeader_parsesItAndStillSucceeds() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getFlaky(port, "retry-after-date");
+
+		assertEquals("ok", result);
+		assertEquals(3, FLAKY_ATTEMPTS.get());
+	}
+
+	@Test
+	void retry_withUnparsableRetryAfterHeader_fallsBackToTheComputedDelay() {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		String result = api.getFlaky(port, "retry-after-garbage");
+
+		assertEquals("ok", result);
+		assertEquals(3, FLAKY_ATTEMPTS.get());
+	}
+
+	@Test
 	void retry_methodAnnotation_winsOverRipClientConfigsDefault() {
 		// @Retry(times = 3) on getFlaky itself must win over this client's own
 		// times = 1 default - if the config wrongly took over, this would give up

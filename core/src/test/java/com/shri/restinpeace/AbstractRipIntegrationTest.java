@@ -6,6 +6,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -168,6 +171,11 @@ abstract class AbstractRipIntegrationTest {
 				@Part("file") java.io.File file, UploadProgressListener listener);
 
 		@POST("http://localhost:{port}/items/{id}")
+		@Multipart
+		String uploadMultipartWithStreamAndProgress(@PathParam("port") int port, @PathParam("id") String id,
+				@Part("stream") InputStream stream, UploadProgressListener listener);
+
+		@POST("http://localhost:{port}/items/{id}")
 		@FormUrlEncoded
 		String postFormUrlEncoded(@PathParam("port") int port, @PathParam("id") String id,
 				@Field("grant_type") String grantType, @Field("client_id") String clientId);
@@ -257,9 +265,22 @@ abstract class AbstractRipIntegrationTest {
 		@GET("http://localhost:{port}/flaky/{id}")
 		String getFlakyWithNoRetryAnnotation(@PathParam("port") int port, @PathParam("id") String id);
 
+		@GET("http://localhost:{port}/flaky/{id}")
+		CompletableFuture<String> getFlakyWithNoRetryAnnotationAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
+
+		@GET("http://localhost:{port}/flaky/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 }, jitterFactor = 0.5)
+		String getFlakyWithJitter(@PathParam("port") int port, @PathParam("id") String id);
+
 		@GET("http://localhost:{port}/always-503/{id}")
 		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
 		String getAlwaysFailingWithRetry(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/always-503/{id}")
+		@Retry(times = 3, delayMillis = 5, retryOnStatus = { 503 })
+		CompletableFuture<String> getAlwaysFailingWithRetryAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
 
 		@GET("http://localhost:{port}/always-503/{id}")
 		String getAlwaysFailingWithoutRetry(@PathParam("port") int port, @PathParam("id") String id);
@@ -321,6 +342,10 @@ abstract class AbstractRipIntegrationTest {
 
 		@GET("http://localhost:{port}/binary/{id}")
 		RipResponse<byte[]> downloadBytesWithResponse(@PathParam("port") int port, @PathParam("id") String id);
+
+		@GET("http://localhost:{port}/binary/{id}")
+		CompletableFuture<RipResponse<byte[]>> downloadBytesWithResponseAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
 
 		@GET("http://localhost:{port}/binary/{id}")
 		byte[] downloadBytesWithProgress(@PathParam("port") int port, @PathParam("id") String id,
@@ -431,6 +456,12 @@ abstract class AbstractRipIntegrationTest {
 			}
 		} else if (exchange.getRequestURI().getPath().startsWith("/flaky/")) {
 			boolean stillFailing = FLAKY_ATTEMPTS.getAndIncrement() < 2;
+			if (stillFailing && exchange.getRequestURI().getPath().endsWith("/retry-after-date")) {
+				exchange.getResponseHeaders().set("Retry-After",
+						DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC).minusSeconds(5)));
+			} else if (stillFailing && exchange.getRequestURI().getPath().endsWith("/retry-after-garbage")) {
+				exchange.getResponseHeaders().set("Retry-After", "banana");
+			}
 			byte[] response = (stillFailing ? "" : "ok").getBytes(StandardCharsets.UTF_8);
 			exchange.sendResponseHeaders(stillFailing ? 503 : 200, response.length);
 			try (OutputStream os = exchange.getResponseBody()) {

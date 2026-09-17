@@ -56,6 +56,18 @@ class RipDownloadIntegrationTest extends AbstractRipIntegrationTest {
 	}
 
 	@Test
+	void getAsync_withRipResponseOfByteArray_exposesStatusHeadersAndExactBytes()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RipResponse<byte[]> response = api.downloadBytesWithResponseAsync(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertEquals(200, response.getStatus());
+		assertEquals("application/octet-stream", response.getHeader("Content-Type"));
+		assertArrayEquals(BINARY_CONTENT, response.getBody());
+	}
+
+	@Test
 	void get_withByteArrayReturnTypeOnNonSuccessStatus_throwsWithStringRawBody() {
 		LocalApi api = RIP.getClient(LocalApi.class);
 
