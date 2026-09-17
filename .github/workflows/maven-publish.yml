@@ -24,14 +24,15 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
     # spring-boot-starter targets Java 17; one JDK 17 setup builds/publishes
     # the whole reactor (parent POM, core, and the starter) since javac
     # compiles core's own -source/-target 8 code fine on a newer JDK too.
     - name: Set up JDK 17
-      uses: actions/setup-java@v6
+      uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
       with:
         java-version: '17'
         distribution: 'temurin'

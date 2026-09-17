@@ -9,12 +9,18 @@ on:
 permissions:
   contents: read
 
+# See ci.yml's own copy of this block for why.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   spring-boot-starter:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # spring-boot-starter targets Java 17/Spring Boot 4.x, unlike the core
       # library (Java 8). One JDK 17 setup covers both: javac is backward
@@ -22,7 +28,7 @@ jobs:
       # library's own -source/-target 8 code without issue, then the
       # starter itself at its native Java 17 level.
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -40,7 +46,7 @@ jobs:
       # config, inherited from the root pom.xml, applies to this module too.
       - name: Upload JaCoCo coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: jacoco-report-spring-boot-starter
           path: spring-boot-starter/target/site/jacoco/
@@ -50,7 +56,7 @@ jobs:
       # keeps this distinct from core's own upload in the Codecov UI.
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: spring-boot-starter/target/site/jacoco/jacoco.xml
@@ -67,12 +73,13 @@ jobs:
   # from a failure in the starter's own unit tests.
   sample-spring-boot-consumer:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           java-version: '17'
           distribution: 'temurin'
