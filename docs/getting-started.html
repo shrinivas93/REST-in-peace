@@ -58,6 +58,7 @@
   .brand{ display:flex; flex-direction:column; gap:4px; }
   .brand .mark{ font-family:"Fraunces",serif; font-size:1.5rem; font-weight:600; line-height:1.15; }
   .brand .tag{ font-size:.8rem; color:var(--ink-soft); }
+  .brand .version{ font-family:"IBM Plex Mono",monospace; font-size:.7rem; color:var(--ink-faint); }
   .brand-links{ display:flex; gap:12px; margin-top:6px; }
   .brand-links a{
     font-family:"IBM Plex Mono",monospace; font-size:.72rem; text-decoration:none;
@@ -186,6 +187,7 @@
       <div class="brand">
         <span class="mark">REST-in-peace</span>
         <span class="tag">Field guide — every feature, every way to call it</span>
+        <span class="version">__RIP_VERSION__ · generated __RIP_BUILD_DATE__</span>
         <div class="brand-links">
           <a href="https://github.com/shrinivas93/REST-in-peace">GitHub ↗</a>
           <a href="apidocs/">Javadoc ↗</a>
@@ -1196,6 +1198,18 @@ class OrderApiTest {
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt</code></pre>
           </div>
           <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · simulate what @Retry/@Timeout actually handle</span>
+              <span class="snippet-caption">connectionFailure() aborts the socket - a transport error, not an HTTP status - the same failure shape a real dropped connection produces</span></div>
+            <pre><code class="language-java">server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.connectionFailure());
+// @Retry sees this exactly like a real network failure, no status code involved
+
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{}").delay(300));
+// proves a 200ms @Timeout(readMillis = 200) actually fires
+
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.notModified());
+// 304 shorthand for an ETag/If-None-Match revalidation round trip</code></pre>
+          </div>
+          <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · auto-report unhit routes</span>
               <span class="snippet-caption">requires the static @RegisterExtension field style - @ExtendWith can't call reportUnhitRoutes() first</span></div>
             <pre><code class="language-java">class OrderApiTest {
@@ -1209,6 +1223,14 @@ Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt
     }
 }</code></pre>
           </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · reset() between tests</span>
+              <span class="snippet-caption">clears registered routes, the enqueue() queue, and every recorded request - a clean server without restarting the HTTP listener</span></div>
+            <pre><code class="language-java">@BeforeEach
+void resetServer() {
+    server.reset();   // one shared server across a whole test class, no cross-test leakage
+}</code></pre>
+          </div>
           <div class="snippet neutral">
             <div class="snippet-head"><span class="snippet-tag">Unmatched request · closest-route suggestion</span>
               <span class="snippet-caption">same HTTP method, different path registered - usually a typo in the test setup</span></div>
@@ -1219,6 +1241,29 @@ api.createOrder("{...}");   // actually POSTs to /orders
 // RestInPeaceHttpException.getRawBody():
 // MockRestServer: no response was queued or registered for POST /orders.
 // Did you mean: POST /order?</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · match by header/body content</span>
+              <span class="snippet-caption">an extra Predicate&lt;RecordedRequest&gt; condition, on top of method + path - re-registering never replaces an earlier matcher route; remove() first if that's the intent</span></div>
+            <pre><code class="language-java">server.on(HTTPMethod.GET, "/orders/{id}",
+        request -> "v2".equals(request.getHeader("Accept-Version")),
+        MockResponse.json(new OrderV2("42")));
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(new Order("42")));
+// ^ plain fallback route for every request that doesn't match the predicate above</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · assert on what a @Multipart/@FormUrlEncoded request actually sent</span>
+              <span class="snippet-caption">getBody() can't represent a multipart request's binary parts - getParts()/getFormFields() decode what RIP actually built on the wire</span></div>
+            <pre><code class="language-java">RecordedRequest sent = server.takeRequest();
+
+RecordedRequest.Part file = sent.getParts().get(0);
+file.getName();               // "file"
+file.getFileName();           // "avatar.png"
+file.getContentType();        // "image/png"
+file.getContent();            // raw bytes
+file.getContentAsString();    // decoded as text - for a text part, not a binary one
+
+sent.getFormFields().get("grant_type");   // List.of("client_credentials") - @FormUrlEncoded instead</code></pre>
           </div>
           <div class="snippet spring">
             <div class="snippet-head"><span class="snippet-tag">Spring · @AutoConfigureMockRestServer</span>
