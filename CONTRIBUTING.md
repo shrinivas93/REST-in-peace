@@ -44,13 +44,13 @@ mvn javadoc:javadoc --file core/pom.xml
 `test` phase (`jacoco-maven-plugin` is configured once on the root `pom.xml`
 and inherited by both `core` and `spring-boot-starter` - no separate goal to
 remember). Open `core/target/site/jacoco/index.html` (or the equivalent path
-under `spring-boot-starter/target/`) in a browser after running tests; `ci.yml`
-and `spring-boot-starter-test.yml` also upload it as a build artifact on every
-run. Pinned to `0.8.12`, not the newer `0.8.13`, since the plugin itself has
-to run under whatever JDK executes the build - `ci.yml`'s `core` job runs
+under `spring-boot-starter/target/`) in a browser after running tests; `ci.yml`'s
+`test` and `spring-boot-starter` jobs also upload it as a build artifact on
+every run. Pinned to `0.8.12`, not the newer `0.8.13`, since the plugin itself
+has to run under whatever JDK executes the build - `ci.yml`'s `test` job runs
 under a real JDK 8, and `0.8.13` raised its own minimum to JDK 11.
 
-Both workflows also upload the same `jacoco.xml` to Codecov
+Both jobs also upload the same `jacoco.xml` to Codecov
 (`codecov/codecov-action`, one upload per module tagged with a `core`/
 `spring-boot-starter` flag) for the badge/PR-diff-coverage/trend layer the
 plain build artifact doesn't provide - see
@@ -80,9 +80,10 @@ uploaded this run" rather than failing CI outright.
   version-bump/tag commit (see below), which is bypass-listed for the
   `github-actions` bot specifically since `maven-release-plugin` pushes it
   directly by design.
-- Every PR and every push to `develop`/`master` runs `ci.yml` (`core`'s
-  test suite on Java 8) and `spring-boot-starter-test.yml` (the starter's
-  own tests plus the sample Spring Boot consumer, on Java 17) in parallel.
+- Every PR and every push to `develop`/`master` runs `ci.yml`'s five jobs in
+  parallel: `core`'s test suite (Java 8), the compile-time-proxy and
+  GraalVM native-image sample consumers (Java 8), and the Spring Boot
+  starter's own tests plus its sample consumer (Java 17).
 
 ## Release process (maintainers)
 

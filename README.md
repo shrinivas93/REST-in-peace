@@ -8,7 +8,6 @@ boilerplate. Annotate an interface, call `RIP.getClient(...)`, and invoke its
 methods like any other Java call.
 
 [![CI](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml)
-[![Sample Consumer Test](https://github.com/shrinivas93/REST-in-peace/actions/workflows/sample-consumer-test.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/sample-consumer-test.yml)
 [![codecov](https://codecov.io/gh/shrinivas93/REST-in-peace/branch/develop/graph/badge.svg)](https://codecov.io/gh/shrinivas93/REST-in-peace)
 [![Latest Release](https://img.shields.io/github/v/release/shrinivas93/REST-in-peace?label=release)](https://github.com/shrinivas93/REST-in-peace/releases/latest)
 [![Getting Started Guide](https://img.shields.io/badge/guide-field%20guide-8f5510)](https://shrinivas93.github.io/REST-in-peace/)
@@ -2084,8 +2083,9 @@ mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 
-See [`.github/workflows/sample-consumer-test.yml`](.github/workflows/sample-consumer-test.yml)
-for the exact steps CI runs, including the GraalVM native-image build.
+See the `sample-consumer` and `native-image-smoke-test` jobs in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the exact steps
+CI runs, including the GraalVM native-image build.
 
 ## Contributing
 
