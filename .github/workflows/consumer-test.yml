@@ -14,10 +14,11 @@ permissions:
 jobs:
   consumer-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Set up JDK 8
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           java-version: '8'
           distribution: 'temurin'
