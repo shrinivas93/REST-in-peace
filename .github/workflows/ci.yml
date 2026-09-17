@@ -138,19 +138,19 @@ jobs:
       # the library and building the native executable, instead of juggling
       # two JDKs across the job.
       #
-      # java-version pinned to '25', not '21': native-maven-plugin >= 1.1.x
-      # bundles a newer GraalVM reachability-metadata repository schema than
-      # GraalVM 21.0.2 (the '21' resolution at the time this was written)
-      # supports - confirmed by this exact failure surfacing when Dependabot
-      # bumped the plugin alone: "The configured GraalVM reachability
-      # metadata repository ... provides a reachability-metadata schema, but
-      # your GraalVM installation ... does not. Please update your GraalVM
-      # installation to a newer version." '25' is GraalVM Community's
-      # current latest major available from this action.
+      # Deliberately stays on '21', not a newer major: jumping to GraalVM 25
+      # was tried first (to chase a reachability-metadata schema mismatch,
+      # see the sample's own pom.xml comment) but regressed something more
+      # fundamental - javac from GraalVM 25 silently skipped annotation
+      # processing for this project's implicit (no annotationProcessorPaths)
+      # processor discovery, so RestClientProcessor never ran and
+      # ItemApi_RipImpl was never generated at all. The actual
+      # reachability-metadata fix is pinning the metadata repository version
+      # in the sample's own pom.xml instead, which needs no JDK change here.
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@0426e2e191540e8514dff98dc52a5f5146a2a276 # v1
         with:
-          java-version: '25'
+          java-version: '21'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
