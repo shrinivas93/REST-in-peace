@@ -362,6 +362,94 @@ class GeneratedApiTest {
 		assertTrue(Arrays.equals(BINARY_CONTENT, response.getBody()));
 	}
 
+	@Test
+	void getBinaryAsync_throughGeneratedImpl_decodesExactBytes()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		byte[] result = api.getBinaryAsync(port).get(5, TimeUnit.SECONDS);
+
+		assertTrue(Arrays.equals(BINARY_CONTENT, result));
+	}
+
+	@Test
+	void downloadBinaryAsync_throughGeneratedImpl_streamsToDestinationFile()
+			throws IOException, InterruptedException, ExecutionException, TimeoutException {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+		File target = File.createTempFile("generated-api-download-async", ".bin");
+		target.deleteOnExit();
+
+		File result = api.downloadBinaryAsync(port, target, (bytesWritten, totalBytes) -> {
+		}).get(5, TimeUnit.SECONDS);
+
+		assertEquals(target, result);
+		assertTrue(Arrays.equals(BINARY_CONTENT, Files.readAllBytes(target.toPath())));
+	}
+
+	@Test
+	void getWithResponseAsync_throughGeneratedImpl_wrapsStatusHeadersAndBody()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		RipResponse<String> response = api.getWithResponseAsync(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertEquals(200, response.getStatus());
+		assertEquals("path=/items/abc;query=null", response.getBody());
+	}
+
+	@Test
+	void getBinaryWithResponseAsync_throughGeneratedImpl_wrapsStatusHeadersAndBinaryBody()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		RipResponse<byte[]> response = api.getBinaryWithResponseAsync(port).get(5, TimeUnit.SECONDS);
+
+		assertEquals(200, response.getStatus());
+		assertTrue(Arrays.equals(BINARY_CONTENT, response.getBody()));
+	}
+
+	@Test
+	void echoWithConnectTimeout_throughGeneratedImpl_appliesTheConfiguredConnectTimeout() {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		api.echoWithConnectTimeout(port, "fixed-value", null, "required-value", new HashMap<>(), new HashMap<>());
+
+		assertEquals("fixed-value", header(LAST_REQUEST.get(), "X-Fixed"));
+	}
+
+	@Test
+	void getByUrl_nullUrlParam_throws() {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		assertThrows(RuntimeException.class, () -> api.getByUrl(null));
+	}
+
+	@Test
+	void getItem_withInterfaceLevelBaseUrlAndNoRuntimeOverride_resolvesAgainstItThenFailsToConnect() {
+		// localhost:1 always refuses the connection - proves the interface's own
+		// @BaseUrl was actually used to resolve the URL (a missing/failed base URL
+		// resolution would throw before ever reaching the network at all).
+		GeneratedApiWithBaseUrl api = RIP.getClient(GeneratedApiWithBaseUrl.class);
+
+		assertThrows(RuntimeException.class, () -> api.getItem("abc"));
+	}
+
+	@Test
+	void getItem_withInterfaceLevelBaseUrlAndNullPathParam_throwsBeforeAnyNetworkCall() {
+		GeneratedApiWithBaseUrl api = RIP.getClient(GeneratedApiWithBaseUrl.class);
+
+		assertThrows(RuntimeException.class, () -> api.getItem(null));
+	}
+
+	@Test
+	void echoBody_nullBody_sendsNoBody() {
+		GeneratedApi api = RIP.getClient(GeneratedApi.class);
+
+		api.echoBody(port, null);
+
+		assertEquals("", LAST_REQUEST.get().body);
+	}
+
 	private static String header(CapturedRequest request, String name) {
 		List<String> values = request.headers.get(name);
 		return values == null ? null : values.get(0);

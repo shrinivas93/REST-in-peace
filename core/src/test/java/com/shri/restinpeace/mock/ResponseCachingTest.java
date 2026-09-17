@@ -74,6 +74,92 @@ class ResponseCachingTest {
 	}
 
 	@Test
+	void asyncCall_staleEntryWithETag_revalidatesAndServesTheCachedBodyOn304()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		server.on(HTTPMethod.GET, "/items/{id}", request -> request.getHeader("If-None-Match") == null,
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0").header("ETag", "\"abc\""));
+		server.on(HTTPMethod.GET, "/items/{id}", request -> "\"abc\"".equals(request.getHeader("If-None-Match")),
+				MockResponse.notModified());
+
+		String first = api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+		String second = api.getItemAsync("42").get(2, TimeUnit.SECONDS);
+
+		assertEquals("{\"v\":1}", first);
+		assertEquals("{\"v\":1}", second);
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void staleEntryWithLastModifiedOnly_revalidatesUsingIfModifiedSince() {
+		server.on(HTTPMethod.GET, "/items/{id}", request -> request.getHeader("If-Modified-Since") == null,
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "max-age=0").header("Last-Modified",
+						"Wed, 21 Oct 2015 07:28:00 GMT"));
+		server.on(HTTPMethod.GET, "/items/{id}",
+				request -> "Wed, 21 Oct 2015 07:28:00 GMT".equals(request.getHeader("If-Modified-Since")),
+				MockResponse.notModified());
+
+		String first = api.getItem("42");
+		String second = api.getItem("42");
+
+		assertEquals("{\"v\":1}", first);
+		assertEquals("{\"v\":1}", second);
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void noCacheDirective_alwaysRevalidatesEvenThoughTheEntryWouldOtherwiseBeFresh() {
+		server.on(HTTPMethod.GET, "/items/{id}", request -> request.getHeader("If-None-Match") == null,
+				MockResponse.ok("{\"v\":1}").header("Cache-Control", "no-cache, max-age=60").header("ETag", "\"abc\""));
+		server.on(HTTPMethod.GET, "/items/{id}", request -> "\"abc\"".equals(request.getHeader("If-None-Match")),
+				MockResponse.notModified());
+
+		String first = api.getItem("42");
+		String second = api.getItem("42");
+
+		assertEquals("{\"v\":1}", first);
+		assertEquals("{\"v\":1}", second);
+		// "no-cache" (unlike "no-store") still stores the entry, but treats it as
+		// always-stale - unlike a plain max-age=60 entry (freshEntry_isServedWithoutHittingTheNetworkAgain),
+		// the second call must revalidate over the network (and gets a 304).
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void malformedMaxAge_failsOpenAndTreatsTheDirectiveAsAbsent() {
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.ok("{}").header("Cache-Control", "max-age=notanumber"));
+
+		api.getItem("42");
+		api.getItem("42");
+
+		// A malformed max-age (with no ETag/Last-Modified either) fails open exactly
+		// like no freshness/validator directive at all (see noFreshnessOrValidator_isNeverCached)
+		// - never cached, not "cached forever".
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void globalNegativeCacheTtlDefault_appliesWhenNoPerClientOverrideIsConfigured() throws Exception {
+		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.status(404, "{\"error\":\"not found\"}"));
+		RIP.setNegativeCacheTtlMillis(60_000);
+		try {
+			assertThrows(RestInPeaceHttpException.class, () -> api.getItem("42"));
+			assertThrows(RestInPeaceHttpException.class, () -> api.getItem("42"));
+
+			assertEquals(1, server.requestCount());
+		} finally {
+			// RIP.setNegativeCacheTtlMillis(long) has no symmetric "off" call (unlike
+			// RIP.setCache(null)) since the shared default is a process-global static -
+			// reset it directly so this test doesn't leak negative caching into every
+			// other test in this class (several of which rely on it being off by default).
+			Class<?> cacheCoordinatorClass = Class.forName("com.shri.restinpeace.internal.CacheCoordinator");
+			java.lang.reflect.Field defaultTtlField = cacheCoordinatorClass
+					.getDeclaredField("DEFAULT_NEGATIVE_CACHE_TTL_MILLIS");
+			defaultTtlField.setAccessible(true);
+			defaultTtlField.set(null, null);
+		}
+	}
+
+	@Test
 	void noStoreDirective_isNeverCached() {
 		server.on(HTTPMethod.GET, "/items/{id}", MockResponse.ok("{}").header("Cache-Control", "no-store"));
 
@@ -151,6 +237,24 @@ class ResponseCachingTest {
 
 		String english = api.getLocalizedItem("42", "en");
 		String french = api.getLocalizedItem("42", "fr");
+
+		assertEquals("{\"lang\":\"en\"}", english);
+		assertEquals("{\"lang\":\"fr\"}", french);
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void asyncCall_vary_differentHeaderValue_isNotServedTheOtherVariantsCache()
+			throws InterruptedException, ExecutionException, TimeoutException {
+		server.on(HTTPMethod.GET, "/localized/{id}", request -> "en".equals(request.getHeader("Accept-Language")),
+				MockResponse.ok("{\"lang\":\"en\"}").header("Cache-Control", "max-age=60").header("Vary",
+						"Accept-Language"));
+		server.on(HTTPMethod.GET, "/localized/{id}", request -> "fr".equals(request.getHeader("Accept-Language")),
+				MockResponse.ok("{\"lang\":\"fr\"}").header("Cache-Control", "max-age=60").header("Vary",
+						"Accept-Language"));
+
+		String english = api.getLocalizedItemAsync("42", "en").get(2, TimeUnit.SECONDS);
+		String french = api.getLocalizedItemAsync("42", "fr").get(2, TimeUnit.SECONDS);
 
 		assertEquals("{\"lang\":\"en\"}", english);
 		assertEquals("{\"lang\":\"fr\"}", french);
