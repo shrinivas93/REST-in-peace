@@ -24,7 +24,7 @@
 	-->
 	<groupId>com.shri</groupId>
 	<artifactId>rest-in-peace-parent</artifactId>
-	<version>1.0.0.42-SNAPSHOT</version>
+	<version>1.0.0.43-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>
@@ -67,7 +67,7 @@
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.8.12</version>
+				<version>0.8.15</version>
 				<executions>
 					<!-- Binds the coverage agent into surefire's argLine - no
 					     explicit <phase>, so it uses prepare-agent's own default
