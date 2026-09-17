@@ -77,23 +77,31 @@
 								     exists to catch. -->
 								<buildArg>--no-fallback</buildArg>
 							</buildArgs>
-							<!-- Pinned to the exact reachability-metadata repository
-							     version native-maven-plugin 0.10.3 (this project's
-							     previous plugin version) itself bundled, rather than
-							     1.1.12's own newer default (1.0.13) - that newer schema
-							     needs a GraalVM release beyond the CI-pinned 21.0.2
-							     ("your GraalVM installation ... does not [support this
-							     schema]. Please update your GraalVM installation to a
-							     newer version."), and bumping the pinned GraalVM major
-							     instead broke annotation processing for this project's
-							     own compile-time codegen (see ci.yml's own comment on
-							     that). Keeps the exact per-library configs
-							     (Apache HttpClient/HttpCore/HttpMime, commons-logging,
-							     commons-codec, Gson) this smoke test's real HTTP call
-							     needs at runtime under native-image's closed-world
-							     analysis, unchanged from what was already working. -->
+							<!-- Pinned one metadata release below native-maven-plugin
+							     1.1.12's own default (1.0.13) - narrowed down empirically
+							     between two failures on opposite sides of this same
+							     window: 1.0.13 (the plugin's default) needs a GraalVM
+							     release beyond the CI-pinned 21.0.2 ("your GraalVM
+							     installation ... does not [support this schema]. Please
+							     update your GraalVM installation to a newer version.");
+							     an earlier attempt at a much older release, 0.3.9 (what
+							     this project's previous plugin version, 0.10.3, itself
+							     bundled), turned out to be too old for 1.1.12's own
+							     tooling instead ("does not contain a 'schemas'
+							     directory. Requires GraalVM Reachability Metadata 0.3.33
+							     or newer"). 1.0.12 is what native-maven-plugin 1.1.11
+							     (one release before the 1.0.13 bump) itself used -
+							     bumping the pinned GraalVM major instead of narrowing
+							     this window was tried first but broke annotation
+							     processing for this project's own compile-time codegen
+							     (see ci.yml's own comment on that). Keeps the exact
+							     per-library configs (Apache HttpClient/HttpCore/HttpMime,
+							     commons-logging, commons-codec, Gson) this smoke test's
+							     real HTTP call needs at runtime under native-image's
+							     closed-world analysis, unchanged from what was already
+							     working. -->
 							<metadataRepository>
-								<version>0.3.9</version>
+								<version>1.0.12</version>
 							</metadataRepository>
 						</configuration>
 					</plugin>
