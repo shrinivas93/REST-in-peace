@@ -120,6 +120,18 @@ class RedactingLoggingInterceptorTest {
 	}
 
 	@Test
+	void afterResponse_withNoPrecedingBeforeRequest_logsUnknownDuration() {
+		List<String> lines = new ArrayList<>();
+		RedactingLoggingInterceptor interceptor = new RedactingLoggingInterceptor(
+				RedactingLoggingInterceptor.DEFAULT_SENSITIVE_FIELD_NAMES, lines::add);
+		RequestContext context = new RequestContext(HTTPMethod.GET, "https://api.example.com/orders/42");
+
+		interceptor.afterResponse(context, 200, null);
+
+		assertEquals("<-- GET https://api.example.com/orders/42 200 (?)", lines.get(0));
+	}
+
+	@Test
 	void defaultConstructor_logsToSystemOutAndUsesDefaultFieldNames() {
 		RedactingLoggingInterceptor interceptor = new RedactingLoggingInterceptor();
 

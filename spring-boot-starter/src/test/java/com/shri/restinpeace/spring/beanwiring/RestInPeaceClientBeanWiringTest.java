@@ -13,7 +13,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.AnnotatedGenericBeanDefinition;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -298,6 +300,77 @@ class RestInPeaceClientBeanWiringTest {
 
 			assertEquals("cached-ok", wiringApi.getCacheable(port));
 
+			assertTrue(cache.getCalls.get() > 0, "expected the wired Cache to be consulted at least once");
+			assertTrue(cache.putCalls.get() > 0, "expected the cacheable response to be stored");
+		}
+	}
+
+	@Qualifier("wiring-api")
+	static final class ClassLevelQualifiedCache implements Cache {
+		final AtomicInteger getCalls = new AtomicInteger();
+		final AtomicInteger putCalls = new AtomicInteger();
+
+		@Override
+		public CachedResponse get(String key) {
+			getCalls.incrementAndGet();
+			return null;
+		}
+
+		@Override
+		public void put(String key, CachedResponse response) {
+			putCalls.incrementAndGet();
+		}
+
+		@Override
+		public void evict(String key) {
+		}
+
+		@Override
+		public void clear() {
+		}
+	}
+
+	@Configuration
+	@EnableRestInPeaceClients(basePackages = "com.shri.restinpeace.spring.beanwiring")
+	static class EmptyConfig {
+	}
+
+	@Test
+	void restInPeaceClient_withNonAnnotatedBeanDefinitionObjectMapper_stillUsesItAsSharedDefault() {
+		// RestInPeaceBeanQualifiers.qualifierValue(...) must return empty (not
+		// throw) for a bean whose definition isn't an AnnotatedBeanDefinition at
+		// all - unlike every other bean in this file, which comes from an @Bean
+		// factory method or component scan.
+		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+			RootBeanDefinition rawMapperDefinition = new RootBeanDefinition(FixedValueObjectMapper.class,
+					() -> new FixedValueObjectMapper(new Payload("from-raw-mapper")));
+			context.registerBeanDefinition("rawMapper", rawMapperDefinition);
+			context.register(EmptyConfig.class);
+			context.refresh();
+
+			WiringApi wiringApi = context.getBean(WiringApi.class);
+
+			assertEquals("from-raw-mapper", wiringApi.getData(port).value);
+		}
+	}
+
+	@Test
+	void restInPeaceClient_withClassLevelQualifiedCache_isConsultedForCacheableResponses() {
+		// Every other qualified bean in this file comes from a @Bean factory
+		// method (so RestInPeaceBeanQualifiers reads its @Qualifier off the
+		// factory *method*'s metadata) - registering the class directly (as a
+		// real @Component scan would) instead carries the @Qualifier on the
+		// bean's own *class* metadata.
+		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+			context.registerBeanDefinition("classLevelQualifiedCache",
+					new AnnotatedGenericBeanDefinition(ClassLevelQualifiedCache.class));
+			context.register(EmptyConfig.class);
+			context.refresh();
+
+			WiringApi wiringApi = context.getBean(WiringApi.class);
+			ClassLevelQualifiedCache cache = context.getBean(ClassLevelQualifiedCache.class);
+
+			assertEquals("cached-ok", wiringApi.getCacheable(port));
 			assertTrue(cache.getCalls.get() > 0, "expected the wired Cache to be consulted at least once");
 			assertTrue(cache.putCalls.get() > 0, "expected the cacheable response to be stored");
 		}

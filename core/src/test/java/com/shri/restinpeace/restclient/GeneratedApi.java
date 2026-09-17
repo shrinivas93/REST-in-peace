@@ -2,6 +2,7 @@ package com.shri.restinpeace.restclient;
 
 import java.io.File;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.error.ErrorType;
@@ -62,12 +63,33 @@ public interface GeneratedApi {
 	byte[] getBinary(@PathParam("port") int port);
 
 	@GET("http://localhost:{port}/binary")
+	CompletableFuture<byte[]> getBinaryAsync(@PathParam("port") int port);
+
+	@GET("http://localhost:{port}/binary")
 	File downloadBinary(@PathParam("port") int port, @Destination File target, DownloadProgressListener onProgress);
+
+	@GET("http://localhost:{port}/binary")
+	CompletableFuture<File> downloadBinaryAsync(@PathParam("port") int port, @Destination File target,
+			DownloadProgressListener onProgress);
 
 	@GET("http://localhost:{port}/items/{id}")
 	RipResponse<String> getWithResponse(@PathParam("port") int port, @PathParam("id") String id);
 
+	@GET("http://localhost:{port}/items/{id}")
+	CompletableFuture<RipResponse<String>> getWithResponseAsync(@PathParam("port") int port,
+			@PathParam("id") String id);
+
 	@GET("http://localhost:{port}/binary")
 	RipResponse<byte[]> getBinaryWithResponse(@PathParam("port") int port);
+
+	@GET("http://localhost:{port}/binary")
+	CompletableFuture<RipResponse<byte[]>> getBinaryWithResponseAsync(@PathParam("port") int port);
+
+	@GET("http://localhost:{port}/echo")
+	@Timeout(connectMillis = 5_000)
+	String echoWithConnectTimeout(@PathParam("port") int port, @HeaderParam("X-Fixed") String headerValue,
+			@HeaderParam(value = "X-Default", defaultValue = "header-default") String headerDefault,
+			@QueryParam(value = "q", required = true) String requiredQuery, @QueryMap Map<String, String> queryMap,
+			@HeaderMap Map<String, String> headerMap);
 
 }

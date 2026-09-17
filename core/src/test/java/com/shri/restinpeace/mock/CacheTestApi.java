@@ -31,6 +31,10 @@ public interface CacheTestApi {
 	@GET("/localized/{id}")
 	String getLocalizedItem(@PathParam("id") String id, @HeaderParam("Accept-Language") String language);
 
+	@GET("/localized/{id}")
+	CompletableFuture<String> getLocalizedItemAsync(@PathParam("id") String id,
+			@HeaderParam("Accept-Language") String language);
+
 	@GET("/search")
 	String search(@QueryParam("page") String page);
 

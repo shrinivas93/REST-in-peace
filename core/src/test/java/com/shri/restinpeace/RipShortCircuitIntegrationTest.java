@@ -112,6 +112,22 @@ class RipShortCircuitIntegrationTest extends AbstractRipIntegrationTest {
 	}
 
 	@Test
+	void shortCircuit_appliesToAsyncByteArrayReturn() throws InterruptedException, ExecutionException, TimeoutException {
+		RIP.addInterceptor(new RequestInterceptor() {
+			@Override
+			public ShortCircuitResponse shortCircuit(RequestContext context) {
+				return ShortCircuitResponse.ok("synthetic-async-bytes");
+			}
+		});
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		byte[] result = api.downloadBytesAsync(port, "abc").get(5, TimeUnit.SECONDS);
+
+		assertArrayEquals("synthetic-async-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8), result);
+		assertNull(LAST_REQUEST.get());
+	}
+
+	@Test
 	void shortCircuit_appliesToRipResponseReturn() {
 		RIP.addInterceptor(new RequestInterceptor() {
 			@Override

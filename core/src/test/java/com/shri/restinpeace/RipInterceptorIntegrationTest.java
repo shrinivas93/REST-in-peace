@@ -150,6 +150,21 @@ class RipInterceptorIntegrationTest extends AbstractRipIntegrationTest {
 	}
 
 	@Test
+	void removeInterceptor_stopsOnlyThatOneInterceptorFromRunning() {
+		List<String> order = new ArrayList<>();
+		RequestInterceptor first = namedInterceptor("first", order);
+		RequestInterceptor second = namedInterceptor("second", order);
+		RIP.addInterceptor(first);
+		RIP.addInterceptor(second);
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		RIP.removeInterceptor(first);
+		api.get(port, "abc", 7, "custom-value");
+
+		assertEquals(Arrays.asList("second-before", "second-after"), order);
+	}
+
+	@Test
 	void getClient_withRipClientConfigInterceptor_runsForThatClientOnly() {
 		List<String> order = new ArrayList<>();
 		LocalApi customApi = RIP.getClient(LocalApi.class,

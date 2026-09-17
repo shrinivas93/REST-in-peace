@@ -19,6 +19,7 @@ import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
+import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
 
@@ -97,6 +98,17 @@ public interface MockServerTestApi {
 	@FormUrlEncoded
 	String getTokenWithDefaultScope(@Field("grant_type") String grantType,
 			@Field(value = "scope", defaultValue = "read") String scope);
+
+	@POST("/orders")
+	@Headers({ "Content-Type: multipart/form-data" })
+	String createOrderWithMultipartHeaderButNoBoundary(@Body String payload);
+
+	@POST("/orders")
+	@Headers({ "Content-Type: multipart/form-data; boundary=XYZ" })
+	String createOrderWithTruncatedMultipart(@Body String payload);
+
+	@GET
+	String getByUrl(@Url String url);
 
 	final class XmlPayload {
 		public String sku;

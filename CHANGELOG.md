@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Significantly raised JaCoCo line coverage of `RestClientProcessor`
+  (66.2% -> 94.1%) and `CompileTimeRestClientValidator` (80.1% -> 99.1%),
+  the two classes behind compile-time proxy generation, by adding ~50 new
+  `CompileTimeValidationTest` cases compiling small in-memory `@RestClient`
+  fixtures through a real `javac` invocation - the only way to exercise
+  these two classes at all, since they only ever run during annotation
+  processing, not the ordinary Surefire test JVM `jacoco:prepare-agent`
+  instruments. New cases cover every previously-untested validator error
+  path (multiple HTTP method annotations, `@Body`/`@Multipart`/
+  `@FormUrlEncoded`/`@Destination`/`@Url`/`@QueryMap`/upload-and-download-
+  progress-listener misuse, an invalid URL, an unsupported
+  `CompletableFuture<T>` type argument), every HTTP verb besides
+  `GET`/`POST`, previously-uncovered param kinds (`@QueryMap`/`@HeaderMap`/
+  `@PartMap`/`@FieldMap`/`@HeaderParam`/`@QueryParam`/`@Url`/`@NoCache`),
+  every return-kind/sync-vs-async codegen branch (`byte[]`, `File`,
+  `RipResponse<T>`, `RipResponse<byte[]>`, all four in both sync and async
+  forms), an interface-level `@Timeout` default, `@ErrorType` resolution,
+  and the reflective-fallback path for a method outside the codegen-
+  supported shape (including one that takes a parameter, previously never
+  exercised). Deliberately skips validator-redundant branches inside
+  `RestClientProcessor` itself that `CompileTimeRestClientValidator`
+  already rejects earlier in the same call chain (e.g. `@Part` without
+  `@Multipart`) - those are unreachable in practice, not just untested.
+- Fixed a genuine codegen bug this uncovered: a method returning
+  `CompletableFuture<RipResponse<T>>` failed to compile with "inconvertible
+  types", since the generated code cast a `CompletableFuture<RipResponse<?>>`
+  intermediate straight to `CompletableFuture<RipResponse<T>>` - legal for
+  a *top-level* wildcard (as the synchronous `RipResponse<?>` case already
+  relies on) but not for one nested inside another parameterized type.
+- Raised JaCoCo coverage across the rest of `core` (92.0% -> 95.8% line,
+  87.9% -> 91.7% branch) and all of `spring-boot-starter` (91.1% -> 97.9%
+  line, 84.0% -> 92.0% branch) with ~110 new test cases, following a full
+  audit of every remaining gap (reachable vs. genuinely unreachable) across
+  both modules. Highlights: an async (`CompletableFuture`) counterpart for
+  nearly every previously sync-only retry/caching/interceptor-short-circuit/
+  generated-dispatch feature (permanent-failure exhaustion, a `RetryBudget`
+  cap, an HTTP-date `Retry-After` header, jitter, plain ETag/Last-Modified
+  revalidation, a Vary mismatch, async-`byte[]` short-circuiting); every
+  builder/setter method no test had ever called (`RetryConfig.Builder`,
+  `RIP.removeInterceptor`/`setNegativeCacheTtlMillis`, `PartValue.of(InputStream, ...)`);
+  an interface-level `@BaseUrl` fallback and null-`@PathParam` throw on the
+  compile-time-generated path (previously only the reflective path's
+  equivalents were tested); a dozen new `OpenApiClientGenerator` spec
+  fixtures (malformed paths/operations/parameters, header/cookie params,
+  identifier sanitization); and, in `spring-boot-starter`, `connect-timeout-millis`/
+  proxy-credential properties, `@EnableRestInPeaceClients` with no
+  `basePackages`, `@RestClient(name = ...)`, and both
+  `RestInPeaceBeanQualifiers` metadata-resolution branches (a non-
+  `@Bean`-sourced bean, a class-level `@Qualifier`). Deliberately left
+  alone: branches already rejected earlier by
+  `ReflectiveRestClientValidator`/`CompileTimeRestClientValidator`, the JDK's
+  own guarantees (UTF-8 support, a dynamic `Proxy`'s non-null `args`), a
+  closed `HTTPMethod` `switch`'s defensive `default` arm, `System.exit(1)`
+  in `OpenApiClientGenerator.main`, and a private, duplicate-of-
+  `SyntheticHttpResponse` stub class (`CacheCoordinator$CachedHttpResponse`)
+  with no real caller.
+
+## [1.0.0.40] - 2026-09-16
+
 ### Added
 
 - Codecov integration (`codecov/codecov-action@v5`, added to both `ci.yml`

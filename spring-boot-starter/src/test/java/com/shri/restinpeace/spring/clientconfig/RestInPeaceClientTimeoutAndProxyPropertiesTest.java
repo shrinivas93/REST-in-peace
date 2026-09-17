@@ -122,4 +122,36 @@ class RestInPeaceClientTimeoutAndProxyPropertiesTest {
 		}
 	}
 
+	@Test
+	void restInPeaceClient_withConnectTimeoutMillisProperty_stillSucceedsWithAGenerousValue() {
+		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+			context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test",
+					Collections.singletonMap("rest-in-peace.clients.slowApi.connect-timeout-millis", "5000")));
+			context.register(TestConfig.class);
+			context.refresh();
+
+			SlowApi slowApi = context.getBean(SlowApi.class);
+
+			assertEquals("ok", slowApi.getSlow(port));
+		}
+	}
+
+	@Test
+	void restInPeaceClient_withUnreachableProxyAndCredentialsProperties_throws() {
+		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+			Map<String, Object> proxyProperties = new HashMap<>();
+			proxyProperties.put("rest-in-peace.clients.slowApi.proxy.host", "localhost");
+			proxyProperties.put("rest-in-peace.clients.slowApi.proxy.port", "1");
+			proxyProperties.put("rest-in-peace.clients.slowApi.proxy.username", "user");
+			proxyProperties.put("rest-in-peace.clients.slowApi.proxy.password", "pass");
+			context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", proxyProperties));
+			context.register(TestConfig.class);
+			context.refresh();
+
+			SlowApi slowApi = context.getBean(SlowApi.class);
+
+			assertThrows(RuntimeException.class, () -> slowApi.getSlow(port));
+		}
+	}
+
 }

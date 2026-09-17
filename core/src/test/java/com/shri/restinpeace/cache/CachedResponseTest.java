@@ -17,6 +17,7 @@ class CachedResponseTest {
 				Collections.emptyMap());
 
 		assertEquals(freshUntil, cached.getStaleWhileRevalidateUntilEpochMillis());
+		assertEquals(freshUntil, cached.getFreshUntilEpochMillis());
 	}
 
 	@Test

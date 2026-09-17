@@ -810,7 +810,13 @@ public class RestClientProcessor extends AbstractProcessor {
 						.append(retryArgsLiteral).append(");\n");
 			} else {
 				String finishRipResponse = async ? "finishGeneratedAsyncRipResponse" : "finishGeneratedSyncRipResponse";
-				String ripResultType = async ? "java.util.concurrent.CompletableFuture<com.shri.restinpeace.RipResponse<?>>"
+				// A wildcard nested inside CompletableFuture's own type argument (unlike the
+				// sync case's top-level RipResponse<?>) isn't directly castable to the
+				// generated method's own CompletableFuture<RipResponse<T>> return type -
+				// javac rejects it as "inconvertible types", not just an unchecked-cast
+				// warning - so the async intermediate is raw instead, exactly like the
+				// PLAIN case's own Object/CompletableFuture<?> intermediate above.
+				String ripResultType = async ? "java.util.concurrent.CompletableFuture"
 						: "com.shri.restinpeace.RipResponse<?>";
 				out.append("\t\t").append(ripResultType).append(" __ripResult = this.ripProcessor.")
 						.append(finishRipResponse).append("(__ripRequest, __ripContext, ")
