@@ -8,6 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `docs/getting-started.html` (the published field guide) now documents
+  five `MockRestServer`/`RecordedRequest`/`MockResponse` capabilities that
+  had shipped in code and in this changelog but were missing from the
+  page itself: matching a route by header/body content via
+  `on(httpMethod, pathTemplate, Predicate<RecordedRequest>, response)`;
+  decoding what a `@Multipart`/`@FormUrlEncoded` request actually sent via
+  `RecordedRequest.getParts()`/`getFormFields()`; simulating the failure
+  shapes `@Retry`/`@Timeout` actually handle via
+  `MockResponse.connectionFailure()`/`.delay(millis)`/`.notModified()`;
+  and clearing a shared server between tests via `MockRestServer.reset()`.
+  Found by diffing the live page against the actual public API surface.
+- The field guide's sidebar now shows the exact version and build date it
+  was generated from (`v1.0.0.N · generated YYYY-MM-DD`), so a reader can
+  tell at a glance whether it's in sync with the latest release instead of
+  having to diff the page against the repo by hand. `docs/getting-started.html`
+  keeps `__RIP_VERSION__`/`__RIP_BUILD_DATE__` placeholders in source
+  control; `javadoc.yml`'s "Assemble site" step stamps the published copy
+  with the checked-out ref's actual `pom.xml` version (prefixed `v` to
+  match `maven-release-plugin`'s own tag format) and the current UTC date -
+  a dispatch against a release tag reads back as identical to the tag
+  itself, while a manual dispatch against a branch honestly shows its real
+  `-SNAPSHOT` version instead of implying a release that didn't happen.
+
 - Significantly raised JaCoCo line coverage of `RestClientProcessor`
   (66.2% -> 94.1%) and `CompileTimeRestClientValidator` (80.1% -> 99.1%),
   the two classes behind compile-time proxy generation, by adding ~50 new

@@ -63,6 +63,29 @@ jobs:
         run: |
           mkdir -p target/site/spring-boot-starter
           cp docs/getting-started.html target/site/index.html
+
+          # Stamps the field guide with the exact version it was built from
+          # and today's date, so a reader can tell at a glance whether it's
+          # in sync with the latest release without diffing the page against
+          # the repo by hand. docs/getting-started.html itself keeps the
+          # __RIP_VERSION__/__RIP_BUILD_DATE__ placeholders in source control -
+          # only the published copy under target/site/ is stamped, here,
+          # right after it's copied. core no longer declares its own
+          # <version> (inherited from the parent) - read it from pom.xml,
+          # anchored on the rest-in-peace-parent artifactId in case plugin
+          # versions elsewhere in the file shift which <version> comes
+          # first. Prefixed with "v" to match maven-release-plugin's own
+          # tagNameFormat (v@{project.version}) - when this workflow is
+          # dispatched against a release tag (as release.yml always does),
+          # pom.xml's version at that exact commit is already the released,
+          # non-SNAPSHOT one, so this reads back as identical to the tag
+          # itself. A manual dispatch against a branch instead shows its
+          # real -SNAPSHOT version, honestly labeling it as an unreleased
+          # preview rather than implying a real release.
+          RIP_VERSION="v$(grep -A1 -F '<artifactId>rest-in-peace-parent</artifactId>' pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')"
+          RIP_BUILD_DATE="$(date -u +%Y-%m-%d)"
+          sed -i "s/__RIP_VERSION__/${RIP_VERSION}/; s/__RIP_BUILD_DATE__/${RIP_BUILD_DATE}/" target/site/index.html
+
           cp -r core/target/reports/apidocs target/site/apidocs
           cp -r spring-boot-starter/target/reports/apidocs target/site/spring-boot-starter/apidocs
       - name: Configure Pages
