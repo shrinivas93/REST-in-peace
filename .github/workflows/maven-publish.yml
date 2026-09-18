@@ -1,19 +1,21 @@
-# This workflow will build the reactor (parent POM, core, and
-# spring-boot-starter) using Maven and then publish all three to GitHub
-# Packages when a release is created - core and spring-boot-starter share
-# one version via their common parent, so they're released and published
-# together, not separately.
+# This workflow builds the reactor (parent POM, core, and
+# spring-boot-starter) using Maven and then publishes all three to GitHub
+# Packages - core and spring-boot-starter share one version via their common
+# parent, so they're released and published together, not separately.
 # For more information see: https://github.com/actions/setup-java#apache-maven-with-a-settings-path
+#
+# Dispatch-only by design, not `on: release` - a release created via
+# release.yml's own GITHUB_TOKEN wouldn't fire that trigger anyway (GitHub's
+# anti-recursion rule), so release.yml always dispatches this explicitly
+# against the release tag once the GitHub release itself is created. An
+# `on: release` trigger here would only matter for a release made by hand
+# outside release.yml, which isn't a supported path - keeping this
+# dispatch-only avoids a trigger that looks automatic but in practice never
+# fires the way a reader would expect.
 
 name: Maven Package
 
 on:
-  release:
-    types: [created]
-  # release.yml creates the GitHub release with the default GITHUB_TOKEN,
-  # which doesn't fire `on: release` here (GitHub's anti-recursion rule), so
-  # it dispatches this workflow explicitly instead - workflow_dispatch is
-  # exempt from that restriction.
   workflow_dispatch:
 
 permissions:
