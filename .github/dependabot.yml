@@ -27,6 +27,13 @@ updates:
       maven-parent:
         patterns:
           - "*"
+    ignore:
+      # core (see /core's own ignore rule below for the full reasoning) is
+      # permanently locked to Java 8, and this scan resolves the reactor's
+      # effective dependencies - including core's - so the same guard is
+      # needed here too, or this group re-proposes the same broken bump.
+      - dependency-name: "org.junit.jupiter:*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: maven
     directory: /core
@@ -36,6 +43,20 @@ updates:
       maven-core:
         patterns:
           - "*"
+    ignore:
+      # core targets Java 8 permanently (its whole reason to exist as a
+      # separate module from spring-boot-starter), and MockRestServerExtension
+      # (main source, not test) implements JUnit Jupiter extension interfaces -
+      # making junit-jupiter a compile-scope dependency here, not test-scope.
+      # JUnit 6.x requires Java 17 minimum (junit.org release notes), so any
+      # major bump past the 5.x line can never compile under core's real JDK 8
+      # CI job. Without this, Dependabot re-proposes the same broken bump - and
+      # since it's grouped with every other maven dependency here, it silently
+      # blocks otherwise-safe bumps (gson, maven-compiler-plugin, etc.) from
+      # merging cleanly too. Revisit only alongside a deliberate decision to
+      # drop core's Java 8 support.
+      - dependency-name: "org.junit.jupiter:*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: maven
     directory: /spring-boot-starter
