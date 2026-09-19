@@ -361,6 +361,8 @@ example). Mirrors `@Retry`'s own existing retry-condition shape:
 CircuitBreakerConfig.builder()
     .slidingWindowType(SlidingWindowType.COUNT_BASED)  // default; TIME_BASED also supported (§6.4)
     .slidingWindowSize(20)                             // last 20 calls
+    // .slidingWindowSize(Duration.ofSeconds(20))      // the TIME_BASED overload instead (§6.4) - a Duration,
+                                                         // not resilience4j's bare int-always-means-seconds
     .minimumNumberOfCalls(10)                          // don't evaluate the rate below this
     .failureRateThreshold(50)                          // trip at 50% failures within the window
     .waitDurationInOpenState(Duration.ofSeconds(30))
@@ -401,6 +403,22 @@ and the reasoning for matching it rather than inventing something else:
   both), for a consumer who specifically wants "rate over the last minute
   regardless of call volume" - but it isn't the default, for the reasons
   above.
+- **`TIME_BASED` window size is a `Duration`, not resilience4j's bare
+  `int` seconds.** Worth flagging since it's a real wart in the library
+  this design otherwise deliberately mirrors: resilience4j's own
+  `slidingWindowSize(int)` is *always* interpreted as seconds when
+  `TIME_BASED` is selected - there's no minutes/millis option, and no
+  `Duration`-typed overload; wanting a one-minute window means passing
+  `slidingWindowSize(60)` and knowing that's seconds from documentation
+  alone, not from the method signature. RIP's own `TIME_BASED`
+  implementation is a from-scratch build (§5, Option C - the
+  `CircuitBreakerProvider` override is the only path that ever touches a
+  real resilience4j instance), so there's no reason to inherit that
+  constraint: `CircuitBreakerConfig.Builder.slidingWindowSize(Duration)`
+  when `slidingWindowType(TIME_BASED)` is selected, consistent with
+  `waitDurationInOpenState` already being `Duration`-typed in the same
+  config object rather than a second bare-int convention living
+  alongside it.
 - **Rate over raw count, always.** 5 failures in the last 20 calls (25%)
   and 5 failures in the last 10,000 calls are completely different
   signals about whether a downstream is actually degraded - a raw count
