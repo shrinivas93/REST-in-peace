@@ -11,7 +11,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-import java.util.stream.IntStream;
 
 import com.shri.restinpeace.RetryConfig;
 import com.shri.restinpeace.annotation.retry.Retry;
@@ -252,8 +251,20 @@ final class RetryExecutor {
 		return configuredRetry != null && configuredRetry.isIdempotent();
 	}
 
+	/**
+	 * A plain loop rather than {@code IntStream.of(retryOnStatus).anyMatch(...)} -
+	 * this runs once per response for every {@code @Retry}'d call (not just a
+	 * retried one), and {@code retryOnStatus} is always a handful of elements
+	 * at most, so the stream pipeline's own allocation cost dominates over
+	 * whatever it's actually comparing.
+	 */
 	private static boolean isRetryableStatus(int status, int[] retryOnStatus) {
-		return IntStream.of(retryOnStatus).anyMatch(code -> code == status);
+		for (int code : retryOnStatus) {
+			if (code == status) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static long nextDelay(long delay, double backoffMultiplier) {
