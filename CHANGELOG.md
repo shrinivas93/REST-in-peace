@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A per-client circuit breaker: `RipClientConfig.Builder#circuitBreaker(CircuitBreakerConfig)`
+  stops even attempting calls to a downstream once its failure rate crosses
+  a threshold, failing fast with a new `CircuitOpenException` instead of
+  paying the cost (a full timeout, every `@Retry` attempt) of finding out a
+  call would have failed too. A count-based sliding window (the last N
+  calls) and a failure-rate threshold are the default, matching
+  resilience4j's own convention; a time-based window (the last N seconds)
+  is also supported. See `docs/design/circuit-breaker-bulkhead.md` for the
+  full design and every default. Sync path only for now - async parity and
+  a bulkhead (also per that design doc) are tracked separately.
+
 ### Changed
 
 - CI/build maintenance, none of it user-facing: `ci.yml`'s five jobs
