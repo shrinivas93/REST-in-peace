@@ -1171,7 +1171,7 @@ shipped.
       `InterceptorDispatcher`'s four near-identical sync/async,
       string/bytes short-circuit wrappers) is small, well-documented, and
       not worth a forced generic abstraction over.
-- [ ] **Performance review** — reflection overhead on the fallback proxy
+- [x] **Performance review** — reflection overhead on the fallback proxy
       path vs. the compile-time-generated one (is the gap actually
       measurable, and where); allocation hot spots in the retry/cache/
       interceptor pipeline (`RequestContext`/`CachedResponse` construction
@@ -1180,7 +1180,31 @@ shipped.
       (linear scan - fine for test-suite-scale route counts, worth
       confirming that assumption still holds); JaCoCo/Codecov CI overhead
       now that the suite has grown substantially this session (~270 new
-      test cases across the two coverage pushes).
+      test cases across the two coverage pushes). Found and fixed one real
+      allocation hot spot: `RetryExecutor.isRetryableStatus()` allocated an
+      `IntStream` pipeline on every response for any `@Retry`'d call (not
+      just a retried one) to scan an array that's always a handful of
+      status codes - replaced with a plain loop, same behavior, zero
+      allocation (see #188). Answered the two open questions the item
+      itself posed: `RuntimeGenericType`'s reflective field overwrite is
+      paid **per call** to `RuntimeGenericType.of(...)`, not once - only
+      `setAccessible(true)` is one-time (a static initializer); the actual
+      `Field.set(...)` plus a new anonymous `GenericType` subclass
+      instance happens on every generic-collection decode. Left as-is
+      without profiling evidence it's an actual bottleneck relative to the
+      JSON parsing it enables - changing it would mean caching per-`Type`
+      adapters, a real design change, not a found-and-fixed bug.
+      `MockRestServer`'s linear route scan is still fine - it's test-only
+      infrastructure bounded by how many routes a human writes into one
+      test file, not a production hot path. No JMH harness exists in this
+      repo to put a number on the reflective-vs-compile-time-generated gap
+      itself; adding one would be new tooling; the two dispatch paths' own
+      test suites, though, agree qualitatively (compile-time skips every
+      `Method.getAnnotation(...)`/`Parameter[]` reflective lookup entirely).
+      CI job durations observed across this session's own PRs (`test` ~50s,
+      `native-image-smoke-test` up to ~140s, everything else under a
+      minute) show no evidence of JaCoCo/Codecov overhead being a problem
+      worth chasing.
 
 Order: security first (highest blast radius if something's actually wrong),
 then tech debt, then performance - revisit the order if the security pass
