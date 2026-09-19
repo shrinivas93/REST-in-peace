@@ -32,5 +32,6 @@ install step is needed:
 mvn test -pl spring-boot-starter -am    # from the repo root
 ```
 
-See [`.github/workflows/spring-boot-starter-test.yml`](../.github/workflows/spring-boot-starter-test.yml)
-for the exact steps CI runs.
+See the `spring-boot-starter` job in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for the exact
+steps CI runs.

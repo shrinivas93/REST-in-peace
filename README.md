@@ -2097,8 +2097,10 @@ maintainers). The short version:
 - `master` only ever advances via a pull request from `develop` — direct
   pushes to `master` are blocked by branch protection, with a narrow
   exception for `release.yml`'s own automated version-bump commit.
-- Every PR and every push to `develop`/`master` runs the full test suite on
-  Java 8 (see the CI badge at the top of this file).
+- Every PR and every push to `develop`/`master` runs the full test suite —
+  `core` and its sample consumer on Java 8, the same sample as a GraalVM
+  native executable on GraalVM 25, and the Spring Boot starter plus its own
+  sample consumer on Java 17 (see the CI badge at the top of this file).
 - Update [`CHANGELOG.md`](CHANGELOG.md) under `[Unreleased]` as part of any
   user-facing change.
 
