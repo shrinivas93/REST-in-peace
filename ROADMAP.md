@@ -24,12 +24,19 @@ for reference rather than tracked in code. Check items off as they land.
       (Keep a Changelog format) documents every release from v1.0.0.0
       through v1.0.0.4, plus an `[Unreleased]` section to update going
       forward.
-- [ ] **Maven Central publishing** — full setup (groupId change to
-      `io.github.shrinivas93`, POM metadata, GPG signing, publish workflow)
-      is built and verified but paused pending account-level setup (Sonatype
-      Central Portal account, GPG key, publishing token). Preserved on the
-      `feature/maven-central-publishing` branch (was PR #9, closed
-      without merging) — pick it back up when ready.
+- [x] **Maven Central publishing** — groupId changed to
+      `io.github.shrinivas93`, required POM metadata (name/description/url/
+      licenses/developers) added, sources+javadoc jars attached, GPG signing
+      and `central-publishing-maven-plugin` wired into a `central` Maven
+      profile kept separate from the always-on GitHub Packages `mvn deploy`
+      (#190). `autoPublish=true`, so every tagged release publishes live to
+      Central automatically (#190) - no manual step in the Portal UI.
+      `release.yml` also auto-bumps the README's illustrative installation
+      version on every release and pushes it back through the existing
+      "sync master into develop" step, so it can't go stale the way it did
+      once, right after this shipped (#194). First real releases:
+      v1.0.0.45-v1.0.0.47, all confirmed live on
+      [Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace).
 - [x] **Refactor to idiomatic Java 8** — swept `RestRequestProcessor`,
       `RestClientValidator`, and `RestClientInvocationHandler` for imperative
       loops and manual `Optional` isPresent/get patterns, replacing them with
@@ -806,7 +813,12 @@ up.
       key is identical across every recorded attempt.
 - [ ] **Circuit breaker / bulkhead per client** — a natural extension of
       `RipClientConfig`: stop hammering a downstream that's clearly down,
-      the natural next step after retry and timeout.
+      the natural next step after retry and timeout. Design doc written:
+      [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md) -
+      build-your-own default (no new dependency) with a pluggable
+      `CircuitBreakerProvider`/`BulkheadProvider` override to delegate to
+      resilience4j or any other backend a consumer already runs. Not
+      started; chunked rollout plan in the doc's §9.
 - [x] **A pre-built `MetricsInterceptor`** — times every request and reports
       it, once its response comes back, to a small `MetricsSink` interface
       (`recordCall(httpMethod, url, status, durationMillis)`) - the metrics
@@ -855,12 +867,18 @@ up.
       Micronaut integration remains a separate, unstarted item below since
       its compile-time DI model needs a structurally different integration
       than Spring's runtime classpath scanning.
-- [ ] **Micronaut integration module** — split out from the item above once
-      the Spring integration shipped. Needs to cooperate with
+- [ ] **Parked: a Micronaut integration module** — split out from the item
+      above once the Spring integration shipped. Needs to cooperate with
       `RestClientProcessor`'s own compile-time codegen rather than port the
-      Spring starter's `ImportBeanDefinitionRegistrar`-based approach,
-      since Micronaut's own DI is itself compile-time. Not started; no
-      design doc yet.
+      Spring starter's `ImportBeanDefinitionRegistrar`-based approach, since
+      Micronaut's own DI is itself compile-time - real, new design work,
+      not a port. Parked rather than started: Spring remains the dominant
+      Java framework by a wide margin, and Micronaut's adoption is real but
+      niche, concentrated in teams specifically optimizing for
+      startup/memory (serverless, GraalVM native-image, container
+      density) - the existing Spring Boot starter almost certainly serves
+      the bulk of realistic consumers already. Revisit if a concrete
+      Micronaut consumer actually asks for it.
 - [ ] **(Low priority) Fix branch protection on `master`** — repo process,
       not a library feature. A ruleset requiring a pull request before
       merging was set up on `master`, but the bypass entry for the release
