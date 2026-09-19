@@ -1112,3 +1112,100 @@ commitment.
       [Generic collection return types](README.md#generic-collection-return-types-listuser)
       and the updated
       ["Why isn't `List<User>` code-generated?"](README.md#why-isnt-listuser-code-generated).
+
+## Quality audits (2026-09-19) — in progress, one at a time
+
+Three depth-first audit passes over the existing codebase, requested as a
+set but worked one at a time rather than in parallel - each gets its own
+findings, fixes, and (where relevant) new tests before the next one starts.
+Not new features; the goal is finding and fixing problems in what's already
+shipped.
+
+- [x] **Security review** — audit for actual vulnerabilities, not just a
+      dependency-CVE scan: injection risk anywhere user/response data
+      reaches a sink (logging, the mock server's request parsing,
+      `OpenApiClientGenerator`'s generated source), SSRF/URL-validation gaps
+      around `@Url`/a runtime base URL (both accept an arbitrary string that
+      becomes a real outbound request target with no allowlist), secret
+      handling (`RedactingLoggingInterceptor`'s regex-based masking has a
+      documented gap for nested JSON - worth a hard look at how exploitable
+      that actually is), deserialization safety (Gson's default
+      `JsonObjectMapper`, `RuntimeGenericType`'s reflective field overwrite),
+      and dependency CVEs across the full tree (`unirest-java`, Apache
+      HttpClient/HttpCore/HttpMime, Gson, the GraalVM reachability-metadata
+      artifacts). Found and fixed one high-confidence vulnerability:
+      `OpenApiClientGenerator` concatenated OpenAPI-spec-derived values
+      (a path, `servers[0].url`, a parameter name, `info.title`) directly
+      into the generated `.java` source's string literals/Javadoc comment
+      with no escaping - unlike `RestClientProcessor`'s own
+      `stringLiteral()` for the identical problem - so a malicious spec's
+      embedded `"`/`*/` could break out and inject arbitrary Java that
+      then compiled and shipped as part of the generated client (see #186).
+      Everything else audited (`@Url`/base URL, `RedactingLoggingInterceptor`,
+      `RuntimeGenericType`, `MockRestServer`/`RecordedRequest`,
+      `FormEncoder`/`MultipartEncoder`) came back clean; dependency CVEs
+      are already covered continuously by GitHub Advanced Security/
+      Dependabot alerts rather than this manual pass.
+- [x] **Tech debt / code quality pass** — duplication and inconsistent
+      patterns across `RequestExecutor`'s collaborators and the two dispatch
+      paths (reflective vs. compile-time-generated) now that both have grown
+      significantly since step 1; anything on a "not needed now" list above
+      worth revisiting now that the library has matured; dead code or
+      over-broad abstractions the various feature slices left behind;
+      consistency of validation error messages between
+      `ReflectiveRestClientValidator` and `CompileTimeRestClientValidator`
+      (deliberately separate implementations per design, but worth checking
+      they haven't drifted in ways that confuse a consumer who hits one
+      then the other). Found and fixed one real bug while checking that
+      last point: `CompileTimeRestClientValidator` was never updated for
+      E12 and still hard-rejected a `CompletableFuture<List<User>>`/
+      `RipResponse<List<User>>` return type as a compile error, even though
+      that exact shape works fine through `RIP.getClient(...)` since
+      `ReflectiveRestClientValidator`'s own equivalent check was relaxed
+      for it - so such an interface compiled reflectively but failed to
+      build outright the moment `RestClientProcessor` (always active,
+      SPI-registered) ran on it (see #187). No dead code or leftover TODOs
+      found in `core/src/main`; the `not needed now` list is deliberately
+      deferred feature work, not tech debt, so left as-is. The
+      `RequestExecutor`/collaborator duplication that exists (e.g.
+      `InterceptorDispatcher`'s four near-identical sync/async,
+      string/bytes short-circuit wrappers) is small, well-documented, and
+      not worth a forced generic abstraction over.
+- [x] **Performance review** — reflection overhead on the fallback proxy
+      path vs. the compile-time-generated one (is the gap actually
+      measurable, and where); allocation hot spots in the retry/cache/
+      interceptor pipeline (`RequestContext`/`CachedResponse` construction
+      per call); `RuntimeGenericType`'s one-time reflective field overwrite
+      (cost paid once or per-call); `MockRestServer`'s route-matching loop
+      (linear scan - fine for test-suite-scale route counts, worth
+      confirming that assumption still holds); JaCoCo/Codecov CI overhead
+      now that the suite has grown substantially this session (~270 new
+      test cases across the two coverage pushes). Found and fixed one real
+      allocation hot spot: `RetryExecutor.isRetryableStatus()` allocated an
+      `IntStream` pipeline on every response for any `@Retry`'d call (not
+      just a retried one) to scan an array that's always a handful of
+      status codes - replaced with a plain loop, same behavior, zero
+      allocation (see #188). Answered the two open questions the item
+      itself posed: `RuntimeGenericType`'s reflective field overwrite is
+      paid **per call** to `RuntimeGenericType.of(...)`, not once - only
+      `setAccessible(true)` is one-time (a static initializer); the actual
+      `Field.set(...)` plus a new anonymous `GenericType` subclass
+      instance happens on every generic-collection decode. Left as-is
+      without profiling evidence it's an actual bottleneck relative to the
+      JSON parsing it enables - changing it would mean caching per-`Type`
+      adapters, a real design change, not a found-and-fixed bug.
+      `MockRestServer`'s linear route scan is still fine - it's test-only
+      infrastructure bounded by how many routes a human writes into one
+      test file, not a production hot path. No JMH harness exists in this
+      repo to put a number on the reflective-vs-compile-time-generated gap
+      itself; adding one would be new tooling; the two dispatch paths' own
+      test suites, though, agree qualitatively (compile-time skips every
+      `Method.getAnnotation(...)`/`Parameter[]` reflective lookup entirely).
+      CI job durations observed across this session's own PRs (`test` ~50s,
+      `native-image-smoke-test` up to ~140s, everything else under a
+      minute) show no evidence of JaCoCo/Codecov overhead being a problem
+      worth chasing.
+
+Order: security first (highest blast radius if something's actually wrong),
+then tech debt, then performance - revisit the order if the security pass
+turns up nothing urgent and something else seems more valuable to do next.
