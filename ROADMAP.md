@@ -862,12 +862,18 @@ up.
       Micronaut integration remains a separate, unstarted item below since
       its compile-time DI model needs a structurally different integration
       than Spring's runtime classpath scanning.
-- [ ] **Micronaut integration module** — split out from the item above once
-      the Spring integration shipped. Needs to cooperate with
+- [ ] **Parked: a Micronaut integration module** — split out from the item
+      above once the Spring integration shipped. Needs to cooperate with
       `RestClientProcessor`'s own compile-time codegen rather than port the
-      Spring starter's `ImportBeanDefinitionRegistrar`-based approach,
-      since Micronaut's own DI is itself compile-time. Not started; no
-      design doc yet.
+      Spring starter's `ImportBeanDefinitionRegistrar`-based approach, since
+      Micronaut's own DI is itself compile-time - real, new design work,
+      not a port. Parked rather than started: Spring remains the dominant
+      Java framework by a wide margin, and Micronaut's adoption is real but
+      niche, concentrated in teams specifically optimizing for
+      startup/memory (serverless, GraalVM native-image, container
+      density) - the existing Spring Boot starter almost certainly serves
+      the bulk of realistic consumers already. Revisit if a concrete
+      Micronaut consumer actually asks for it.
 - [ ] **(Low priority) Fix branch protection on `master`** — repo process,
       not a library feature. A ruleset requiring a pull request before
       merging was set up on `master`, but the bypass entry for the release
