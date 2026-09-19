@@ -487,8 +487,9 @@ literal-parameter call from generated code (alongside
 - Also verified against a genuinely separate downstream build, not just
   this repo's own test-compile: `samples/compile-time-proxy-consumer` is a
   standalone Maven project (in-tree, `.github/workflows/sample-consumer-test.yml`
-  builds and runs it on every push/PR) with an ordinary dependency on the
-  library and no processor configuration of its own, confirming the SPI
+  builds and runs it on every push/PR - that workflow file was later folded
+  into `ci.yml`'s own `sample-consumer` job) with an ordinary dependency on
+  the library and no processor configuration of its own, confirming the SPI
   auto-activation §9.1 describes actually works end to end for a real
   consumer, not just within this module's compile/test-compile staging.
 
@@ -1013,11 +1014,12 @@ native-image proof) are kept as two separate entry points, and only
 `NativeMain` backs the `native` Maven profile.
 
 A new CI job, `native-image-smoke-test` (a sibling of the existing
-`sample-consumer` job in `sample-consumer-test.yml`, not a step added to
-it, so a native-image failure is reported distinctly), installs a GraalVM
-JDK via `graalvm/setup-graalvm`, runs `mvn -Pnative package`, and executes
-the resulting binary - green on every push/PR to `develop`/`master` from
-here on.
+`sample-consumer` job, then in its own `sample-consumer-test.yml` and
+since consolidated into `ci.yml` alongside every other CI job, not a step
+added to `sample-consumer` itself, so a native-image failure is reported
+distinctly), installs a GraalVM JDK via `graalvm/setup-graalvm`, runs `mvn
+-Pnative package`, and executes the resulting binary - green on every
+push/PR to `develop`/`master` from here on.
 
 ### 9.10 Step 4: the compile-testing validation suite
 

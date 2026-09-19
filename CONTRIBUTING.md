@@ -82,9 +82,11 @@ uploaded this run" rather than failing CI outright.
   `github-actions` bot specifically since `maven-release-plugin` pushes it
   directly by design.
 - Every PR and every push to `develop`/`master` runs `ci.yml`'s five jobs in
-  parallel: `core`'s test suite (Java 8), the compile-time-proxy and
-  GraalVM native-image sample consumers (Java 8), and the Spring Boot
-  starter's own tests plus its sample consumer (Java 17).
+  parallel: `test` (`core`'s test suite, Java 8), `sample-consumer` (the
+  compile-time-proxy sample, Java 8), `native-image-smoke-test` (the same
+  sample built into a GraalVM native executable, GraalVM 25), and
+  `spring-boot-starter` plus `sample-spring-boot-consumer` (the Spring Boot
+  starter's own tests and its sample consumer, Java 17).
 
 ## Release process (maintainers)
 

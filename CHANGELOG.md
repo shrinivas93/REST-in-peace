@@ -8,6 +8,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- CI/build maintenance, none of it user-facing: `ci.yml`'s five jobs
+  (`test`, `sample-consumer`, `native-image-smoke-test`,
+  `spring-boot-starter`, `sample-spring-boot-consumer`) now live in one
+  workflow file instead of three (`ci.yml`,
+  `sample-consumer-test.yml`, `spring-boot-starter-test.yml`, the latter
+  two now removed). `native-image-smoke-test` moved from GraalVM 21 to
+  GraalVM 25 (`org.graalvm.buildtools:native-maven-plugin` bumped to
+  `1.1.12`, which needs a newer reachability-metadata schema than GraalVM
+  21 supports) - GraalVM 25's javac also tightened implicit annotation
+  processor discovery enough to stop auto-activating
+  `RestClientProcessor` there, fixed with an explicit
+  `<annotationProcessors>` declaration scoped to
+  `samples/compile-time-proxy-consumer`'s own `native` Maven profile only
+  (the plain `mvn compile` path the `sample-consumer` job uses to
+  demonstrate genuine zero-config auto-activation is unaffected).
+  `.github/dependabot.yml`'s five Maven scan entries are now three: `/`,
+  `/core`, and `/spring-boot-starter` were separately re-discovering and
+  proposing near-duplicate PRs for the same reactor-wide dependency
+  bumps (`/` alone already resolves the whole reactor's effective POM,
+  since `core`/`spring-boot-starter` are both listed under root's
+  `<modules>`), so those three collapsed into one `maven-reactor` scan
+  from `/`; the two standalone `/samples/*` entries are unaffected,
+  since neither is part of that reactor. Also adds an `ignore` rule for
+  `org.junit.jupiter:*` major-version bumps on that scan - `core` targets
+  Java 8 permanently, and JUnit 6.x requires Java 17 minimum, so Dependabot
+  was repeatedly proposing a bump that could never compile under `core`'s
+  real-JDK-8 `test` job, silently blocking its otherwise-safe sibling
+  bumps (`gson`, `maven-compiler-plugin`, `maven-surefire-plugin`) in the
+  same grouped PR.
 - `docs/getting-started.html` (the published field guide) now documents
   five `MockRestServer`/`RecordedRequest`/`MockResponse` capabilities that
   had shipped in code and in this changelog but were missing from the
