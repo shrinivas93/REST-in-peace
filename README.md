@@ -255,7 +255,7 @@ for what actually happens under `getUser(...)`.
 
 ## Installation
 
-Published to GitHub Packages under `com.shri:rest-in-peace`. GitHub Packages
+Published to GitHub Packages under `io.github.shrinivas93:rest-in-peace`. GitHub Packages
 requires authentication even for public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
 (Maven) or
@@ -280,7 +280,7 @@ number means).
 </repositories>
 
 <dependency>
-    <groupId>com.shri</groupId>
+    <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace</artifactId>
     <version>1.0.0.0-SNAPSHOT</version>
 </dependency>
@@ -300,7 +300,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.shri:rest-in-peace:1.0.0.0-SNAPSHOT")
+    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.0-SNAPSHOT")
 }
 ```
 
