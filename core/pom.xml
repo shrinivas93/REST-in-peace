@@ -6,7 +6,7 @@
 	     (its sibling module) always share one version, bumped together by a
 	     single release:prepare run at the root - see pom.xml's own comment. -->
 	<parent>
-		<groupId>com.shri</groupId>
+		<groupId>io.github.shrinivas93</groupId>
 		<artifactId>rest-in-peace-parent</artifactId>
 		<version>1.0.0.45-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
@@ -16,7 +16,8 @@
 	<packaging>jar</packaging>
 
 	<name>rest-in-peace</name>
-	<url>http://maven.apache.org</url>
+	<description>A simple, declarative and peaceful REST client for Java - annotate an interface, get a working implementation, with a compile-time-generated, reflection-free proxy where possible.</description>
+	<url>https://github.com/shrinivas93/REST-in-peace</url>
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -109,6 +110,23 @@
 				<executions>
 					<execution>
 						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- A sources jar alongside the main/javadoc jars - required by Maven
+			     Central for every published artifact, and a normal convenience
+			     for GitHub Packages consumers too (IDE "jump to source" without
+			     needing this repo checked out). -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>3.4.0</version>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
 						<goals>
 							<goal>jar</goal>
 						</goals>

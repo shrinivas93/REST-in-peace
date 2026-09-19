@@ -1,7 +1,11 @@
 # This workflow builds the reactor (parent POM, core, and
 # spring-boot-starter) using Maven and then publishes all three to GitHub
 # Packages - core and spring-boot-starter share one version via their common
-# parent, so they're released and published together, not separately.
+# parent, so they're released and published together, not separately. It
+# also publishes the same three artifacts to Maven Central, as a separate
+# `mvn deploy -Pcentral` invocation against its own settings.xml (see that
+# step's own comment for why it's kept fully separate from the GitHub
+# Packages deploy above it, rather than one shared settings.xml/deploy).
 # For more information see: https://github.com/actions/setup-java#apache-maven-with-a-settings-path
 #
 # Dispatch-only by design, not `on: release` - a release created via
@@ -52,3 +56,39 @@ jobs:
       run: mvn deploy -s $GITHUB_WORKSPACE/settings.xml
       env:
         GITHUB_TOKEN: ${{ github.token }}
+
+    # A second, independent JDK/settings.xml setup, writing to a different
+    # path than the step above's $GITHUB_WORKSPACE/settings.xml - a second
+    # setup-java call at the same path would just overwrite that file's
+    # <server> entry (github) with this one's (central), losing whichever
+    # ran first. gpg-private-key/gpg-passphrase import the signing key and
+    # wire GPG_PASSPHRASE for maven-gpg-plugin to pick up (see the -Dgpg.
+    # passphrase reference on the deploy step below); server-id/username/
+    # password populate the <server id="central"> entry the central profile
+    # (pom.xml) publishes with, matching its own publishingServerId.
+    - name: Set up JDK 17 for Maven Central credentials
+      uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        server-id: central
+        server-username: CENTRAL_TOKEN_USERNAME
+        server-password: CENTRAL_TOKEN_PASSWORD
+        settings-path: ${{ github.workspace }}/central-settings
+        gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+        gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+    # See pom.xml's own comment on the `central` profile: its
+    # central-publishing-maven-plugin uploads a signed bundle to the Central
+    # Portal's Publisher API instead of a plain repository PUT, so this is a
+    # full, separate `mvn deploy` invocation rather than sharing the GitHub
+    # Packages one above. autoPublish=false in that profile means this only
+    # gets the release as far as "validated, ready to publish" in the
+    # Central Portal - actually making it public is a deliberate, manual
+    # step there, not automatic on every tagged release.
+    - name: Publish to Maven Central
+      run: mvn -B deploy -Pcentral -s $GITHUB_WORKSPACE/central-settings/settings.xml -Dgpg.passphrase="$MAVEN_GPG_PASSPHRASE"
+      env:
+        CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+        CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+        MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
