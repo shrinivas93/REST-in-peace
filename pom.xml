@@ -161,11 +161,12 @@
 					     works - publishingServerId names the <server> entry (id
 					     "central") CI's settings.xml supplies the Central user
 					     token's username/password under, matching maven-publish.yml.
-					     autoPublish is deliberately false: a bundle lands in Central
-					     Portal's "validated, awaiting manual publish" state instead of
-					     going live immediately, so a bad release can be caught (and
-					     dropped) before it's irreversible - Central has no unpublish
-					     once a bundle is actually released. -->
+					     autoPublish=true means a validated bundle goes live on
+					     Central immediately, with no manual step in the Portal UI -
+					     Central has no unpublish once that happens, so a bad release
+					     (wrong version, broken artifact) is permanent; this trades
+					     that safety margin for every tagged release reaching
+					     consumers automatically. -->
 					<plugin>
 						<groupId>org.sonatype.central</groupId>
 						<artifactId>central-publishing-maven-plugin</artifactId>
@@ -173,7 +174,7 @@
 						<extensions>true</extensions>
 						<configuration>
 							<publishingServerId>central</publishingServerId>
-							<autoPublish>false</autoPublish>
+							<autoPublish>true</autoPublish>
 						</configuration>
 					</plugin>
 				</plugins>

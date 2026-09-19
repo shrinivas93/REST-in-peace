@@ -82,10 +82,9 @@ jobs:
     # central-publishing-maven-plugin uploads a signed bundle to the Central
     # Portal's Publisher API instead of a plain repository PUT, so this is a
     # full, separate `mvn deploy` invocation rather than sharing the GitHub
-    # Packages one above. autoPublish=false in that profile means this only
-    # gets the release as far as "validated, ready to publish" in the
-    # Central Portal - actually making it public is a deliberate, manual
-    # step there, not automatic on every tagged release.
+    # Packages one above. autoPublish=true in that profile means a validated
+    # bundle goes live on Central immediately - every tagged release publishes
+    # automatically, with no manual step in the Portal UI.
     - name: Publish to Maven Central
       run: mvn -B deploy -Pcentral -s $GITHUB_WORKSPACE/central-settings/settings.xml -Dgpg.passphrase="$MAVEN_GPG_PASSPHRASE"
       env:
