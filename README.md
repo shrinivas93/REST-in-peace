@@ -10,6 +10,7 @@ methods like any other Java call.
 [![CI](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/shrinivas93/REST-in-peace/branch/develop/graph/badge.svg)](https://codecov.io/gh/shrinivas93/REST-in-peace)
 [![Latest Release](https://img.shields.io/github/v/release/shrinivas93/REST-in-peace?label=release)](https://github.com/shrinivas93/REST-in-peace/releases/latest)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.shrinivas93/rest-in-peace.svg)](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace)
 [![Getting Started Guide](https://img.shields.io/badge/guide-field%20guide-8f5510)](https://shrinivas93.github.io/REST-in-peace/)
 [![Javadoc](https://img.shields.io/badge/javadoc-latest-blue)](https://shrinivas93.github.io/REST-in-peace/apidocs/)
 [![Java 8+](https://img.shields.io/badge/Java-8%2B-orange)](#requirements)
@@ -270,7 +271,7 @@ public read access — see
 Browse available versions on
 [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace/versions)
 or the [Releases page](https://github.com/shrinivas93/REST-in-peace/releases) —
-replace `1.0.0.45` below with the version you want (see
+replace `1.0.0.46` below with the version you want (see
 [Versioning and releases](#versioning-and-releases) for what the version
 number means).
 
@@ -280,7 +281,7 @@ number means).
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace</artifactId>
-    <version>1.0.0.45</version>
+    <version>1.0.0.46</version>
 </dependency>
 ```
 
@@ -288,7 +289,7 @@ number means).
 
 ```groovy
 dependencies {
-    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.45")
+    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.46")
 }
 ```
 
