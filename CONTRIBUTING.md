@@ -46,9 +46,10 @@ and inherited by both `core` and `spring-boot-starter` - no separate goal to
 remember). Open `core/target/site/jacoco/index.html` (or the equivalent path
 under `spring-boot-starter/target/`) in a browser after running tests; `ci.yml`'s
 `test` and `spring-boot-starter` jobs also upload it as a build artifact on
-every run. Pinned to `0.8.12`, not the newer `0.8.13`, since the plugin itself
-has to run under whatever JDK executes the build - `ci.yml`'s `test` job runs
-under a real JDK 8, and `0.8.13` raised its own minimum to JDK 11.
+every run. Currently `0.8.15` - the plugin itself has to run under whatever JDK
+executes the build, and `ci.yml`'s `test` job runs under a real JDK 8; `0.8.15`
+(like `0.8.12` before it) is confirmed still Java-8-targeted, despite an
+earlier belief that `0.8.13`+ needed JDK 11.
 
 Both jobs also upload the same `jacoco.xml` to Codecov
 (`codecov/codecov-action`, one upload per module tagged with a `core`/

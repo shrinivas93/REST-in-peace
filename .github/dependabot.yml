@@ -14,37 +14,42 @@ updates:
         patterns:
           - "*"
 
-  # One entry per module with its own pom.xml - Dependabot's maven ecosystem
-  # doesn't resolve a multi-module reactor from the root POM alone, so the
-  # aggregator (/), core, spring-boot-starter, and both standalone samples
-  # each need to be scanned separately to see every dependency actually in
-  # use anywhere in the repo.
+  # core and spring-boot-starter are reactor modules of the root POM (each
+  # has <parent>rest-in-peace-parent</parent>, and root lists both under
+  # <modules>) - scanning "/" alone resolves the whole reactor's effective
+  # POM, so it already sees and can bump dependencies declared in
+  # core/pom.xml and spring-boot-starter/pom.xml, not just the root's own.
+  # Confirmed empirically: a bump proposed from "/" touched all three
+  # pom.xml files in one PR (#175), and a bump proposed from the
+  # now-removed "/core" entry independently reached up into the root
+  # pom.xml for jacoco-maven-plugin (#173) - the two scans were producing
+  # near-duplicate PRs for the same underlying bump. Only the two
+  # standalone samples below need their own entries: neither has a
+  # <parent> pointing at the root POM nor is listed under root's
+  # <modules>, so "/" structurally cannot see them.
   - package-ecosystem: maven
     directory: /
     schedule:
       interval: weekly
     groups:
-      maven-parent:
+      maven-reactor:
         patterns:
           - "*"
-
-  - package-ecosystem: maven
-    directory: /core
-    schedule:
-      interval: weekly
-    groups:
-      maven-core:
-        patterns:
-          - "*"
-
-  - package-ecosystem: maven
-    directory: /spring-boot-starter
-    schedule:
-      interval: weekly
-    groups:
-      maven-spring-boot-starter:
-        patterns:
-          - "*"
+    ignore:
+      # core targets Java 8 permanently (its whole reason to exist as a
+      # separate module from spring-boot-starter), and MockRestServerExtension
+      # (main source, not test) implements JUnit Jupiter extension interfaces -
+      # making junit-jupiter a compile-scope dependency of core, not
+      # test-scope. JUnit 6.x requires Java 17 minimum (junit.org release
+      # notes), so any major bump past the 5.x line can never compile under
+      # core's real JDK 8 CI job. Without this, Dependabot re-proposes the
+      # same broken bump - and since it's grouped with every other maven
+      # dependency in this scan, it silently blocks otherwise-safe bumps
+      # (gson, maven-compiler-plugin, etc.) from merging cleanly too.
+      # Revisit only alongside a deliberate decision to drop core's Java 8
+      # support.
+      - dependency-name: "org.junit.jupiter:*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: maven
     directory: /samples/compile-time-proxy-consumer
