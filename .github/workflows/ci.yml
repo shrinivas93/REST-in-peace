@@ -137,10 +137,23 @@ jobs:
       # bytecode instructions) - so one JDK setup covers both installing
       # the library and building the native executable, instead of juggling
       # two JDKs across the job.
+      #
+      # Bumped from '21' to '25': native-maven-plugin 1.1.12's own default
+      # reachability-metadata schema (and every schema-file-count-compatible
+      # release near it - see git history on this file/the sample's pom.xml
+      # for the version-hunt across GraalVM 21) needs a GraalVM this new to
+      # parse at all. GraalVM 25's javac also tightened implicit
+      # (classpath-only, no -processor/annotationProcessorPaths) annotation
+      # processor discovery enough that it silently stopped activating
+      # RestClientProcessor here - see the sample's own pom.xml comment on
+      # the native profile's explicit <annotationProcessors>, which works
+      # around that without touching the plain, non-native build the
+      # sample-consumer job (above) uses to demonstrate the processor's
+      # actual zero-config auto-activation.
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@0426e2e191540e8514dff98dc52a5f5146a2a276 # v1
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
