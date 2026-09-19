@@ -1112,3 +1112,50 @@ commitment.
       [Generic collection return types](README.md#generic-collection-return-types-listuser)
       and the updated
       ["Why isn't `List<User>` code-generated?"](README.md#why-isnt-listuser-code-generated).
+
+## Quality audits (2026-09-19) — in progress, one at a time
+
+Three depth-first audit passes over the existing codebase, requested as a
+set but worked one at a time rather than in parallel - each gets its own
+findings, fixes, and (where relevant) new tests before the next one starts.
+Not new features; the goal is finding and fixing problems in what's already
+shipped.
+
+- [ ] **Security review** — audit for actual vulnerabilities, not just a
+      dependency-CVE scan: injection risk anywhere user/response data
+      reaches a sink (logging, the mock server's request parsing,
+      `OpenApiClientGenerator`'s generated source), SSRF/URL-validation gaps
+      around `@Url`/a runtime base URL (both accept an arbitrary string that
+      becomes a real outbound request target with no allowlist), secret
+      handling (`RedactingLoggingInterceptor`'s regex-based masking has a
+      documented gap for nested JSON - worth a hard look at how exploitable
+      that actually is), deserialization safety (Gson's default
+      `JsonObjectMapper`, `RuntimeGenericType`'s reflective field overwrite),
+      and dependency CVEs across the full tree (`unirest-java`, Apache
+      HttpClient/HttpCore/HttpMime, Gson, the GraalVM reachability-metadata
+      artifacts). Uses the repo's own `security-review` skill/process.
+- [ ] **Tech debt / code quality pass** — duplication and inconsistent
+      patterns across `RequestExecutor`'s collaborators and the two dispatch
+      paths (reflective vs. compile-time-generated) now that both have grown
+      significantly since step 1; anything on a "not needed now" list above
+      worth revisiting now that the library has matured; dead code or
+      over-broad abstractions the various feature slices left behind;
+      consistency of validation error messages between
+      `ReflectiveRestClientValidator` and `CompileTimeRestClientValidator`
+      (deliberately separate implementations per design, but worth checking
+      they haven't drifted in ways that confuse a consumer who hits one
+      then the other).
+- [ ] **Performance review** — reflection overhead on the fallback proxy
+      path vs. the compile-time-generated one (is the gap actually
+      measurable, and where); allocation hot spots in the retry/cache/
+      interceptor pipeline (`RequestContext`/`CachedResponse` construction
+      per call); `RuntimeGenericType`'s one-time reflective field overwrite
+      (cost paid once or per-call); `MockRestServer`'s route-matching loop
+      (linear scan - fine for test-suite-scale route counts, worth
+      confirming that assumption still holds); JaCoCo/Codecov CI overhead
+      now that the suite has grown substantially this session (~270 new
+      test cases across the two coverage pushes).
+
+Order: security first (highest blast radius if something's actually wrong),
+then tech debt, then performance - revisit the order if the security pass
+turns up nothing urgent and something else seems more valuable to do next.
