@@ -24,12 +24,19 @@ for reference rather than tracked in code. Check items off as they land.
       (Keep a Changelog format) documents every release from v1.0.0.0
       through v1.0.0.4, plus an `[Unreleased]` section to update going
       forward.
-- [ ] **Maven Central publishing** — full setup (groupId change to
-      `io.github.shrinivas93`, POM metadata, GPG signing, publish workflow)
-      is built and verified but paused pending account-level setup (Sonatype
-      Central Portal account, GPG key, publishing token). Preserved on the
-      `feature/maven-central-publishing` branch (was PR #9, closed
-      without merging) — pick it back up when ready.
+- [x] **Maven Central publishing** — groupId changed to
+      `io.github.shrinivas93`, required POM metadata (name/description/url/
+      licenses/developers) added, sources+javadoc jars attached, GPG signing
+      and `central-publishing-maven-plugin` wired into a `central` Maven
+      profile kept separate from the always-on GitHub Packages `mvn deploy`
+      (#190). `autoPublish=true`, so every tagged release publishes live to
+      Central automatically (#190) - no manual step in the Portal UI.
+      `release.yml` also auto-bumps the README's illustrative installation
+      version on every release and pushes it back through the existing
+      "sync master into develop" step, so it can't go stale the way it did
+      once, right after this shipped (#194). First real releases:
+      v1.0.0.45-v1.0.0.47, all confirmed live on
+      [Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace).
 - [x] **Refactor to idiomatic Java 8** — swept `RestRequestProcessor`,
       `RestClientValidator`, and `RestClientInvocationHandler` for imperative
       loops and manual `Optional` isPresent/get patterns, replacing them with
