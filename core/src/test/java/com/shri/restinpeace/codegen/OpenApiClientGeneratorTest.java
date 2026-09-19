@@ -27,6 +27,8 @@ import javax.tools.ToolProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.gson.JsonObject;
+
 /**
  * {@link OpenApiClientGenerator} - structural checks on the generated source
  * text, plus a real {@code javac} compile (mirroring
@@ -99,6 +101,82 @@ class OpenApiClientGeneratorTest {
 		assertNoErrors(diagnostics);
 		assertTrue(Files.exists(classOutputDir.resolve("com/example/generated/PetStoreApi_RipImpl.class")),
 				"Expected PetStoreApi_RipImpl.class to be generated, found: " + list(classOutputDir));
+	}
+
+	/**
+	 * Regression test for a code-injection vulnerability: a spec-derived
+	 * value (here a {@code paths} key) used to be concatenated directly
+	 * between the literal quote characters of a generated string literal,
+	 * so an embedded {@code "} let a malicious spec break out of it and
+	 * inject arbitrary Java - e.g. an extra interface method - into the
+	 * generated, later-compiled source. {@link OpenApiClientGenerator} now
+	 * escapes every such value via a {@code stringLiteral}-style helper
+	 * (mirroring {@code RestClientProcessor}'s own), so the embedded quote
+	 * stays inert string content instead of breaking out.
+	 */
+	@Test
+	void generate_pathWithEmbeddedQuote_isEscapedInsteadOfBreakingOutOfTheStringLiteral() throws IOException {
+		String maliciousPath = "/items\") String pwned(); @GET(\"/injected";
+		JsonObject operation = new JsonObject();
+		operation.addProperty("operationId", "listItems");
+		JsonObject pathItem = new JsonObject();
+		pathItem.add("get", operation);
+		JsonObject paths = new JsonObject();
+		paths.add(maliciousPath, pathItem);
+		JsonObject spec = new JsonObject();
+		spec.add("paths", paths);
+
+		File specFile = writeSpec(spec.toString());
+		File outputDir = tempDir.resolve("out").toFile();
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "MaliciousPathApi");
+		String source = readGenerated(outputDir, "MaliciousPathApi");
+
+		// The entire malicious value must land as one escaped string-literal
+		// argument to @GET(...) instead of splitting into two @GET(...)
+		// annotations around an injected method declaration.
+		String expectedEscapedLiteral = "\"" + maliciousPath.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+		assertTrue(source.contains("@GET(" + expectedEscapedLiteral + ")"),
+				"Expected the embedded quote to be escaped within a single @GET(...) string literal - i.e. not "
+						+ "split into two @GET(...) annotations around an injected method declaration - got:\n"
+						+ source);
+	}
+
+	/**
+	 * Regression test for the same code-injection vulnerability as
+	 * {@link #generate_pathWithEmbeddedQuote_doesNotBreakOutOfStringLiteralToInjectAMethod},
+	 * for the one spec-derived value ({@code info.title}) written into a
+	 * Javadoc block comment rather than a string literal - there, the
+	 * dangerous sequence is the comment's own closing delimiter, which
+	 * {@link OpenApiClientGenerator} now neutralizes before writing the
+	 * title into the comment.
+	 */
+	@Test
+	void generate_maliciousSpecTitle_doesNotBreakOutOfJavadocCommentToInjectAType() throws IOException {
+		String maliciousTitle = "Evil */ interface Leaked {} /*";
+		JsonObject info = new JsonObject();
+		info.addProperty("title", maliciousTitle);
+		JsonObject operation = new JsonObject();
+		operation.addProperty("operationId", "listItems");
+		JsonObject pathItem = new JsonObject();
+		pathItem.add("get", operation);
+		JsonObject paths = new JsonObject();
+		paths.add("/items", pathItem);
+		JsonObject spec = new JsonObject();
+		spec.add("info", info);
+		spec.add("paths", paths);
+
+		File specFile = writeSpec(spec.toString());
+		File outputDir = tempDir.resolve("out").toFile();
+		OpenApiClientGenerator.generate(specFile, outputDir, "com.example.generated", "MaliciousTitleApi");
+		String source = readGenerated(outputDir, "MaliciousTitleApi");
+
+		Path classOutputDir = tempDir.resolve("classes-malicious-title");
+		Files.createDirectories(classOutputDir);
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("com.example.generated.MaliciousTitleApi",
+				source, classOutputDir);
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(classOutputDir.resolve("com/example/generated/Leaked.class")),
+				"A malicious spec title must not be able to inject a top-level type via the Javadoc comment");
 	}
 
 	@Test
