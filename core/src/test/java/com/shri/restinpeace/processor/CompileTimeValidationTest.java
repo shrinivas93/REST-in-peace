@@ -275,6 +275,44 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void completableFutureOfVoid_compilesCleanAndGeneratesImpl() throws IOException {
+		// CompletableFuture<Void> is the async-void shape - isSupportedReturnTypeArgument's
+		// own VOID-kind check exists specifically for this (a boxed Void type
+		// argument, not a raw `void` return type, which is a different code
+		// path entirely - see nonAsyncReturnModelOf's own primitive-void handling).
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompletableFutureOfVoid", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import java.util.concurrent.CompletableFuture;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompletableFutureOfVoid {\n" //
+				+ "  @POST(\"http://localhost/items\")\n" //
+				+ "  CompletableFuture<Void> createItem();\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void completableFutureOfWildcard_failsCompilation() throws IOException {
+		// A wildcard carries no runtime type to decode into at all - unlike a
+		// generic collection like List<String> (a DeclaredType, fully supported -
+		// see completableFutureOfGenericCollection_...), isSupportedReturnTypeArgument
+		// must still reject a WILDCARD/TYPEVAR kind rather than silently accepting it.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompletableFutureOfWildcard", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import java.util.concurrent.CompletableFuture;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompletableFutureOfWildcard {\n" //
+				+ "  @GET(\"http://localhost/items\")\n" //
+				+ "  CompletableFuture<?> getItem();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "which is not a supported type parameter");
+	}
+
+	@Test
 	void ripResponseOfFile_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RipResponseOfFile", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //

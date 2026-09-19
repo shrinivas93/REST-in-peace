@@ -400,22 +400,24 @@ final class CompileTimeRestClientValidator {
 
 	/**
 	 * Whether {@code typeArgument} is a shape {@code CompletableFuture<T>}/
-	 * {@code RipResponse<T>} can actually decode into at runtime - {@code void}/
-	 * {@code Void}, {@code byte[]}, or any class/interface, generic or not
-	 * (e.g. {@code User} or {@code List<User>}, both handled by
-	 * {@code ResponseDecoder} via {@code RuntimeGenericType} - see E12) - not
-	 * a wildcard or type variable, which carry no runtime type to decode
-	 * into at all. Mirrors {@code ReflectiveRestClientValidator}'s own
-	 * equivalent check: a parameterized inner type is a codegen-ineligible
-	 * shape (that one method falls back to the reflective proxy - see
+	 * {@code RipResponse<T>} can actually decode into at runtime -
+	 * {@code byte[]}, or any class/interface, generic or not (e.g.
+	 * {@code Void}, {@code User}, or {@code List<User>} - the latter two
+	 * handled by {@code ResponseDecoder} via {@code RuntimeGenericType},
+	 * see E12) - not a wildcard or type variable, which carry no runtime
+	 * type to decode into at all. {@code TypeKind.VOID} is deliberately not
+	 * checked here: it's the primitive {@code void} keyword's own kind, and
+	 * a generic type argument can never legally be a primitive type - only
+	 * boxed {@code java.lang.Void} (a plain {@code DECLARED} type, needing
+	 * no special-casing) can ever appear in this position. Mirrors
+	 * {@code ReflectiveRestClientValidator}'s own equivalent check: a
+	 * parameterized inner type is a codegen-ineligible shape (that one
+	 * method falls back to the reflective proxy - see
 	 * {@code RestClientProcessor#toSupportedMethodModel}), not a validation
 	 * error, exactly like a plain (non-generic) class/interface already
 	 * wasn't.
 	 */
 	private static boolean isSupportedReturnTypeArgument(TypeMirror typeArgument) {
-		if (typeArgument.getKind() == TypeKind.VOID) {
-			return true;
-		}
 		if (typeArgument.getKind() == TypeKind.ARRAY) {
 			return "byte[]".equals(typeArgument.toString());
 		}
