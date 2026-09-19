@@ -60,14 +60,16 @@
 			<!-- Declared here (not pluginManagement) so both core and
 			     spring-boot-starter inherit it automatically - no per-module
 			     repetition needed, same reasoning as maven-release-plugin above.
-			     0.8.12, not the newer 0.8.13, since this plugin itself must run
-			     under whatever JDK executes `mvn test` - ci.yml's core job runs
-			     under a real JDK 8 - and 0.8.13 raised its own minimum to JDK 11;
-			     0.8.12 is the last version verified to run on JDK 8. -->
+			     0.8.15 (bumped from 0.8.12 via #174) is confirmed running under
+			     the real JDK 8 that ci.yml's `test` job builds core with - the
+			     plugin and its org.jacoco.core/report/agent dependencies are all
+			     still Java-8-targeted (class file major version 49-52) as of
+			     this release, despite an earlier, now-outdated assumption here
+			     that 0.8.13+ needed JDK 11. -->
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.8.12</version>
+				<version>0.8.15</version>
 				<executions>
 					<!-- Binds the coverage agent into surefire's argLine - no
 					     explicit <phase>, so it uses prepare-agent's own default

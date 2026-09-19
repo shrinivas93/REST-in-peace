@@ -44,7 +44,7 @@ jobs:
       # still inspectable even if the Codecov upload below ever fails.
       - name: Upload JaCoCo coverage report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jacoco-report-core
           path: core/target/site/jacoco/
@@ -58,7 +58,7 @@ jobs:
       # upload, but used here for the more reliable/full-featured path.
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: core/target/site/jacoco/jacoco.xml
@@ -137,10 +137,23 @@ jobs:
       # bytecode instructions) - so one JDK setup covers both installing
       # the library and building the native executable, instead of juggling
       # two JDKs across the job.
+      #
+      # Bumped from '21' to '25': native-maven-plugin 1.1.12's own default
+      # reachability-metadata schema (and every schema-file-count-compatible
+      # release near it - see git history on this file/the sample's pom.xml
+      # for the version-hunt across GraalVM 21) needs a GraalVM this new to
+      # parse at all. GraalVM 25's javac also tightened implicit
+      # (classpath-only, no -processor/annotationProcessorPaths) annotation
+      # processor discovery enough that it silently stopped activating
+      # RestClientProcessor here - see the sample's own pom.xml comment on
+      # the native profile's explicit <annotationProcessors>, which works
+      # around that without touching the plain, non-native build the
+      # sample-consumer job (above) uses to demonstrate the processor's
+      # actual zero-config auto-activation.
       - name: Set up GraalVM
         uses: graalvm/setup-graalvm@0426e2e191540e8514dff98dc52a5f5146a2a276 # v1
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'graalvm-community'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
@@ -209,7 +222,7 @@ jobs:
       # inherited from the root pom.xml, applies to this module too.
       - name: Upload JaCoCo coverage report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: jacoco-report-spring-boot-starter
           path: spring-boot-starter/target/site/jacoco/
@@ -219,7 +232,7 @@ jobs:
       # this distinct from core's own upload in the Codecov UI.
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: spring-boot-starter/target/site/jacoco/jacoco.xml

@@ -872,7 +872,10 @@ up.
       into `master`, with a working bypass for `release.yml`'s own
       version-bump/tag push - before it's turned back on for real.
 - [x] **Codecov integration** — `codecov/codecov-action@v5` added to both
-      `ci.yml` and `spring-boot-starter-test.yml`, uploading each module's
+      `ci.yml` and `spring-boot-starter-test.yml` (the latter has since been
+      folded into `ci.yml`'s own `spring-boot-starter` job; the action
+      itself is now on `v7.1.1`, kept current via Dependabot), uploading
+      each module's
       already-generated `jacoco.xml` (from the JaCoCo item above) tagged
       with a `core`/`spring-boot-starter` flag so the two stay distinguishable
       in the Codecov UI rather than overwriting one report with the other.

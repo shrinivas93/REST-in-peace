@@ -53,10 +53,35 @@
 			<id>native</id>
 			<build>
 				<plugins>
+					<!-- Scoped to this profile only, not the plain build above: GraalVM
+					     25's javac (see ci.yml's own comment on the version bump this
+					     went with) tightened implicit, classpath-only annotation
+					     processor discovery enough that it stopped auto-activating
+					     RestClientProcessor here, so ItemApi_RipImpl was never
+					     generated. Naming the processor explicitly - just for this
+					     native-image build - restores that without touching the
+					     plain `mvn compile` path the sample-consumer CI job still uses
+					     to demonstrate genuine zero-config auto-activation via the
+					     bundled SPI file (this dependency block's own comment, and
+					     docs/design/compile-time-proxy-generation.md's own
+					     documented invariant that this smoke test actually protects -
+					     zero *hand-written* native-image reflect/proxy config - is
+					     unaffected either way: RestClientProcessor still emits its
+					     own reflect-config.json with no manual edits anywhere in this
+					     project's own resources. -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-compiler-plugin</artifactId>
+						<configuration>
+							<annotationProcessors>
+								<annotationProcessor>com.shri.restinpeace.processor.RestClientProcessor</annotationProcessor>
+							</annotationProcessors>
+						</configuration>
+					</plugin>
 					<plugin>
 						<groupId>org.graalvm.buildtools</groupId>
 						<artifactId>native-maven-plugin</artifactId>
-						<version>0.10.3</version>
+						<version>1.1.12</version>
 						<extensions>true</extensions>
 						<executions>
 							<execution>
@@ -77,6 +102,15 @@
 								     exists to catch. -->
 								<buildArg>--no-fallback</buildArg>
 							</buildArgs>
+							<!-- No explicit version pin: GraalVM 21.0.2 (this job's old
+							     pin) rejected the plugin's own default reachability-metadata
+							     schema as too new, which drove a whole version-hunt across
+							     older releases (see this file's git history) that never
+							     found one compatible with both the plugin's own packaging
+							     checks and GraalVM 21. Bumping the job to GraalVM 25
+							     (ci.yml) targets the schema the plugin's default already
+							     expects, so no override should be needed here any more -
+							     first thing to check if this job's schema error returns. -->
 						</configuration>
 					</plugin>
 				</plugins>

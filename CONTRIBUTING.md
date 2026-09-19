@@ -46,9 +46,10 @@ and inherited by both `core` and `spring-boot-starter` - no separate goal to
 remember). Open `core/target/site/jacoco/index.html` (or the equivalent path
 under `spring-boot-starter/target/`) in a browser after running tests; `ci.yml`'s
 `test` and `spring-boot-starter` jobs also upload it as a build artifact on
-every run. Pinned to `0.8.12`, not the newer `0.8.13`, since the plugin itself
-has to run under whatever JDK executes the build - `ci.yml`'s `test` job runs
-under a real JDK 8, and `0.8.13` raised its own minimum to JDK 11.
+every run. Currently `0.8.15` - the plugin itself has to run under whatever JDK
+executes the build, and `ci.yml`'s `test` job runs under a real JDK 8; `0.8.15`
+(like `0.8.12` before it) is confirmed still Java-8-targeted, despite an
+earlier belief that `0.8.13`+ needed JDK 11.
 
 Both jobs also upload the same `jacoco.xml` to Codecov
 (`codecov/codecov-action`, one upload per module tagged with a `core`/
@@ -81,9 +82,11 @@ uploaded this run" rather than failing CI outright.
   `github-actions` bot specifically since `maven-release-plugin` pushes it
   directly by design.
 - Every PR and every push to `develop`/`master` runs `ci.yml`'s five jobs in
-  parallel: `core`'s test suite (Java 8), the compile-time-proxy and
-  GraalVM native-image sample consumers (Java 8), and the Spring Boot
-  starter's own tests plus its sample consumer (Java 17).
+  parallel: `test` (`core`'s test suite, Java 8), `sample-consumer` (the
+  compile-time-proxy sample, Java 8), `native-image-smoke-test` (the same
+  sample built into a GraalVM native executable, GraalVM 25), and
+  `spring-boot-starter` plus `sample-spring-boot-consumer` (the Spring Boot
+  starter's own tests and its sample consumer, Java 17).
 
 ## Release process (maintainers)
 

@@ -164,7 +164,9 @@ Chunk 8 added `samples/spring-boot-consumer` (a real, separate downstream
 project depending on both `rest-in-peace` and
 `rest-in-peace-spring-boot-starter` as ordinary Maven dependencies, the
 same role `samples/compile-time-proxy-consumer` plays for compile-time
-codegen), its own CI job in `spring-boot-starter-test.yml`, README/
+codegen), its own CI job in `spring-boot-starter-test.yml` (since
+consolidated into `ci.yml`'s own `spring-boot-starter`/
+`sample-spring-boot-consumer` jobs), README/
 `ROADMAP.md` updates, and the publishing decision recorded in §8 -
 completing the rollout plan. No design surprises this time: the sample's
 `Main` (`@SpringBootApplication @EnableRestInPeaceClients`, no
@@ -304,7 +306,8 @@ REST-in-peace/
 class in this project.
 
 Building/testing it locally or in CI mirrors exactly what
-`sample-consumer-test.yml` already does for the sample consumer: install
+`sample-consumer-test.yml` (since consolidated into `ci.yml`'s own
+`sample-consumer` job) already does for the sample consumer: install
 the core library's current commit (`mvn install -DskipTests` at the repo
 root), then build the standalone project against whatever version was just
 installed.
@@ -456,9 +459,10 @@ mirroring how compile-time proxy generation itself shipped in slices (see
 2. **Standalone project scaffolding** ✅ - `spring-boot-starter/pom.xml`
    (depends on `com.shri:rest-in-peace`, `spring-boot-autoconfigure`,
    `spring-context`), a new `spring-boot-starter-test.yml` CI workflow
-   mirroring `sample-consumer-test.yml`'s "install core locally, build the
-   standalone project against it" pattern. No production code yet - just a
-   building, empty-but-real Maven project wired into CI.
+   (since consolidated into `ci.yml`) mirroring `sample-consumer-test.yml`'s
+   "install core locally, build the standalone project against it" pattern.
+   No production code yet - just a building, empty-but-real Maven project
+   wired into CI.
 3. **Minimal registration** ✅ - `@EnableRestInPeaceClients(basePackages)`,
    the registrar, and `RestInPeaceClientFactoryBean` calling
    `RIP.getClient(Class)` alone - interfaces must still use a real
