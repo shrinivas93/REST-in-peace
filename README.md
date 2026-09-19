@@ -255,59 +255,47 @@ for what actually happens under `getUser(...)`.
 
 ## Installation
 
-Published to GitHub Packages under `io.github.shrinivas93:rest-in-peace`. GitHub Packages
-requires authentication even for public read access — see
+Published to [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace)
+under `io.github.shrinivas93:rest-in-peace` (core) and
+`io.github.shrinivas93:rest-in-peace-spring-boot-starter` (the
+[Spring Boot starter](#spring--spring-boot)) — no repository declaration or
+credentials needed, just add the dependency. The same coordinates are also
+published to GitHub Packages, which does require authentication even for
+public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
 (Maven) or
 [GitHub's Gradle registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-gradle-registry)
-(Gradle) for configuring credentials.
+(Gradle) if you'd rather use that instead.
 
-Browse available versions on the
-[Packages page](https://github.com/shrinivas93?tab=packages&repo_name=REST-in-peace)
+Browse available versions on
+[Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace/versions)
 or the [Releases page](https://github.com/shrinivas93/REST-in-peace/releases) —
-replace `1.0.0.0-SNAPSHOT` below with the version you want (see
+replace `1.0.0.45` below with the version you want (see
 [Versioning and releases](#versioning-and-releases) for what the version
 number means).
 
 ### Maven
 
 ```xml
-<repositories>
-    <repository>
-        <id>github</id>
-        <url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
-    </repository>
-</repositories>
-
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace</artifactId>
-    <version>1.0.0.0-SNAPSHOT</version>
+    <version>1.0.0.45</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-repositories {
-    maven {
-        url = uri("https://maven.pkg.github.com/shrinivas93/REST-in-peace")
-        credentials {
-            username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
-            password = project.findProperty("gpr.token") ?: System.getenv("GITHUB_TOKEN")
-        }
-    }
-}
-
 dependencies {
-    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.0-SNAPSHOT")
+    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.45")
 }
 ```
 
 Full API documentation is browsable at
 [shrinivas93.github.io/REST-in-peace](https://shrinivas93.github.io/REST-in-peace/),
 rebuilt from the exact commit of each release. Each published version also
-ships a `-javadoc.jar` alongside the main jar in GitHub Packages.
+ships `-sources.jar` and `-javadoc.jar` alongside the main jar.
 
 ## Quick start
 
