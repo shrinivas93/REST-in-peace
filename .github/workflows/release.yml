@@ -65,6 +65,35 @@ jobs:
         id: released_tag
         run: echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
 
+      # README's Installation section shows a copy-pasteable version rather
+      # than a badge/placeholder, so it needs bumping every release or it
+      # silently goes stale (as happened with v1.0.0.46). Doing it here,
+      # right after the tag is known and before "Sync master back into
+      # develop" below, means the fix rides that same merge back to develop
+      # automatically - no separate PR, no drift window. grep -q against
+      # each pattern first so a README rewrite that breaks these patterns
+      # fails this step loudly instead of silently leaving the version
+      # stale with no signal to anyone.
+      - name: Bump README installation version
+        env:
+          RELEASE_TAG: ${{ steps.released_tag.outputs.tag }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+
+          grep -q -E '^replace `[0-9.]+` below with the version you want' README.md
+          grep -q -E '^    <version>[0-9.]+</version>$' README.md
+          grep -q -E '^    implementation\("io\.github\.shrinivas93:rest-in-peace:[0-9.]+"\)$' README.md
+
+          sed -i -E "s/^replace \`[0-9.]+\` below with the version you want/replace \`${VERSION}\` below with the version you want/" README.md
+          sed -i -E "s#^(    <version>)[0-9.]+(</version>)\$#\1${VERSION}\2#" README.md
+          sed -i -E "s#^(    implementation\(\"io\.github\.shrinivas93:rest-in-peace:)[0-9.]+(\"\))\$#\1${VERSION}\2#" README.md
+
+          if ! git diff --quiet README.md; then
+            git add README.md
+            git commit -m "Bump README installation version to ${RELEASE_TAG}"
+            git push origin master
+          fi
+
       - name: Create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
