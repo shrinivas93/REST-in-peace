@@ -1121,7 +1121,7 @@ findings, fixes, and (where relevant) new tests before the next one starts.
 Not new features; the goal is finding and fixing problems in what's already
 shipped.
 
-- [ ] **Security review** — audit for actual vulnerabilities, not just a
+- [x] **Security review** — audit for actual vulnerabilities, not just a
       dependency-CVE scan: injection risk anywhere user/response data
       reaches a sink (logging, the mock server's request parsing,
       `OpenApiClientGenerator`'s generated source), SSRF/URL-validation gaps
@@ -1133,7 +1133,19 @@ shipped.
       `JsonObjectMapper`, `RuntimeGenericType`'s reflective field overwrite),
       and dependency CVEs across the full tree (`unirest-java`, Apache
       HttpClient/HttpCore/HttpMime, Gson, the GraalVM reachability-metadata
-      artifacts). Uses the repo's own `security-review` skill/process.
+      artifacts). Found and fixed one high-confidence vulnerability:
+      `OpenApiClientGenerator` concatenated OpenAPI-spec-derived values
+      (a path, `servers[0].url`, a parameter name, `info.title`) directly
+      into the generated `.java` source's string literals/Javadoc comment
+      with no escaping - unlike `RestClientProcessor`'s own
+      `stringLiteral()` for the identical problem - so a malicious spec's
+      embedded `"`/`*/` could break out and inject arbitrary Java that
+      then compiled and shipped as part of the generated client (see #186).
+      Everything else audited (`@Url`/base URL, `RedactingLoggingInterceptor`,
+      `RuntimeGenericType`, `MockRestServer`/`RecordedRequest`,
+      `FormEncoder`/`MultipartEncoder`) came back clean; dependency CVEs
+      are already covered continuously by GitHub Advanced Security/
+      Dependabot alerts rather than this manual pass.
 - [ ] **Tech debt / code quality pass** — duplication and inconsistent
       patterns across `RequestExecutor`'s collaborators and the two dispatch
       paths (reflective vs. compile-time-generated) now that both have grown
