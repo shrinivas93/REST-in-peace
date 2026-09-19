@@ -1146,7 +1146,7 @@ shipped.
       `FormEncoder`/`MultipartEncoder`) came back clean; dependency CVEs
       are already covered continuously by GitHub Advanced Security/
       Dependabot alerts rather than this manual pass.
-- [ ] **Tech debt / code quality pass** — duplication and inconsistent
+- [x] **Tech debt / code quality pass** — duplication and inconsistent
       patterns across `RequestExecutor`'s collaborators and the two dispatch
       paths (reflective vs. compile-time-generated) now that both have grown
       significantly since step 1; anything on a "not needed now" list above
@@ -1156,7 +1156,21 @@ shipped.
       `ReflectiveRestClientValidator` and `CompileTimeRestClientValidator`
       (deliberately separate implementations per design, but worth checking
       they haven't drifted in ways that confuse a consumer who hits one
-      then the other).
+      then the other). Found and fixed one real bug while checking that
+      last point: `CompileTimeRestClientValidator` was never updated for
+      E12 and still hard-rejected a `CompletableFuture<List<User>>`/
+      `RipResponse<List<User>>` return type as a compile error, even though
+      that exact shape works fine through `RIP.getClient(...)` since
+      `ReflectiveRestClientValidator`'s own equivalent check was relaxed
+      for it - so such an interface compiled reflectively but failed to
+      build outright the moment `RestClientProcessor` (always active,
+      SPI-registered) ran on it (see #187). No dead code or leftover TODOs
+      found in `core/src/main`; the `not needed now` list is deliberately
+      deferred feature work, not tech debt, so left as-is. The
+      `RequestExecutor`/collaborator duplication that exists (e.g.
+      `InterceptorDispatcher`'s four near-identical sync/async,
+      string/bytes short-circuit wrappers) is small, well-documented, and
+      not worth a forced generic abstraction over.
 - [ ] **Performance review** — reflection overhead on the fallback proxy
       path vs. the compile-time-generated one (is the gap actually
       measurable, and where); allocation hot spots in the retry/cache/
