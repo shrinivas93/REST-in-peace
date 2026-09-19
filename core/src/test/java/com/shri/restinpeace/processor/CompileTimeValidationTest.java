@@ -705,19 +705,34 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void completableFutureOfUnsupportedGeneric_failsCompilation() throws IOException {
-		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompletableFutureOfUnsupportedGeneric", "" //
+	void completableFutureOfGenericCollection_fallsBackToReflectiveProxyInsteadOfFailingCompilation()
+			throws IOException {
+		// CompletableFuture<List<T>> is a fully supported, decodable return shape as
+		// of E12 (ResponseDecoder/RuntimeGenericType) - ReflectiveRestClientValidator
+		// was relaxed to accept it, and this validator must agree instead of still
+		// treating it as an error: the method just isn't codegen-eligible (no single
+		// Class<?> for RestClientProcessor to emit - see nonAsyncReturnModelOf's own
+		// comment) and falls back to the reflective proxy, the same as a bare,
+		// unwrapped List<String> return type already does (see
+		// interfaceMixingAnUnsupportedListReturnWithASupportedMethod_generatesAnImplementationForBoth).
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompletableFutureOfGenericCollection", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.PathParam;\n" //
 				+ "import java.util.List;\n" //
 				+ "import java.util.concurrent.CompletableFuture;\n" //
 				+ "@RestClient\n" //
-				+ "public interface CompletableFutureOfUnsupportedGeneric {\n" //
+				+ "public interface CompletableFutureOfGenericCollection {\n" //
+				+ "  @GET(\"http://localhost/items/{id}\")\n" //
+				+ "  String getItem(@PathParam(\"id\") String id);\n" //
 				+ "  @GET(\"http://localhost/items\")\n" //
 				+ "  CompletableFuture<List<String>> listItems();\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "which is not a supported type parameter");
+		assertNoErrors(diagnostics);
+		assertTrue(Files.exists(outputDir.resolve("CompletableFutureOfGenericCollection_RipImpl.class")),
+				"Expected CompletableFutureOfGenericCollection_RipImpl.class to be generated, found: "
+						+ list(outputDir));
 	}
 
 	@Test

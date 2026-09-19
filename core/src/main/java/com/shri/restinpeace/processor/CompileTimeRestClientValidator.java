@@ -400,9 +400,17 @@ final class CompileTimeRestClientValidator {
 
 	/**
 	 * Whether {@code typeArgument} is a shape {@code CompletableFuture<T>}/
-	 * {@code RipResponse<T>} can actually decode into - {@code void}/
-	 * {@code Void}, {@code byte[]}, or a non-generic class/interface - not a
-	 * further-parameterized type, wildcard, or type variable.
+	 * {@code RipResponse<T>} can actually decode into at runtime - {@code void}/
+	 * {@code Void}, {@code byte[]}, or any class/interface, generic or not
+	 * (e.g. {@code User} or {@code List<User>}, both handled by
+	 * {@code ResponseDecoder} via {@code RuntimeGenericType} - see E12) - not
+	 * a wildcard or type variable, which carry no runtime type to decode
+	 * into at all. Mirrors {@code ReflectiveRestClientValidator}'s own
+	 * equivalent check: a parameterized inner type is a codegen-ineligible
+	 * shape (that one method falls back to the reflective proxy - see
+	 * {@code RestClientProcessor#toSupportedMethodModel}), not a validation
+	 * error, exactly like a plain (non-generic) class/interface already
+	 * wasn't.
 	 */
 	private static boolean isSupportedReturnTypeArgument(TypeMirror typeArgument) {
 		if (typeArgument.getKind() == TypeKind.VOID) {
@@ -411,13 +419,7 @@ final class CompileTimeRestClientValidator {
 		if (typeArgument.getKind() == TypeKind.ARRAY) {
 			return "byte[]".equals(typeArgument.toString());
 		}
-		if (typeArgument.getKind() != TypeKind.DECLARED) {
-			return false;
-		}
-		if ("java.lang.Void".equals(typeArgument.toString())) {
-			return true;
-		}
-		return ((DeclaredType) typeArgument).getTypeArguments().isEmpty();
+		return typeArgument.getKind() == TypeKind.DECLARED;
 	}
 
 	private static boolean returnsFile(ExecutableElement method, Types types) {
