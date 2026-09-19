@@ -1,8 +1,54 @@
 # Design: Circuit breaker + bulkhead per client
 
-Status: **proposed, not yet implemented** (`ROADMAP.md`'s "Circuit breaker /
-bulkhead per client" item). This doc is chunk 1 of that item's own rollout
-plan (§9) - no production code exists yet.
+Status: **chunk 2 (the circuit breaker itself) landed** - `CircuitBreakerConfig`,
+`CircuitOpenException`, and `RipClientConfig.Builder#circuitBreaker(...)`,
+sync path (both dispatch paths), COUNT_BASED and TIME_BASED windows both
+fully implemented (not deferred, contrary to what chunk 1 assumed might be
+necessary). Bulkhead (chunk 3) not started.
+
+Two real deviations from §6.1/§6.3's sketch, both caught before merging, not
+after:
+
+- **Not an interceptor - a coordinator, wrapping the same supplier chain
+  `CacheCoordinator`/short-circuit already wrap.** §6.1 originally assumed
+  `RequestInterceptor`'s `beforeRequest`/`afterResponse` hooks were the
+  right integration point. They're the wrong one: `afterResponse` is only
+  notified for a call that actually receives a response - a transport-level
+  failure (connection refused, timeout, no response at all) never reaches
+  it, the exact same gap already documented on `MetricsInterceptor` for the
+  same reason. That gap is precisely wrong for a feature whose entire
+  premise (§1) is catching "the downstream is completely down" - usually a
+  connection failure, not a polite 5xx. The actual implementation
+  (`CircuitBreakerCoordinator`, package-private, `internal`) instead wraps
+  the exact `Supplier<HttpResponse<B>>` chain `RequestExecutor` already
+  passes through `CacheCoordinator`/`InterceptorDispatcher`'s short-circuit,
+  as the *outermost* layer (so an open breaker skips cache lookups,
+  short-circuit checks, and the network call entirely), with a
+  `try/catch` around the inner call so it sees both a real response (via
+  its status code) and a thrown transport exception uniformly. §6.1's own
+  text has been left as the original sketch for history; §7 and the
+  javadoc on `CircuitBreakerCoordinator`/`RetryExecutor` describe the
+  actual shape.
+- **`recordFailure` takes an `IntPredicate` on the status code, not a
+  `Predicate<Throwable>`.** §6.3's original sketch
+  (`recordFailure(ex -> ex instanceof RestInPeaceHttpException http && ...)`)
+  assumed a `RestInPeaceHttpException` was available to classify against at
+  this integration point - it isn't: that exception is only thrown later,
+  by `responseDecoder.decodeOrThrow`, *outside* the supplier chain this
+  coordinator wraps. Inside the wrap, a non-2xx response is just an
+  ordinary `HttpResponse` with a non-2xx status - nothing throws for it at
+  all. Renamed to `recordFailureForStatus(IntPredicate)`, defaulting to
+  `status -> status >= 500`, unchanged in intent (5xx + any transport
+  exception, still the default failure predicate) but classifying against
+  the actual data available. `RestInPeaceHttpException.getStatus()` (not
+  `getStatusCode()`, which doesn't exist) is the correct accessor
+  elsewhere, for the record.
+
+`CircuitOpenException` is never retried (`RetryExecutor` special-cases it
+ahead of the ordinary retryable-status check) - confirmed by
+`CircuitBreakerIntegrationTest#circuitOpenException_isNeverRetried` against
+a method with a real `@Retry` whose `retryOnStatus` would otherwise retry
+the triggering response.
 
 ## 1. Problem
 
@@ -497,11 +543,19 @@ and the reasoning for matching it rather than inventing something else:
 Mirrors the chunking convention both existing design docs use - each chunk
 its own PR, verified and merged before the next starts.
 
-1. **This design doc.**
-2. **Circuit breaker**, RIP's own built-in implementation (§6.1, §6.3) -
-   `CircuitBreakerConfig`, `CircuitBreakerInterceptor`,
-   `CircuitOpenException`, wired into `RipClientConfig.Builder`. Sync path
-   only.
+1. **This design doc.** ✅
+2. **Circuit breaker** ✅ - `CircuitBreakerConfig`, `CircuitOpenException`,
+   `CircuitBreakerCoordinator` (a coordinator, not an interceptor - see the
+   Status line above for why), wired into `RipClientConfig.Builder`. Sync
+   path, both dispatch paths. Both `COUNT_BASED` and `TIME_BASED` sliding
+   windows fully implemented, not deferred. Verified via
+   `CircuitBreakerConfigTest`, `CircuitBreakerCoordinatorTest` (14 cases:
+   every state transition, both window types, the minimum-sample-size gate,
+   a custom failure predicate), and `CircuitBreakerIntegrationTest` against
+   a real `MockRestServer` (proving the network call is genuinely skipped
+   once open, recovery via a half-open trial call, and that
+   `CircuitOpenException` is never retried even when `@Retry`'s own
+   `retryOnStatus` would otherwise retry the triggering response).
 3. **Bulkhead**, RIP's own built-in implementation (§6.2) - sync path only.
 4. **Async parity** for both, mirroring `RetryExecutor`'s own async-parity
    precedent (§7).

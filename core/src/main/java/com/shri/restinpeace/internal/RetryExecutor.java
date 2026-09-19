@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 
 import com.shri.restinpeace.RetryConfig;
 import com.shri.restinpeace.annotation.retry.Retry;
+import com.shri.restinpeace.exception.CircuitOpenException;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.interceptor.RequestContext;
 
@@ -46,6 +47,14 @@ import kong.unirest.HttpResponse;
  * retries this instance (i.e. this client) performs across every call
  * within a rolling window, regardless of any individual call's own
  * {@code @Retry#times()} - see {@link RetryBudget}'s own javadoc.
+ *
+ * <p>
+ * A {@link CircuitOpenException} (thrown by
+ * {@link CircuitBreakerCoordinator} when this client's circuit breaker is
+ * open) is the one failure never retried, on the sync path - every attempt
+ * would fail identically until the breaker's own cooldown elapses, so it's
+ * rethrown immediately instead of consuming a retry attempt or a
+ * {@link RetryBudget} token on a call that was never even attempted.
  */
 final class RetryExecutor {
 
@@ -133,6 +142,12 @@ final class RetryExecutor {
 			try {
 				response = call.get();
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
+			} catch (CircuitOpenException e) {
+				// Never worth retrying within the same open window - every attempt would
+				// fail identically until the breaker's own cooldown elapses, so this
+				// bypasses the retryable check entirely instead of consuming a retry
+				// attempt (or a retryBudget token) on a call that was never even attempted.
+				throw e;
 			} catch (RuntimeException e) {
 				failure = e;
 			}

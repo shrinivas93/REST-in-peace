@@ -74,6 +74,7 @@ test server for unit tests.
 - [Async](#async)
 - [Retries](#retries)
   - [Retry budget](#retry-budget)
+  - [Circuit breaker](#circuit-breaker)
   - [Idempotency keys](#idempotency-keys)
   - [Interface-level and client-wide defaults](#interface-level-and-client-wide-defaults)
 - [Timeouts](#timeouts)
@@ -1118,6 +1119,52 @@ its current outcome immediately — exactly like reaching its own
 `@Retry#times()`, just for a different reason. Not called at all (the
 default) means no cap beyond each call's own `times()`, byte-for-byte
 today's behavior.
+
+### Circuit breaker
+
+A retry budget caps how much a client retries; a circuit breaker decides
+whether it should even try. Once a client's failure rate crosses a
+threshold, it stops attempting calls entirely for a cooldown period,
+failing fast with `CircuitOpenException` instead of paying the cost — a
+full timeout, every `@Retry` attempt — of finding out a call would have
+failed too:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .circuitBreaker(CircuitBreakerConfig.builder()
+                .slidingWindowSize(20)              // the last 20 calls
+                .minimumNumberOfCalls(10)            // don't evaluate a rate below this
+                .failureRateThreshold(50)             // trip at 50% failures
+                .waitDurationInOpenState(Duration.ofSeconds(30))
+                .permittedCallsInHalfOpenState(3)
+                .build())
+        .build());
+```
+
+The sliding window is count-based (the last N *calls*) by default, not
+time-based (the last N *seconds*) — deterministic to test, and doesn't
+misbehave for a low-traffic client where "the last 30 seconds" might
+contain zero calls. `slidingWindowSize(Duration.ofSeconds(30))` selects a
+time-based window instead, for a consumer who specifically wants "rate
+over the last N seconds regardless of call volume." Only a 5xx response or
+a transport-level failure (connection refused, timeout) counts as a
+failure by default — a `404` from an ordinary existence check doesn't trip
+anything; override with `recordFailureForStatus(IntPredicate)` if a
+downstream's own error conventions differ.
+
+Once tripped (**open**), every call fails immediately with
+`CircuitOpenException` — never retried, even if `@Retry`'s own
+`retryOnStatus` would otherwise retry the response that tripped it, since
+every attempt would fail identically until the cooldown elapses. After
+`waitDurationInOpenState`, the breaker goes **half-open**: the next
+`permittedCallsInHalfOpenState` calls are let through as trials: all
+succeeding closes the breaker (a fresh window); a high enough failure rate
+among them re-opens it for another cooldown. Not configured at all (the
+default) means every call is always attempted, byte-for-byte today's
+behavior. See
+[`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
+for the full design, every default's reasoning, and the bulkhead
+half of that same roadmap item (not yet implemented).
 
 ## Timeouts
 

@@ -52,6 +52,7 @@ public final class RipClientConfig {
 	private final Long retryBudgetWindowMillis;
 	private final List<RequestInterceptor> interceptors;
 	private final RetryConfig retry;
+	private final CircuitBreakerConfig circuitBreaker;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -69,6 +70,7 @@ public final class RipClientConfig {
 		this.retryBudgetWindowMillis = builder.retryBudgetWindowMillis;
 		this.interceptors = builder.interceptors;
 		this.retry = builder.retry;
+		this.circuitBreaker = builder.circuitBreaker;
 	}
 
 	/**
@@ -239,6 +241,17 @@ public final class RipClientConfig {
 		return retry;
 	}
 
+	/**
+	 * Returns this client's circuit breaker.
+	 *
+	 * @return this client's circuit breaker config, or {@code null} for no
+	 *         circuit breaker at all (every call always attempted, the
+	 *         default)
+	 */
+	public CircuitBreakerConfig getCircuitBreaker() {
+		return circuitBreaker;
+	}
+
 	/** Builds a {@link RipClientConfig}. */
 	public static final class Builder {
 
@@ -257,6 +270,7 @@ public final class RipClientConfig {
 		private Long retryBudgetWindowMillis;
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
 		private RetryConfig retry;
+		private CircuitBreakerConfig circuitBreaker;
 
 		private Builder() {
 		}
@@ -473,6 +487,24 @@ public final class RipClientConfig {
 		 */
 		public Builder retry(RetryConfig retry) {
 			this.retry = retry;
+			return this;
+		}
+
+		/**
+		 * Sets this client's circuit breaker - stops even attempting calls
+		 * to this client once its failure rate crosses a threshold, for a
+		 * cooldown period, instead of paying the cost of finding out each
+		 * one would have failed too. See {@link CircuitBreakerConfig}'s own
+		 * javadoc (and {@code docs/design/circuit-breaker-bulkhead.md}) for
+		 * the full state machine and every default.
+		 *
+		 * @param circuitBreaker this client's circuit breaker config, or
+		 *                       {@code null} for no circuit breaker at all
+		 *                       (the default)
+		 * @return this builder
+		 */
+		public Builder circuitBreaker(CircuitBreakerConfig circuitBreaker) {
+			this.circuitBreaker = circuitBreaker;
 			return this;
 		}
 
