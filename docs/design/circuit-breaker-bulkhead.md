@@ -111,9 +111,9 @@ occasional, real outages (a provider-side incident, a deploy that goes
 briefly wrong) lasting anywhere from seconds to several minutes. Without a
 breaker, every checkout attempt during that window pays the full
 `@Timeout` + `@Retry` cost - each one hangs the user's checkout flow for
-several seconds before finally failing. With a breaker tuned to trip after
-a handful of consecutive failures, subsequent checkout attempts fail in
-under a millisecond, letting the UI show "payments are temporarily
+several seconds before finally failing. With a breaker tuned to trip once
+the failure rate over the last 20 calls crosses 50%, subsequent checkout
+attempts fail in under a millisecond, letting the UI show "payments are temporarily
 unavailable, please try again shortly" immediately instead of hanging -
 and the breaker's own HALF_OPEN trial calls detect recovery without a
 human needing to notice the outage ended and manually resume traffic.
@@ -136,8 +136,8 @@ degraded downstream from the four healthy ones.
 thousands of times per run. If that partner starts returning 5xxs under
 load (their systems can't handle the request rate), `@Retry` alone makes
 this *worse* - it multiplies the load on an already-struggling partner
-with every retried attempt. A breaker that trips after a threshold of
-failures, backs off entirely for a cooldown window, then trial-probes
+with every retried attempt. A breaker that trips once its failure-rate
+threshold is crossed, backs off entirely for a cooldown window, then trial-probes
 recovery is exactly the "stop hammering something that's clearly
 struggling" behavior a batch job's blast radius needs, distinct from an
 interactive request's need to fail fast for a human waiting on a UI.
@@ -359,8 +359,10 @@ example). Mirrors `@Retry`'s own existing retry-condition shape:
 
 ```java
 CircuitBreakerConfig.builder()
-    .failureRateThreshold(50)
-    .slidingWindowSize(20)
+    .slidingWindowType(SlidingWindowType.COUNT_BASED)  // default; TIME_BASED also supported (§6.4)
+    .slidingWindowSize(20)                             // last 20 calls
+    .minimumNumberOfCalls(10)                          // don't evaluate the rate below this
+    .failureRateThreshold(50)                          // trip at 50% failures within the window
     .waitDurationInOpenState(Duration.ofSeconds(30))
     .permittedCallsInHalfOpenState(3)
     .recordFailure(ex -> ex instanceof RestInPeaceHttpException http
@@ -373,6 +375,48 @@ Default predicate: 5xx responses and transport-level exceptions
 the same "client error vs. server error" boundary `@Retry`'s own default
 retry condition already draws, kept consistent rather than inventing a
 second convention.
+
+### 6.4 Sliding window: count-based and rate-dependent, not time-based or raw-count
+
+Worth stating explicitly, since the shape above (`failureRateThreshold` +
+`slidingWindowSize`) doesn't spell out the decision on its own: the window
+is **count-based** (the last N *calls*, e.g. the last 20 - not the last N
+*seconds*), and the trip condition is a **failure rate**, evaluated as a
+percentage of that window, not a raw failure count. This is resilience4j's
+own default shape (`SlidingWindowType.COUNT_BASED` + `failureRateThreshold`)
+and the reasoning for matching it rather than inventing something else:
+
+- **Count-based over time-based, as the default.** A time-based window
+  (the last N seconds) makes the trip decision dependent on how much
+  traffic happened to arrive during that window - for a low-traffic
+  client, "the last 30 seconds" might contain zero or one call, making a
+  rate meaningless (or requiring a `minimumNumberOfCalls` gate that, in
+  the worst case, never fills up for a genuinely idle client). A
+  count-based window (the last 20 calls, whenever they happened to occur)
+  doesn't have that failure mode, and is deterministic for testing - a
+  test can drive exactly 20 calls and assert the trip, with no
+  `Thread.sleep`/wall-clock dependency the way asserting a time-based
+  window's behavior would need. `SlidingWindowType.TIME_BASED` is still
+  worth exposing as a configurable alternative (resilience4j supports
+  both), for a consumer who specifically wants "rate over the last minute
+  regardless of call volume" - but it isn't the default, for the reasons
+  above.
+- **Rate over raw count, always.** 5 failures in the last 20 calls (25%)
+  and 5 failures in the last 10,000 calls are completely different
+  signals about whether a downstream is actually degraded - a raw count
+  threshold conflates them, and would need constant re-tuning per client
+  based on that client's typical call volume to mean anything consistent.
+  A rate threshold, gated by a configurable `minimumNumberOfCalls` (so a
+  rate is never evaluated off a tiny, statistically meaningless sample -
+  e.g. 1 failure out of 2 calls is technically 50%, but shouldn't trip a
+  breaker tuned for a 20-call window), is the shape that stays meaningful
+  regardless of how much traffic a given client actually sees. A simpler
+  "trip after N consecutive failures" model was considered (and is what
+  an early draft of §4.1's personas described) but rejected as the
+  default: a single stray success resets a pure consecutive-failure
+  counter to zero, which can mask a downstream that's genuinely degraded
+  but still occasionally succeeding - exactly the case a rate-over-a-window
+  is designed to catch instead.
 
 ## 7. Interaction with existing features
 
