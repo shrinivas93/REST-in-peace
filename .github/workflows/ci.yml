@@ -58,7 +58,7 @@ jobs:
       # upload, but used here for the more reliable/full-featured path.
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: core/target/site/jacoco/jacoco.xml
@@ -232,7 +232,7 @@ jobs:
       # this distinct from core's own upload in the Codecov UI.
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@0b35c9ecc4f0529d0eb674914510c22f85b196b4 # v7.1.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: spring-boot-starter/target/site/jacoco/jacoco.xml
