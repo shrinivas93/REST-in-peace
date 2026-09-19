@@ -813,7 +813,12 @@ up.
       key is identical across every recorded attempt.
 - [ ] **Circuit breaker / bulkhead per client** — a natural extension of
       `RipClientConfig`: stop hammering a downstream that's clearly down,
-      the natural next step after retry and timeout.
+      the natural next step after retry and timeout. Design doc written:
+      [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md) -
+      build-your-own default (no new dependency) with a pluggable
+      `CircuitBreakerProvider`/`BulkheadProvider` override to delegate to
+      resilience4j or any other backend a consumer already runs. Not
+      started; chunked rollout plan in the doc's §9.
 - [x] **A pre-built `MetricsInterceptor`** — times every request and reports
       it, once its response comes back, to a small `MetricsSink` interface
       (`recordCall(httpMethod, url, status, durationMillis)`) - the metrics
