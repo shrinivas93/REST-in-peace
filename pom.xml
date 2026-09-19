@@ -22,13 +22,35 @@
 	would, rather than resolving them through this reactor. See
 	docs/design/compile-time-proxy-generation.md for why that's intentional.
 	-->
-	<groupId>com.shri</groupId>
+	<groupId>io.github.shrinivas93</groupId>
 	<artifactId>rest-in-peace-parent</artifactId>
 	<version>1.0.0.45-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>
-	<url>http://maven.apache.org</url>
+	<description>Shared parent POM for rest-in-peace and rest-in-peace-spring-boot-starter - a simple, declarative and peaceful REST client for Java.</description>
+	<url>https://github.com/shrinivas93/REST-in-peace</url>
+
+	<!-- Required by Maven Central for every published POM (a child module's
+	     own effective POM inherits these, since <licenses>/<developers>,
+	     unlike <name>/<description>, follow ordinary Maven inheritance) -
+	     see the Maven Central publishing item in ROADMAP.md. -->
+	<licenses>
+		<license>
+			<name>MIT License</name>
+			<url>https://github.com/shrinivas93/REST-in-peace/blob/master/LICENSE</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<id>shrinivas93</id>
+			<name>Shrinivas Shukla</name>
+			<email>ssshukla1993@gmail.com</email>
+			<url>https://github.com/shrinivas93</url>
+		</developer>
+	</developers>
 
 	<scm>
 		<connection>scm:git:https://github.com/shrinivas93/REST-in-peace.git</connection>
@@ -101,5 +123,63 @@
 			<url>https://maven.pkg.github.com/shrinivas93/REST-in-peace</url>
 		</repository>
 	</distributionManagement>
+
+	<!-- Maven Central publishing, kept behind a profile rather than always-on:
+	     central-publishing-maven-plugin's own <extensions>true</extensions>
+	     takes over the deploy mechanism entirely once active, which would
+	     hijack the plain `mvn deploy` the existing GitHub Packages step
+	     (maven-publish.yml) already relies on. Activated explicitly
+	     (`mvn -Pcentral deploy`) as a separate step/job instead, so the two
+	     publish targets never fight over the same `deploy` invocation. GPG
+	     signing lives in this same profile for the same reason - only
+	     needed, and only required to be configured (a GPG key on the
+	     runner), when actually publishing to Central, not for every
+	     ordinary `mvn test`/`mvn package`/GitHub Packages deploy. -->
+	<profiles>
+		<profile>
+			<id>central</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-gpg-plugin</artifactId>
+						<version>3.2.7</version>
+						<executions>
+							<execution>
+								<id>sign-artifacts</id>
+								<phase>verify</phase>
+								<goals>
+									<goal>sign</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- extensions=true is what lets this plugin intercept `deploy`
+					     for the whole reactor and upload a signed bundle to the
+					     Central Portal's Publisher API, instead of a plain PUT to
+					     distributionManagement/repository the way GitHub Packages
+					     works - publishingServerId names the <server> entry (id
+					     "central") CI's settings.xml supplies the Central user
+					     token's username/password under, matching maven-publish.yml.
+					     autoPublish=true means a validated bundle goes live on
+					     Central immediately, with no manual step in the Portal UI -
+					     Central has no unpublish once that happens, so a bad release
+					     (wrong version, broken artifact) is permanent; this trades
+					     that safety margin for every tagged release reaching
+					     consumers automatically. -->
+					<plugin>
+						<groupId>org.sonatype.central</groupId>
+						<artifactId>central-publishing-maven-plugin</artifactId>
+						<version>0.11.0</version>
+						<extensions>true</extensions>
+						<configuration>
+							<publishingServerId>central</publishingServerId>
+							<autoPublish>true</autoPublish>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>

@@ -30,7 +30,7 @@
 		     auto-activates via its bundled SPI file with zero extra
 		     consumer-side configuration. -->
 		<dependency>
-			<groupId>com.shri</groupId>
+			<groupId>io.github.shrinivas93</groupId>
 			<artifactId>rest-in-peace</artifactId>
 			<version>${rest-in-peace.version}</version>
 		</dependency>

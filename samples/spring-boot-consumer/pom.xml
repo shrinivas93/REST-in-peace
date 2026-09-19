@@ -45,12 +45,12 @@
 		     itself, to prove @EnableRestInPeaceClients auto-registers
 		     UserApi below with zero extra consumer-side configuration. -->
 		<dependency>
-			<groupId>com.shri</groupId>
+			<groupId>io.github.shrinivas93</groupId>
 			<artifactId>rest-in-peace</artifactId>
 			<version>${rest-in-peace.version}</version>
 		</dependency>
 		<dependency>
-			<groupId>com.shri</groupId>
+			<groupId>io.github.shrinivas93</groupId>
 			<artifactId>rest-in-peace-spring-boot-starter</artifactId>
 			<version>${rest-in-peace-spring-boot-starter.version}</version>
 		</dependency>

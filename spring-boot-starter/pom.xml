@@ -2,7 +2,7 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<parent>
-		<groupId>com.shri</groupId>
+		<groupId>io.github.shrinivas93</groupId>
 		<artifactId>rest-in-peace-parent</artifactId>
 		<version>1.0.0.45-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
@@ -12,6 +12,7 @@
 	<packaging>jar</packaging>
 
 	<name>rest-in-peace-spring-boot-starter</name>
+	<url>https://github.com/shrinivas93/REST-in-peace</url>
 	<description>
 		Spring Boot auto-configuration for REST-in-peace: auto-registers every
 		@RestClient interface found on the classpath as a Spring bean, instead
@@ -52,7 +53,7 @@
 			<!-- Same version as this module by construction - both inherit it
 			     from the shared parent, so ${project.version} always names
 			     whatever core version this build is paired with. -->
-			<groupId>com.shri</groupId>
+			<groupId>io.github.shrinivas93</groupId>
 			<artifactId>rest-in-peace</artifactId>
 			<version>${project.version}</version>
 		</dependency>
@@ -81,6 +82,21 @@
 				<executions>
 					<execution>
 						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- See core/pom.xml's own comment - required by Maven Central, and a
+			     normal convenience for GitHub Packages consumers too. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>3.4.0</version>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
 						<goals>
 							<goal>jar</goal>
 						</goals>

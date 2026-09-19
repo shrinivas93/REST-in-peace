@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version of com.shri:rest-in-peace to test as a real consumer'
+        description: 'Version of io.github.shrinivas93:rest-in-peace to test as a real consumer'
         required: true
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
             </repositories>
             <dependencies>
               <dependency>
-                <groupId>com.shri</groupId>
+                <groupId>io.github.shrinivas93</groupId>
                 <artifactId>rest-in-peace</artifactId>
                 <version>${VERSION}</version>
               </dependency>
