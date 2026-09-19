@@ -270,7 +270,7 @@ public read access — see
 Browse available versions on
 [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace/versions)
 or the [Releases page](https://github.com/shrinivas93/REST-in-peace/releases) —
-replace `1.0.0.45` below with the version you want (see
+replace `1.0.0.46` below with the version you want (see
 [Versioning and releases](#versioning-and-releases) for what the version
 number means).
 
@@ -280,7 +280,7 @@ number means).
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace</artifactId>
-    <version>1.0.0.45</version>
+    <version>1.0.0.46</version>
 </dependency>
 ```
 
@@ -288,7 +288,7 @@ number means).
 
 ```groovy
 dependencies {
-    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.45")
+    implementation("io.github.shrinivas93:rest-in-peace:1.0.0.46")
 }
 ```
 
