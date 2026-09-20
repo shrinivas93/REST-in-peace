@@ -147,8 +147,11 @@ final class CircuitBreakerCoordinator {
 			recordHalfOpenOutcome(success);
 			return;
 		}
+		// Only ever CLOSED here: checkPermission() never lets a call through while
+		// OPEN without first transitioning to HALF_OPEN (handled above), so there's
+		// no third state left to guard against.
 		recordWindowOutcome(success);
-		if (state == State.CLOSED && sampleSize() >= config.getMinimumNumberOfCalls()
+		if (sampleSize() >= config.getMinimumNumberOfCalls()
 				&& failureRatePercent() >= config.getFailureRateThreshold()) {
 			transitionToOpen();
 		}
@@ -224,8 +227,13 @@ final class CircuitBreakerCoordinator {
 		if (!success) {
 			timeWindowFailures++;
 		}
+		// The entry just added above is always timestamped "now", and
+		// CircuitBreakerConfig.Builder#slidingWindowSize(Duration) rejects a
+		// non-positive duration, so cutoff is always strictly less than "now" -
+		// that entry itself can never be the one pruned here, and the queue can
+		// therefore never go empty from this loop. No emptiness check needed.
 		long cutoff = now - config.getSlidingWindowDurationMillis();
-		while (!timeWindow.isEmpty() && timeWindow.peekFirst().timestampMillis < cutoff) {
+		while (timeWindow.peekFirst().timestampMillis < cutoff) {
 			TimestampedOutcome expired = timeWindow.pollFirst();
 			if (expired.isFailure) {
 				timeWindowFailures--;
@@ -237,11 +245,11 @@ final class CircuitBreakerCoordinator {
 		return failureFlags != null ? filledSlots : timeWindow.size();
 	}
 
+	// Its one caller always runs this right after recordWindowOutcome() adds an
+	// entry, so sampleSize() here is never 0 - no guard needed against dividing
+	// by it.
 	private int failureRatePercent() {
 		int size = sampleSize();
-		if (size == 0) {
-			return 0;
-		}
 		int failures = failureFlags != null ? failureCount : timeWindowFailures;
 		return failures * 100 / size;
 	}

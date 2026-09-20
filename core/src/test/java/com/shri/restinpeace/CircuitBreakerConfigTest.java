@@ -55,6 +55,8 @@ class CircuitBreakerConfigTest {
 	void invalidArguments_throw() {
 		assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder().slidingWindowSize(0));
 		assertThrows(IllegalArgumentException.class,
+				() -> CircuitBreakerConfig.builder().slidingWindowSize((Duration) null));
+		assertThrows(IllegalArgumentException.class,
 				() -> CircuitBreakerConfig.builder().slidingWindowSize(Duration.ZERO));
 		assertThrows(IllegalArgumentException.class,
 				() -> CircuitBreakerConfig.builder().slidingWindowSize(Duration.ofSeconds(-1)));
@@ -62,7 +64,11 @@ class CircuitBreakerConfigTest {
 		assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder().failureRateThreshold(0));
 		assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder().failureRateThreshold(101));
 		assertThrows(IllegalArgumentException.class,
+				() -> CircuitBreakerConfig.builder().waitDurationInOpenState(null));
+		assertThrows(IllegalArgumentException.class,
 				() -> CircuitBreakerConfig.builder().waitDurationInOpenState(Duration.ZERO));
+		assertThrows(IllegalArgumentException.class,
+				() -> CircuitBreakerConfig.builder().waitDurationInOpenState(Duration.ofSeconds(-1)));
 		assertThrows(IllegalArgumentException.class,
 				() -> CircuitBreakerConfig.builder().permittedCallsInHalfOpenState(0));
 		assertThrows(IllegalArgumentException.class, () -> CircuitBreakerConfig.builder().recordFailureForStatus(null));
