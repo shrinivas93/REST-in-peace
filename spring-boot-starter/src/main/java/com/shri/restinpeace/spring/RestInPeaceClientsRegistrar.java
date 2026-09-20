@@ -1,6 +1,7 @@
 package com.shri.restinpeace.spring;
 
 import java.beans.Introspector;
+import java.time.Duration;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -22,6 +23,8 @@ import org.springframework.core.type.AnnotationMetadata;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.util.ClassUtils;
 
+import com.shri.restinpeace.BulkheadConfig;
+import com.shri.restinpeace.CircuitBreakerConfig;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.cache.Cache;
@@ -126,7 +129,58 @@ final class RestInPeaceClientsRegistrar implements ImportBeanDefinitionRegistrar
 			RestInPeaceClientProperties.Proxy proxy = properties.getProxy();
 			builder.proxy(proxy.getHost(), proxy.getPort(), proxy.getUsername(), proxy.getPassword());
 		}
+		if (properties.getCircuitBreaker() != null) {
+			builder.circuitBreaker(toCircuitBreakerConfig(properties.getCircuitBreaker()));
+		}
+		if (properties.getBulkhead() != null) {
+			builder.bulkhead(toBulkheadConfig(properties.getBulkhead()));
+		}
 		return builder;
+	}
+
+	/**
+	 * @param properties this client's {@code circuit-breaker.*} properties,
+	 *                   already known non-null
+	 * @return a {@link CircuitBreakerConfig} with every set property applied
+	 *         over {@link CircuitBreakerConfig.Builder}'s own defaults
+	 */
+	private static CircuitBreakerConfig toCircuitBreakerConfig(RestInPeaceClientProperties.CircuitBreaker properties) {
+		CircuitBreakerConfig.Builder builder = CircuitBreakerConfig.builder();
+		if (properties.getSlidingWindowDurationMillis() != null) {
+			builder.slidingWindowSize(Duration.ofMillis(properties.getSlidingWindowDurationMillis()));
+		} else if (properties.getSlidingWindowSize() != null) {
+			builder.slidingWindowSize(properties.getSlidingWindowSize());
+		}
+		if (properties.getMinimumNumberOfCalls() != null) {
+			builder.minimumNumberOfCalls(properties.getMinimumNumberOfCalls());
+		}
+		if (properties.getFailureRateThreshold() != null) {
+			builder.failureRateThreshold(properties.getFailureRateThreshold());
+		}
+		if (properties.getWaitDurationInOpenStateMillis() != null) {
+			builder.waitDurationInOpenState(Duration.ofMillis(properties.getWaitDurationInOpenStateMillis()));
+		}
+		if (properties.getPermittedCallsInHalfOpenState() != null) {
+			builder.permittedCallsInHalfOpenState(properties.getPermittedCallsInHalfOpenState());
+		}
+		return builder.build();
+	}
+
+	/**
+	 * @param properties this client's {@code bulkhead.*} properties, already
+	 *                   known non-null
+	 * @return a {@link BulkheadConfig} with every set property applied over
+	 *         {@link BulkheadConfig.Builder}'s own defaults
+	 */
+	private static BulkheadConfig toBulkheadConfig(RestInPeaceClientProperties.Bulkhead properties) {
+		BulkheadConfig.Builder builder = BulkheadConfig.builder();
+		if (properties.getMaxConcurrentCalls() != null) {
+			builder.maxConcurrentCalls(properties.getMaxConcurrentCalls());
+		}
+		if (properties.getMaxWaitDurationMillis() != null) {
+			builder.maxWaitDuration(Duration.ofMillis(properties.getMaxWaitDurationMillis()));
+		}
+		return builder.build();
 	}
 
 	/**

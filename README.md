@@ -1971,6 +1971,11 @@ rest-in-peace:
     user-api:
       connect-timeout-millis: 2000
       read-timeout-millis: 10000
+      circuit-breaker:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state-millis: 30000
+      bulkhead:
+        max-concurrent-calls: 25
 ```
 
 Then inject `UserApi` like any other Spring bean — constructor injection
@@ -1979,7 +1984,13 @@ client. `ObjectMapper`/`Cache`/`RequestInterceptor` beans already in the
 context get wired in automatically too (qualified to a specific client via
 `@Qualifier`, or shared by every client as a single unqualified bean), and
 `@AutoConfigureMockRestServer` redirects every registered client to a
-`MockRestServer` for tests. See
+`MockRestServer` for tests. Every `circuit-breaker`/`bulkhead` property is
+optional and independently defaulted, mirroring
+[`CircuitBreakerConfig`](#circuit-breaker)/[`BulkheadConfig`](#bulkhead)'s
+own builder defaults for whatever's left unset - a
+`CircuitBreakerProvider`/`BulkheadProvider` override still has to be wired
+programmatically via `RipClientConfig.Builder`, since a provider is a Java
+object, not something a property file can express. See
 [`samples/spring-boot-consumer`](samples/spring-boot-consumer) for a
 complete, runnable example.
 
