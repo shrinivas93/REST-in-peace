@@ -53,6 +53,7 @@ public final class RipClientConfig {
 	private final List<RequestInterceptor> interceptors;
 	private final RetryConfig retry;
 	private final CircuitBreakerConfig circuitBreaker;
+	private final BulkheadConfig bulkhead;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -71,6 +72,7 @@ public final class RipClientConfig {
 		this.interceptors = builder.interceptors;
 		this.retry = builder.retry;
 		this.circuitBreaker = builder.circuitBreaker;
+		this.bulkhead = builder.bulkhead;
 	}
 
 	/**
@@ -252,6 +254,16 @@ public final class RipClientConfig {
 		return circuitBreaker;
 	}
 
+	/**
+	 * Returns this client's bulkhead.
+	 *
+	 * @return this client's bulkhead config, or {@code null} for no
+	 *         concurrency cap at all (the default)
+	 */
+	public BulkheadConfig getBulkhead() {
+		return bulkhead;
+	}
+
 	/** Builds a {@link RipClientConfig}. */
 	public static final class Builder {
 
@@ -271,6 +283,7 @@ public final class RipClientConfig {
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
 		private RetryConfig retry;
 		private CircuitBreakerConfig circuitBreaker;
+		private BulkheadConfig bulkhead;
 
 		private Builder() {
 		}
@@ -505,6 +518,23 @@ public final class RipClientConfig {
 		 */
 		public Builder circuitBreaker(CircuitBreakerConfig circuitBreaker) {
 			this.circuitBreaker = circuitBreaker;
+			return this;
+		}
+
+		/**
+		 * Sets this client's bulkhead - caps how many calls to this client
+		 * can be in flight at once, so one slow or hung downstream can't
+		 * starve every other call sharing the same connection pool/thread
+		 * capacity. See {@link BulkheadConfig}'s own javadoc (and
+		 * {@code docs/design/circuit-breaker-bulkhead.md}) for the full
+		 * reasoning and every default.
+		 *
+		 * @param bulkhead this client's bulkhead config, or {@code null} for
+		 *                 no concurrency cap at all (the default)
+		 * @return this builder
+		 */
+		public Builder bulkhead(BulkheadConfig bulkhead) {
+			this.bulkhead = bulkhead;
 			return this;
 		}
 

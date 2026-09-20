@@ -16,8 +16,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   calls) and a failure-rate threshold are the default, matching
   resilience4j's own convention; a time-based window (the last N seconds)
   is also supported. See `docs/design/circuit-breaker-bulkhead.md` for the
-  full design and every default. Sync path only for now - async parity and
-  a bulkhead (also per that design doc) are tracked separately.
+  full design and every default. Sync path only for now - async parity
+  (also per that design doc) is tracked separately.
+- A per-client bulkhead: `RipClientConfig.Builder#bulkhead(BulkheadConfig)`
+  caps how many calls to a client can be in flight at once, refusing the
+  excess with a new `BulkheadFullException` (immediately by default, or
+  after waiting up to a configurable `maxWaitDuration` for a permit to free
+  up) - so one slow or hung downstream can't starve every other call
+  sharing the same connection pool/thread capacity. Unlike
+  `CircuitOpenException`, `BulkheadFullException` is retried by `@Retry`'s
+  ordinary logic, since a permit can free up at any moment. See
+  `docs/design/circuit-breaker-bulkhead.md` for the full design and every
+  default. Sync path only for now - async parity (also per that design
+  doc) is tracked separately.
 
 ### Changed
 
