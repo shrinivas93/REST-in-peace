@@ -1,6 +1,7 @@
 package com.shri.restinpeace.internal;
 
 import java.util.ArrayDeque;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 import com.shri.restinpeace.CircuitBreakerConfig;
@@ -119,6 +120,47 @@ final class CircuitBreakerCoordinator {
 				recordOutcome(false);
 				throw e;
 			}
+		};
+	}
+
+	/**
+	 * The async counterpart of {@link #wrapWithCircuitBreaker}, for the
+	 * {@code CompletableFuture} dispatch path. Unlike the sync wrap, this
+	 * never throws {@link CircuitOpenException} synchronously from the
+	 * returned supplier - {@link #checkPermission()} is instant either way
+	 * (a quick {@code synchronized} check, never a real wait), but a
+	 * synchronous throw here would be lost if this supplier is ever invoked
+	 * from inside a scheduled callback (as {@link RetryExecutor}'s async
+	 * retry loop does for attempt 2+), silently hanging the caller's future
+	 * forever instead of surfacing the failure. Delivering it as an already-
+	 * failed future instead is safe in both places it's invoked from - the
+	 * top-level call and a scheduled retry - and is the more idiomatic shape
+	 * for a {@code CompletableFuture}-returning API besides.
+	 *
+	 * @param call the real (possibly cache-/short-circuit-wrapped) async call
+	 * @return a wrapping supplier that may return an already-failed future
+	 *         instead of ever invoking {@code call}
+	 */
+	<B> Supplier<CompletableFuture<HttpResponse<B>>> wrapWithCircuitBreakerAsync(
+			Supplier<CompletableFuture<HttpResponse<B>>> call) {
+		if (config == null) {
+			return call;
+		}
+		return () -> {
+			try {
+				checkPermission();
+			} catch (CircuitOpenException e) {
+				CompletableFuture<HttpResponse<B>> failed = new CompletableFuture<>();
+				failed.completeExceptionally(e);
+				return failed;
+			}
+			return call.get().whenComplete((response, failure) -> {
+				if (failure != null) {
+					recordOutcome(false);
+				} else {
+					recordOutcome(!config.getRecordFailureForStatus().test(response.getStatus()));
+				}
+			});
 		};
 	}
 

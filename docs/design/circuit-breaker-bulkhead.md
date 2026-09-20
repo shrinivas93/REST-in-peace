@@ -25,8 +25,46 @@ own shipped precedent from chunk 2, not the `RestInPeaceResilienceException`
 common-ancestor option §8 was leaning toward), for consistency with what
 actually landed rather than what was sketched before chunk 2 existed.
 
-Async parity (chunk 4), the provider SPI (chunk 5), and Spring Boot starter
-wiring (chunk 6) not started.
+**Chunk 4 (async parity for both) landed** -
+`CircuitBreakerCoordinator#wrapWithCircuitBreakerAsync`/
+`BulkheadCoordinator#wrapWithBulkheadAsync`, wired into every
+`CompletableFuture`-returning call site in `RequestExecutor` (both dispatch
+paths), plus a matching special case in `RetryExecutor`'s async retry loop
+so `CircuitOpenException` is never retried there either. Two real
+deviations from §7's original "likely a `CompletableFuture`-returning
+acquire" sketch, both safety-driven, caught before merging:
+
+- **Neither async wrap ever throws synchronously from the returned
+  `Supplier` - even `CircuitBreakerCoordinator#checkPermission()`'s check,
+  which is otherwise instant.** `RetryExecutor`'s async retry loop invokes
+  the wrapped supplier again from inside a `RETRY_SCHEDULER`-scheduled
+  callback for attempt 2+ - a synchronous throw there wouldn't propagate to
+  any caller at all, it would just be lost, silently hanging the original
+  `CompletableFuture` forever instead of ever completing it. Both wraps
+  instead always return a `CompletableFuture`, completing it exceptionally
+  when the call is refused, which is also the more idiomatic shape for a
+  `CompletableFuture`-returning API regardless.
+- **`BulkheadCoordinator`'s async wrap offloads its bounded wait
+  (`maxWaitDuration > 0`) onto a small dedicated `WAIT_EXECUTOR`
+  (`Executors.newCachedThreadPool`, daemon threads) instead of ever
+  blocking the caller's own thread.** `Semaphore#tryAcquire(long, TimeUnit)`
+  is a genuine blocking call; running it directly on an async caller's
+  thread (e.g. an event-loop thread) would defeat the entire point of an
+  async API. The zero-wait fail-fast case needs no such hop -
+  `Semaphore#tryAcquire()` (no timeout) is itself instant - and reuses the
+  exact sync-path validation/message logic, only converting a thrown
+  `BulkheadFullException` into an already-failed future instead of letting
+  it propagate, for the same reason as the breaker's wrap above.
+
+Verified via new `async_*`-prefixed cases added to `CircuitBreakerCoordinatorTest`
+and `BulkheadCoordinatorTest` (mirroring their sync counterparts, plus one
+proving the bounded-wait case genuinely doesn't block the calling thread),
+and new `async_*` cases in `CircuitBreakerIntegrationTest`/
+`BulkheadIntegrationTest` against a real `MockRestServer` over the
+compile-time-generated dispatch path.
+
+The provider SPI (chunk 5) and Spring Boot starter wiring (chunk 6) not
+started.
 
 Two real deviations from §6.1/§6.3's sketch, both caught before merging, not
 after:
@@ -586,8 +624,14 @@ its own PR, verified and merged before the next starts.
    full bulkhead genuinely skips the network call, a released permit lets
    a waiting call through, and `maxWaitDuration` lets a call queue for a
    permit instead of failing immediately).
-4. **Async parity** for both, mirroring `RetryExecutor`'s own async-parity
-   precedent (§7).
+4. **Async parity** ✅ for both - `CircuitBreakerCoordinator#wrapWithCircuitBreakerAsync`/
+   `BulkheadCoordinator#wrapWithBulkheadAsync`, wired into every
+   `CompletableFuture` call site in `RequestExecutor` (both dispatch paths),
+   plus `RetryExecutor`'s async retry loop never retrying a
+   `CircuitOpenException` either. See the Status line above for the two
+   real, safety-driven deviations from this item's original sketch (neither
+   async wrap ever throws synchronously; the bulkhead's bounded wait runs
+   on a dedicated background executor, never the caller's thread).
 5. **`CircuitBreakerProvider`/`BulkheadProvider`** override SPI (§5, Option
    C) - the resilience4j-delegation escape hatch, plus a documented
    example adapter (not a hard dependency - the example lives in docs/a

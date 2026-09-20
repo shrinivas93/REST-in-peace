@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -23,6 +25,10 @@ class CircuitBreakerCoordinatorTest {
 
 	private static Supplier<HttpResponse<String>> respondingWith(int status) {
 		return () -> new SyntheticHttpResponse<>(status, new kong.unirest.Headers(), "body");
+	}
+
+	private static Supplier<CompletableFuture<HttpResponse<String>>> respondingWithAsync(int status) {
+		return () -> CompletableFuture.completedFuture(new SyntheticHttpResponse<>(status, new kong.unirest.Headers(), "body"));
 	}
 
 	@Test
@@ -305,6 +311,103 @@ class CircuitBreakerCoordinatorTest {
 		} finally {
 			pool.shutdown();
 		}
+	}
+
+	@Test
+	void async_unconfigured_neverRefusesAndNeverThrows() throws Exception {
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(null);
+
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
+				.wrapWithCircuitBreakerAsync(respondingWithAsync(500));
+
+		for (int i = 0; i < 20; i++) {
+			assertEquals(500, wrapped.get().get(5, TimeUnit.SECONDS).getStatus());
+		}
+	}
+
+	@Test
+	void async_failureRateCrossesThreshold_recordsOutcomesAndTrips() throws Exception {
+		CircuitBreakerConfig config = CircuitBreakerConfig.builder().slidingWindowSize(4).minimumNumberOfCalls(4)
+				.failureRateThreshold(50).build();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(config);
+		Supplier<CompletableFuture<HttpResponse<String>>> failingCall = coordinator
+				.wrapWithCircuitBreakerAsync(respondingWithAsync(500));
+
+		// 4 real failures, 100% >= 50% - trips on the 4th, exactly mirroring the
+		// sync test's proof that async outcomes are recorded into the same window.
+		for (int i = 0; i < 4; i++) {
+			assertEquals(500, failingCall.get().get(5, TimeUnit.SECONDS).getStatus());
+		}
+
+		Supplier<CompletableFuture<HttpResponse<String>>> succeedingCall = coordinator
+				.wrapWithCircuitBreakerAsync(respondingWithAsync(200));
+		CompletableFuture<HttpResponse<String>> refused = succeedingCall.get();
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> refused.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof CircuitOpenException);
+	}
+
+	@Test
+	void async_closed_recordsSuccessOutcome_soAHealthyResponseNeverContributesToTheFailureRate() throws Exception {
+		CircuitBreakerConfig config = CircuitBreakerConfig.builder().slidingWindowSize(2).minimumNumberOfCalls(2)
+				.failureRateThreshold(50).build();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(config);
+		Supplier<CompletableFuture<HttpResponse<String>>> succeedingCall = coordinator
+				.wrapWithCircuitBreakerAsync(respondingWithAsync(200));
+
+		// Both calls succeed (200) - if a healthy response were ever wrongly
+		// recorded as a failure, 2/2 = 100% >= 50% would trip the breaker on the
+		// second call; it must not.
+		assertEquals(200, succeedingCall.get().get(5, TimeUnit.SECONDS).getStatus());
+		assertEquals(200, succeedingCall.get().get(5, TimeUnit.SECONDS).getStatus());
+	}
+
+	@Test
+	void async_transportFailure_countsAsFailureAndPropagates() throws Exception {
+		CircuitBreakerConfig config = CircuitBreakerConfig.builder().slidingWindowSize(3).minimumNumberOfCalls(3)
+				.failureRateThreshold(50).build();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(config);
+		RuntimeException transportFailure = new RuntimeException("connection refused");
+		Supplier<CompletableFuture<HttpResponse<String>>> throwingCall = coordinator.wrapWithCircuitBreakerAsync(() -> {
+			CompletableFuture<HttpResponse<String>> failed = new CompletableFuture<>();
+			failed.completeExceptionally(transportFailure);
+			return failed;
+		});
+
+		for (int i = 0; i < 3; i++) {
+			CompletableFuture<HttpResponse<String>> result = throwingCall.get();
+			ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+			assertEquals(transportFailure, thrown.getCause());
+		}
+
+		// 3 transport failures out of 3 calls (100%) tripped the breaker - now open.
+		CompletableFuture<HttpResponse<String>> refused = coordinator.wrapWithCircuitBreakerAsync(respondingWithAsync(200))
+				.get();
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> refused.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof CircuitOpenException);
+	}
+
+	@Test
+	void async_open_returnsAlreadyFailedFuture_withoutThrowingSynchronously() throws Exception {
+		CircuitBreakerConfig config = CircuitBreakerConfig.builder().slidingWindowSize(1).minimumNumberOfCalls(1)
+				.failureRateThreshold(50).build();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(config);
+		coordinator.wrapWithCircuitBreakerAsync(respondingWithAsync(500)).get().get(5, TimeUnit.SECONDS); // trips
+
+		boolean[] realCallInvoked = { false };
+		Supplier<CompletableFuture<HttpResponse<String>>> spyCall = coordinator.wrapWithCircuitBreakerAsync(() -> {
+			realCallInvoked[0] = true;
+			return CompletableFuture.completedFuture(new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body"));
+		});
+
+		// The whole point of the async wrap: calling .get() on the returned
+		// Supplier itself must never throw - the failure must arrive via the
+		// future it returns, since a synchronous throw here would be lost if this
+		// supplier is ever invoked from inside a scheduled retry callback (see the
+		// coordinator's own javadoc for wrapWithCircuitBreakerAsync).
+		CompletableFuture<HttpResponse<String>> result = spyCall.get();
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof CircuitOpenException);
+		assertTrue(!realCallInvoked[0]);
 	}
 
 }

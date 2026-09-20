@@ -2,8 +2,11 @@ package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -106,6 +109,52 @@ class BulkheadIntegrationTest {
 		} finally {
 			executor.shutdownNow();
 		}
+	}
+
+	@Test
+	void async_aFullBulkhead_refusesWithoutReachingTheServer() throws Exception {
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).bulkhead(BulkheadConfig.builder().maxConcurrentCalls(1).build()).build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"id\":\"1\"}").delay(300));
+
+		// The held call's own future is intentionally never awaited here until the
+		// end - it's still in flight (server still delaying its response) for the
+		// whole body of this test, holding the single permit throughout.
+		CompletableFuture<String> holding = api.getOrderAsync("1", "false");
+		Thread.sleep(100);
+		assertEquals(1, server.requestCount());
+
+		// The single permit is held by the in-flight call above - refused without
+		// ever reaching the server, so the request count stays put and the future
+		// fails immediately rather than hanging.
+		CompletableFuture<String> refused = api.getOrderAsync("2", "false");
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> refused.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof BulkheadFullException);
+		assertEquals(1, server.requestCount());
+
+		assertEquals("{\"id\":\"1\"}", holding.get(5, TimeUnit.SECONDS));
+	}
+
+	@Test
+	void async_maxWaitDuration_letsACallQueueInsteadOfFailingFast() throws Exception {
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class,
+				RipClientConfig.builder().baseUrl(server.baseUrl())
+						.bulkhead(BulkheadConfig.builder().maxConcurrentCalls(1).maxWaitDuration(Duration.ofSeconds(5))
+								.build())
+						.build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"id\":\"1\"}").delay(200));
+
+		CompletableFuture<String> holding = api.getOrderAsync("1", "false");
+		Thread.sleep(50);
+
+		// The holding call frees its permit ~200ms in, well within the 5s
+		// maxWaitDuration - this call must wait (on a background thread, not
+		// blocking whichever thread called getOrderAsync) and then succeed,
+		// proving it actually queued rather than being refused immediately.
+		CompletableFuture<String> waiting = api.getOrderAsync("2", "false");
+		assertEquals("{\"id\":\"1\"}", waiting.get(5, TimeUnit.SECONDS));
+		assertEquals("{\"id\":\"1\"}", holding.get(5, TimeUnit.SECONDS));
+		assertEquals(2, server.requestCount());
 	}
 
 }

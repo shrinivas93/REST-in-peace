@@ -1162,7 +1162,9 @@ every attempt would fail identically until the cooldown elapses. After
 succeeding closes the breaker (a fresh window); a high enough failure rate
 among them re-opens it for another cooldown. Not configured at all (the
 default) means every call is always attempted, byte-for-byte today's
-behavior. See
+behavior. Works identically for a `CompletableFuture`-returning method -
+`CircuitOpenException` completes the future exceptionally rather than
+being thrown, and is likewise never retried by an async `@Retry`. See
 [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
 for the full design and every default's reasoning.
 
@@ -1195,6 +1197,8 @@ retry logic (falling through to the same path any transport failure takes)
 retry's own backoff delay gives it a real chance to succeed, unlike a
 circuit breaker's much longer, deterministic cooldown. Not configured at
 all (the default) means no concurrency cap, byte-for-byte today's behavior.
+Works identically for a `CompletableFuture`-returning method - waiting for
+a permit never blocks the calling thread, even with `maxWaitDuration` set.
 See
 [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
 for the full design and every default's reasoning.

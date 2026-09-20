@@ -2,8 +2,12 @@ package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -108,6 +112,53 @@ class CircuitBreakerIntegrationTest {
 		// consuming one of @Retry's own retryable attempts, and must never reach
 		// the server at all.
 		assertThrows(CircuitOpenException.class, () -> api.createOrder("{\"sku\":\"sku-1\"}"));
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void async_repeatedFailures_tripTheBreakerAndSkipTheNetworkCallEntirely() throws Exception {
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class,
+				RipClientConfig.builder().baseUrl(server.baseUrl())
+						.circuitBreaker(CircuitBreakerConfig.builder().slidingWindowSize(4).minimumNumberOfCalls(4)
+								.failureRateThreshold(50).waitDurationInOpenState(Duration.ofSeconds(30)).build())
+						.build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.status(500, "down"));
+
+		// 4 real failures over the CompletableFuture dispatch path - trips the
+		// breaker (100% >= 50%), exactly mirroring the sync test above.
+		for (int i = 0; i < 4; i++) {
+			CompletableFuture<String> future = api.getOrderAsync("1", "false");
+			ExecutionException thrown = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
+			assertTrue(thrown.getCause() instanceof RestInPeaceHttpException);
+		}
+		assertEquals(4, server.requestCount());
+
+		// Open now: refused without ever reaching the server - request count stays
+		// put, and the future fails immediately rather than hanging.
+		CompletableFuture<String> refused = api.getOrderAsync("1", "false");
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> refused.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof CircuitOpenException);
+		assertEquals(4, server.requestCount());
+	}
+
+	@Test
+	void async_circuitOpenException_isNeverRetried() throws Exception {
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class,
+				RipClientConfig.builder().baseUrl(server.baseUrl())
+						.circuitBreaker(CircuitBreakerConfig.builder().slidingWindowSize(1).minimumNumberOfCalls(1)
+								.failureRateThreshold(50).waitDurationInOpenState(Duration.ofSeconds(30)).build())
+						.build());
+		server.on(HTTPMethod.POST, "/orders", MockResponse.status(503, "down"));
+
+		// createOrderAsync has @Retry(delayMillis = 1) scheduled on a background
+		// thread for the async path; 503 is in its default retryOnStatus, so
+		// attempt 1 (a real, network-reaching failure that also trips the breaker,
+		// minimumNumberOfCalls=1) would normally be retried - but the scheduled
+		// attempt 2 must be refused as CircuitOpenException instead of consuming
+		// one of @Retry's own retryable attempts, and must never reach the server.
+		CompletableFuture<String> future = api.createOrderAsync("{\"sku\":\"sku-1\"}");
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof CircuitOpenException);
 		assertEquals(1, server.requestCount());
 	}
 
