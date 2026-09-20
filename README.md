@@ -75,6 +75,7 @@ test server for unit tests.
 - [Retries](#retries)
   - [Retry budget](#retry-budget)
   - [Circuit breaker](#circuit-breaker)
+  - [Bulkhead](#bulkhead)
   - [Idempotency keys](#idempotency-keys)
   - [Interface-level and client-wide defaults](#interface-level-and-client-wide-defaults)
 - [Timeouts](#timeouts)
@@ -1163,8 +1164,40 @@ among them re-opens it for another cooldown. Not configured at all (the
 default) means every call is always attempted, byte-for-byte today's
 behavior. See
 [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
-for the full design, every default's reasoning, and the bulkhead
-half of that same roadmap item (not yet implemented).
+for the full design and every default's reasoning.
+
+### Bulkhead
+
+A circuit breaker reacts to a downstream *failing*; a bulkhead reacts to
+volume alone, regardless of success or failure — it caps how many calls to
+a client can be in flight at once, so one slow or hung downstream can't
+starve every other call sharing the same connection pool/thread capacity
+(the multi-tenant proxy, mixed-criticality caller, and webhook fan-out
+personas in the design doc all hit this):
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .bulkhead(BulkheadConfig.builder()
+                .maxConcurrentCalls(25)
+                .maxWaitDuration(Duration.ofMillis(500))
+                .build())
+        .build());
+```
+
+Once `maxConcurrentCalls` calls are already in flight, the next call is
+refused with `BulkheadFullException` — immediately by default
+(`maxWaitDuration` unset, resilience4j's own default shape), or after
+waiting up to `maxWaitDuration` for a permit to free up, for a bursty
+caller that would rather queue briefly than fail outright. Unlike
+`CircuitOpenException`, a full bulkhead *is* retried by `@Retry`'s ordinary
+retry logic (falling through to the same path any transport failure takes)
+— a permit can free up the moment any in-flight call completes, so a
+retry's own backoff delay gives it a real chance to succeed, unlike a
+circuit breaker's much longer, deterministic cooldown. Not configured at
+all (the default) means no concurrency cap, byte-for-byte today's behavior.
+See
+[`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
+for the full design and every default's reasoning.
 
 ## Timeouts
 

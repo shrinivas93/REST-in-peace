@@ -1,10 +1,32 @@
 # Design: Circuit breaker + bulkhead per client
 
-Status: **chunk 2 (the circuit breaker itself) landed** - `CircuitBreakerConfig`,
-`CircuitOpenException`, and `RipClientConfig.Builder#circuitBreaker(...)`,
-sync path (both dispatch paths), COUNT_BASED and TIME_BASED windows both
-fully implemented (not deferred, contrary to what chunk 1 assumed might be
-necessary). Bulkhead (chunk 3) not started.
+Status: **chunk 3 (the bulkhead) landed**, on top of chunk 2 (the circuit
+breaker) - `BulkheadConfig`, `BulkheadFullException`, `BulkheadCoordinator`,
+and `RipClientConfig.Builder#bulkhead(...)`, sync path (both dispatch
+paths). One real deviation from §6.2/§8's sketch, caught before merging:
+
+- **`BulkheadFullException` is not special-cased by `RetryExecutor` the
+  way `CircuitOpenException` is.** §8's open question about the exception
+  hierarchy didn't settle this, but it follows from the same reasoning
+  either way: a circuit breaker's cooldown is long and deterministic (every
+  retry attempt during it would fail identically), so `@Retry` bypasses its
+  own retryable-status check entirely and rethrows immediately. A
+  bulkhead's fullness has no such guarantee - a permit can free up the
+  moment any in-flight call completes, arbitrarily soon - so
+  `BulkheadFullException` instead falls through to the ordinary
+  "any transport-level failure is retryable" path every other
+  `RuntimeException` already gets, letting `@Retry`'s own backoff delay
+  give the bulkhead a real chance to free a permit before trying again.
+  No `RetryExecutor` code change was needed for this - it already treated
+  every non-`CircuitOpenException` `RuntimeException` this way.
+
+Extends `RestInPeaceException` directly (matching `CircuitOpenException`'s
+own shipped precedent from chunk 2, not the `RestInPeaceResilienceException`
+common-ancestor option §8 was leaning toward), for consistency with what
+actually landed rather than what was sketched before chunk 2 existed.
+
+Async parity (chunk 4), the provider SPI (chunk 5), and Spring Boot starter
+wiring (chunk 6) not started.
 
 Two real deviations from §6.1/§6.3's sketch, both caught before merging, not
 after:
@@ -556,7 +578,14 @@ its own PR, verified and merged before the next starts.
    once open, recovery via a half-open trial call, and that
    `CircuitOpenException` is never retried even when `@Retry`'s own
    `retryOnStatus` would otherwise retry the triggering response).
-3. **Bulkhead**, RIP's own built-in implementation (§6.2) - sync path only.
+3. **Bulkhead** ✅ - RIP's own built-in implementation (§6.2), sync path
+   only. `BulkheadConfig`/`BulkheadFullException`/`BulkheadCoordinator`,
+   wired into `RipClientConfig.Builder`. Verified via
+   `BulkheadConfigTest`, `BulkheadCoordinatorTest`, and
+   `BulkheadIntegrationTest` against a real `MockRestServer` (proving a
+   full bulkhead genuinely skips the network call, a released permit lets
+   a waiting call through, and `maxWaitDuration` lets a call queue for a
+   permit instead of failing immediately).
 4. **Async parity** for both, mirroring `RetryExecutor`'s own async-parity
    precedent (§7).
 5. **`CircuitBreakerProvider`/`BulkheadProvider`** override SPI (§5, Option
