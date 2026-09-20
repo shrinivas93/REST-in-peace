@@ -376,6 +376,8 @@ rest-in-peace:
       connect-timeout-millis: 2000
       read-timeout-millis: 10000
       proxy: { host: proxy.example.com, port: 8080 }
+      circuit-breaker: { failure-rate-threshold: 50, wait-duration-in-open-state-millis: 30000 }
+      bulkhead: { max-concurrent-calls: 25 }
 ```
 
 `connect-timeout-millis`/`read-timeout-millis`/`proxy` (chunk 5, landed) bind
@@ -384,7 +386,12 @@ Boot's `Binder` against `rest-in-peace.clients.<name>` at the same
 bean-registration time `baseUrlProperty` already resolves at - **not** a
 registered `@ConfigurationProperties` bean (there's no single bean that
 could hold "every client's config" before the set of clients is even known,
-since that set comes from the classpath scan itself). `ObjectMapper`/`Cache`
+since that set comes from the classpath scan itself). `circuit-breaker`/
+`bulkhead` (added later, as chunk 6 of
+[`docs/design/circuit-breaker-bulkhead.md`](circuit-breaker-bulkhead.md)'s
+own rollout plan, once that feature existed to bind) follow the exact same
+mechanism - see that doc's Status line for the full property shape.
+`ObjectMapper`/`Cache`
 beans (chunk 6, landed) resolve by type, qualified to a client name when
 more than one bean of that type exists in the context
 (`@Qualifier("user-api")`), falling back to a single unqualified bean shared

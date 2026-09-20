@@ -74,6 +74,8 @@ test server for unit tests.
 - [Async](#async)
 - [Retries](#retries)
   - [Retry budget](#retry-budget)
+  - [Circuit breaker](#circuit-breaker)
+  - [Bulkhead](#bulkhead)
   - [Idempotency keys](#idempotency-keys)
   - [Interface-level and client-wide defaults](#interface-level-and-client-wide-defaults)
 - [Timeouts](#timeouts)
@@ -1119,6 +1121,127 @@ its current outcome immediately — exactly like reaching its own
 default) means no cap beyond each call's own `times()`, byte-for-byte
 today's behavior.
 
+### Circuit breaker
+
+A retry budget caps how much a client retries; a circuit breaker decides
+whether it should even try. Once a client's failure rate crosses a
+threshold, it stops attempting calls entirely for a cooldown period,
+failing fast with `CircuitOpenException` instead of paying the cost — a
+full timeout, every `@Retry` attempt — of finding out a call would have
+failed too:
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .circuitBreaker(CircuitBreakerConfig.builder()
+                .slidingWindowSize(20)              // the last 20 calls
+                .minimumNumberOfCalls(10)            // don't evaluate a rate below this
+                .failureRateThreshold(50)             // trip at 50% failures
+                .waitDurationInOpenState(Duration.ofSeconds(30))
+                .permittedCallsInHalfOpenState(3)
+                .build())
+        .build());
+```
+
+The sliding window is count-based (the last N *calls*) by default, not
+time-based (the last N *seconds*) — deterministic to test, and doesn't
+misbehave for a low-traffic client where "the last 30 seconds" might
+contain zero calls. `slidingWindowSize(Duration.ofSeconds(30))` selects a
+time-based window instead, for a consumer who specifically wants "rate
+over the last N seconds regardless of call volume." Only a 5xx response or
+a transport-level failure (connection refused, timeout) counts as a
+failure by default — a `404` from an ordinary existence check doesn't trip
+anything; override with `recordFailureForStatus(IntPredicate)` if a
+downstream's own error conventions differ.
+
+Once tripped (**open**), every call fails immediately with
+`CircuitOpenException` — never retried, even if `@Retry`'s own
+`retryOnStatus` would otherwise retry the response that tripped it, since
+every attempt would fail identically until the cooldown elapses. After
+`waitDurationInOpenState`, the breaker goes **half-open**: the next
+`permittedCallsInHalfOpenState` calls are let through as trials: all
+succeeding closes the breaker (a fresh window); a high enough failure rate
+among them re-opens it for another cooldown. Not configured at all (the
+default) means every call is always attempted, byte-for-byte today's
+behavior. Works identically for a `CompletableFuture`-returning method -
+`CircuitOpenException` completes the future exceptionally rather than
+being thrown, and is likewise never retried by an async `@Retry`. See
+[`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
+for the full design and every default's reasoning.
+
+### Bulkhead
+
+A circuit breaker reacts to a downstream *failing*; a bulkhead reacts to
+volume alone, regardless of success or failure — it caps how many calls to
+a client can be in flight at once, so one slow or hung downstream can't
+starve every other call sharing the same connection pool/thread capacity
+(the multi-tenant proxy, mixed-criticality caller, and webhook fan-out
+personas in the design doc all hit this):
+
+```java
+UserApi api = RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .bulkhead(BulkheadConfig.builder()
+                .maxConcurrentCalls(25)
+                .maxWaitDuration(Duration.ofMillis(500))
+                .build())
+        .build());
+```
+
+Once `maxConcurrentCalls` calls are already in flight, the next call is
+refused with `BulkheadFullException` — immediately by default
+(`maxWaitDuration` unset, resilience4j's own default shape), or after
+waiting up to `maxWaitDuration` for a permit to free up, for a bursty
+caller that would rather queue briefly than fail outright. Unlike
+`CircuitOpenException`, a full bulkhead *is* retried by `@Retry`'s ordinary
+retry logic (falling through to the same path any transport failure takes)
+— a permit can free up the moment any in-flight call completes, so a
+retry's own backoff delay gives it a real chance to succeed, unlike a
+circuit breaker's much longer, deterministic cooldown. Not configured at
+all (the default) means no concurrency cap, byte-for-byte today's behavior.
+Works identically for a `CompletableFuture`-returning method - waiting for
+a permit never blocks the calling thread, even with `maxWaitDuration` set.
+See
+[`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
+for the full design and every default's reasoning.
+
+Already running resilience4j (or anything else) elsewhere in your stack?
+`circuitBreaker`/`bulkhead` also accept a `CircuitBreakerProvider`/
+`BulkheadProvider` instead, delegating the actual decision to that
+existing instance instead of RIP's own built-in implementation above —
+RIP never takes a hard dependency on resilience4j either way, only this
+small SPI:
+
+```java
+CircuitBreaker r4jBreaker = CircuitBreaker.ofDefaults("payment-api");
+
+RipClientConfig config = RipClientConfig.builder()
+        .circuitBreaker(new CircuitBreakerProvider() {
+            public boolean tryAcquirePermission() {
+                return r4jBreaker.tryAcquirePermission();
+            }
+            public void onSuccess(long durationNanos, int statusCode) {
+                if (statusCode >= 500) {
+                    r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS,
+                            new RuntimeException("HTTP " + statusCode));
+                } else {
+                    r4jBreaker.onSuccess(durationNanos, TimeUnit.NANOSECONDS);
+                }
+            }
+            public void onError(long durationNanos, Throwable t) {
+                r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t);
+            }
+        })
+        .build());
+```
+
+Passing the status code to `onSuccess` (rather than RIP guessing at its
+own failure threshold) keeps classification entirely up to your own
+adapter, so it can honor whatever failure predicate your external
+breaker's own config already uses. `.circuitBreaker(CircuitBreakerConfig)`
+and `.circuitBreaker(CircuitBreakerProvider)` are mutually exclusive on
+the same builder — whichever you call last wins. `bulkhead(BulkheadProvider)`
+follows the identical shape (`tryAcquirePermission()`/`onComplete()`). See
+each interface's own javadoc for the full reasoning.
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for
@@ -1848,6 +1971,11 @@ rest-in-peace:
     user-api:
       connect-timeout-millis: 2000
       read-timeout-millis: 10000
+      circuit-breaker:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state-millis: 30000
+      bulkhead:
+        max-concurrent-calls: 25
 ```
 
 Then inject `UserApi` like any other Spring bean — constructor injection
@@ -1856,7 +1984,13 @@ client. `ObjectMapper`/`Cache`/`RequestInterceptor` beans already in the
 context get wired in automatically too (qualified to a specific client via
 `@Qualifier`, or shared by every client as a single unqualified bean), and
 `@AutoConfigureMockRestServer` redirects every registered client to a
-`MockRestServer` for tests. See
+`MockRestServer` for tests. Every `circuit-breaker`/`bulkhead` property is
+optional and independently defaulted, mirroring
+[`CircuitBreakerConfig`](#circuit-breaker)/[`BulkheadConfig`](#bulkhead)'s
+own builder defaults for whatever's left unset - a
+`CircuitBreakerProvider`/`BulkheadProvider` override still has to be wired
+programmatically via `RipClientConfig.Builder`, since a provider is a Java
+object, not something a property file can express. See
 [`samples/spring-boot-consumer`](samples/spring-boot-consumer) for a
 complete, runnable example.
 

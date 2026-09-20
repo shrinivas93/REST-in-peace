@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0.48] - 2026-09-20
+
+### Added
+
+- A per-client circuit breaker: `RipClientConfig.Builder#circuitBreaker(CircuitBreakerConfig)`
+  stops even attempting calls to a downstream once its failure rate crosses
+  a threshold, failing fast with a new `CircuitOpenException` instead of
+  paying the cost (a full timeout, every `@Retry` attempt) of finding out a
+  call would have failed too. A count-based sliding window (the last N
+  calls) and a failure-rate threshold are the default, matching
+  resilience4j's own convention; a time-based window (the last N seconds)
+  is also supported. See `docs/design/circuit-breaker-bulkhead.md` for the
+  full design and every default. Works for a `CompletableFuture`-returning
+  method too: `CircuitOpenException` completes the future exceptionally
+  instead of being thrown, and is likewise never retried by an async
+  `@Retry`.
+- A per-client bulkhead: `RipClientConfig.Builder#bulkhead(BulkheadConfig)`
+  caps how many calls to a client can be in flight at once, refusing the
+  excess with a new `BulkheadFullException` (immediately by default, or
+  after waiting up to a configurable `maxWaitDuration` for a permit to free
+  up) - so one slow or hung downstream can't starve every other call
+  sharing the same connection pool/thread capacity. Unlike
+  `CircuitOpenException`, `BulkheadFullException` is retried by `@Retry`'s
+  ordinary logic, since a permit can free up at any moment. See
+  `docs/design/circuit-breaker-bulkhead.md` for the full design and every
+  default. Works for a `CompletableFuture`-returning method too - waiting
+  for a permit never blocks the calling thread, even with `maxWaitDuration`
+  set.
+- `CircuitBreakerProvider`/`BulkheadProvider`: escape hatches for a
+  consumer already running resilience4j (or anything else) elsewhere in
+  their stack - `RipClientConfig.Builder#circuitBreaker(CircuitBreakerProvider)`/
+  `#bulkhead(BulkheadProvider)` delegate the actual permission/outcome
+  decisions to that existing instance instead of RIP's own built-in
+  `CircuitBreakerConfig`/`BulkheadConfig`-driven implementation, with no
+  hard dependency on resilience4j added to `core`. Mutually exclusive with
+  the config-based overload on the same builder method - whichever is
+  called last wins. See `docs/design/circuit-breaker-bulkhead.md` for the
+  full design and a worked example.
+- Spring Boot starter support for the above: `rest-in-peace.clients.<name>.circuit-breaker.*`/
+  `.bulkhead.*` properties, bound the same way the existing
+  `connect-timeout-millis`/`read-timeout-millis`/`proxy.*` properties
+  already are. Every option is independently optional, keeping
+  `CircuitBreakerConfig`/`BulkheadConfig`'s own builder default for
+  whatever's left unset. A `CircuitBreakerProvider`/`BulkheadProvider`
+  override still requires `RipClientConfig.Builder` directly, since a
+  provider is a Java object rather than something a property file can
+  express.
+
 ### Changed
 
 - CI/build maintenance, none of it user-facing: `ci.yml`'s five jobs
