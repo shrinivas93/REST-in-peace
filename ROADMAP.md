@@ -817,8 +817,14 @@ up.
       [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md) -
       build-your-own default (no new dependency) with a pluggable
       `CircuitBreakerProvider`/`BulkheadProvider` override to delegate to
-      resilience4j or any other backend a consumer already runs. Not
-      started; chunked rollout plan in the doc's §9.
+      resilience4j or any other backend a consumer already runs. Chunked
+      rollout plan in the doc's §9; chunk 2 (the circuit breaker itself)
+      landed - `CircuitBreakerConfig`, `CircuitOpenException`,
+      `CircuitBreakerCoordinator`, wired into `RipClientConfig.Builder`,
+      sync path, both dispatch paths, both `COUNT_BASED` and `TIME_BASED`
+      sliding windows. Bulkhead (chunk 3), async parity (chunk 4), the
+      provider SPI (chunk 5), and Spring Boot starter wiring (chunk 6) not
+      started.
 - [x] **A pre-built `MetricsInterceptor`** — times every request and reports
       it, once its response comes back, to a small `MetricsSink` interface
       (`recordCall(httpMethod, url, status, durationMillis)`) - the metrics
