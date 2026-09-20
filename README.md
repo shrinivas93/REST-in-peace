@@ -1203,6 +1203,45 @@ See
 [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
 for the full design and every default's reasoning.
 
+Already running resilience4j (or anything else) elsewhere in your stack?
+`circuitBreaker`/`bulkhead` also accept a `CircuitBreakerProvider`/
+`BulkheadProvider` instead, delegating the actual decision to that
+existing instance instead of RIP's own built-in implementation above —
+RIP never takes a hard dependency on resilience4j either way, only this
+small SPI:
+
+```java
+CircuitBreaker r4jBreaker = CircuitBreaker.ofDefaults("payment-api");
+
+RipClientConfig config = RipClientConfig.builder()
+        .circuitBreaker(new CircuitBreakerProvider() {
+            public boolean tryAcquirePermission() {
+                return r4jBreaker.tryAcquirePermission();
+            }
+            public void onSuccess(long durationNanos, int statusCode) {
+                if (statusCode >= 500) {
+                    r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS,
+                            new RuntimeException("HTTP " + statusCode));
+                } else {
+                    r4jBreaker.onSuccess(durationNanos, TimeUnit.NANOSECONDS);
+                }
+            }
+            public void onError(long durationNanos, Throwable t) {
+                r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t);
+            }
+        })
+        .build());
+```
+
+Passing the status code to `onSuccess` (rather than RIP guessing at its
+own failure threshold) keeps classification entirely up to your own
+adapter, so it can honor whatever failure predicate your external
+breaker's own config already uses. `.circuitBreaker(CircuitBreakerConfig)`
+and `.circuitBreaker(CircuitBreakerProvider)` are mutually exclusive on
+the same builder — whichever you call last wins. `bulkhead(BulkheadProvider)`
+follows the identical shape (`tryAcquirePermission()`/`onComplete()`). See
+each interface's own javadoc for the full reasoning.
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for

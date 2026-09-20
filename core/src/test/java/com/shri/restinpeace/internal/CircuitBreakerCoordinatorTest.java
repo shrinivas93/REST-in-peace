@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.CircuitBreakerConfig;
+import com.shri.restinpeace.CircuitBreakerProvider;
 import com.shri.restinpeace.exception.CircuitOpenException;
 
 import kong.unirest.HttpResponse;
@@ -33,7 +34,7 @@ class CircuitBreakerCoordinatorTest {
 
 	@Test
 	void unconfigured_neverRefusesAndNeverThrows() {
-		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(null);
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerConfig) null);
 
 		Supplier<HttpResponse<String>> wrapped = coordinator.wrapWithCircuitBreaker(respondingWith(500));
 
@@ -315,7 +316,7 @@ class CircuitBreakerCoordinatorTest {
 
 	@Test
 	void async_unconfigured_neverRefusesAndNeverThrows() throws Exception {
-		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator(null);
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerConfig) null);
 
 		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
 				.wrapWithCircuitBreakerAsync(respondingWithAsync(500));
@@ -408,6 +409,121 @@ class CircuitBreakerCoordinatorTest {
 		ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
 		assertTrue(thrown.getCause() instanceof CircuitOpenException);
 		assertTrue(!realCallInvoked[0]);
+	}
+
+	private static final class RecordingProvider implements CircuitBreakerProvider {
+		boolean permit = true;
+		int successCalls;
+		int errorCalls;
+		Integer lastStatusCode;
+		Throwable lastError;
+
+		public boolean tryAcquirePermission() {
+			return permit;
+		}
+
+		public void onSuccess(long durationNanos, int statusCode) {
+			successCalls++;
+			lastStatusCode = statusCode;
+		}
+
+		public void onError(long durationNanos, Throwable t) {
+			errorCalls++;
+			lastError = t;
+		}
+	}
+
+	@Test
+	void provider_permissionGranted_invokesRealCallAndReportsSuccess() {
+		RecordingProvider provider = new RecordingProvider();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerProvider) provider);
+		Supplier<HttpResponse<String>> wrapped = coordinator.wrapWithCircuitBreaker(respondingWith(200));
+
+		assertEquals(200, wrapped.get().getStatus());
+		assertEquals(1, provider.successCalls);
+		assertEquals(0, provider.errorCalls);
+		assertEquals(200, provider.lastStatusCode);
+	}
+
+	@Test
+	void provider_permissionDenied_refusesWithoutInvokingRealCall() {
+		RecordingProvider provider = new RecordingProvider();
+		provider.permit = false;
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerProvider) provider);
+		boolean[] realCallInvoked = { false };
+		Supplier<HttpResponse<String>> wrapped = coordinator.wrapWithCircuitBreaker(() -> {
+			realCallInvoked[0] = true;
+			return new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body");
+		});
+
+		assertThrows(CircuitOpenException.class, wrapped::get);
+		assertTrue(!realCallInvoked[0]);
+		assertEquals(0, provider.successCalls);
+		assertEquals(0, provider.errorCalls);
+	}
+
+	@Test
+	void provider_transportFailure_reportsOnError() {
+		RecordingProvider provider = new RecordingProvider();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerProvider) provider);
+		RuntimeException transportFailure = new RuntimeException("connection refused");
+		Supplier<HttpResponse<String>> throwingCall = coordinator.wrapWithCircuitBreaker(() -> {
+			throw transportFailure;
+		});
+
+		RuntimeException thrown = assertThrows(RuntimeException.class, throwingCall::get);
+		assertEquals(transportFailure, thrown);
+		assertEquals(0, provider.successCalls);
+		assertEquals(1, provider.errorCalls);
+		assertEquals(transportFailure, provider.lastError);
+	}
+
+	@Test
+	void async_provider_permissionGranted_invokesRealCallAndReportsSuccess() throws Exception {
+		RecordingProvider provider = new RecordingProvider();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerProvider) provider);
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
+				.wrapWithCircuitBreakerAsync(respondingWithAsync(200));
+
+		assertEquals(200, wrapped.get().get(5, TimeUnit.SECONDS).getStatus());
+		assertEquals(1, provider.successCalls);
+		assertEquals(200, provider.lastStatusCode);
+	}
+
+	@Test
+	void async_provider_permissionDenied_returnsAlreadyFailedFuture_withoutThrowingSynchronously() throws Exception {
+		RecordingProvider provider = new RecordingProvider();
+		provider.permit = false;
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerProvider) provider);
+		boolean[] realCallInvoked = { false };
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator.wrapWithCircuitBreakerAsync(() -> {
+			realCallInvoked[0] = true;
+			return CompletableFuture
+					.completedFuture(new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body"));
+		});
+
+		CompletableFuture<HttpResponse<String>> result = wrapped.get();
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof CircuitOpenException);
+		assertTrue(!realCallInvoked[0]);
+	}
+
+	@Test
+	void async_provider_transportFailure_reportsOnError() throws Exception {
+		RecordingProvider provider = new RecordingProvider();
+		CircuitBreakerCoordinator coordinator = new CircuitBreakerCoordinator((CircuitBreakerProvider) provider);
+		RuntimeException transportFailure = new RuntimeException("connection refused");
+		Supplier<CompletableFuture<HttpResponse<String>>> throwingCall = coordinator.wrapWithCircuitBreakerAsync(() -> {
+			CompletableFuture<HttpResponse<String>> failed = new CompletableFuture<>();
+			failed.completeExceptionally(transportFailure);
+			return failed;
+		});
+
+		CompletableFuture<HttpResponse<String>> result = throwingCall.get();
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+		assertEquals(transportFailure, thrown.getCause());
+		assertEquals(1, provider.errorCalls);
+		assertEquals(transportFailure, provider.lastError);
 	}
 
 }

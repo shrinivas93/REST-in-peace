@@ -105,4 +105,51 @@ class RipClientConfigTest {
 		assertNull(config.getProxyPassword());
 	}
 
+	@Test
+	void circuitBreaker_configAndProvider_areMutuallyExclusive_lastCallWins() {
+		CircuitBreakerConfig config = CircuitBreakerConfig.builder().build();
+		CircuitBreakerProvider provider = new CircuitBreakerProvider() {
+			public boolean tryAcquirePermission() {
+				return true;
+			}
+
+			public void onSuccess(long durationNanos, int statusCode) {
+			}
+
+			public void onError(long durationNanos, Throwable t) {
+			}
+		};
+
+		RipClientConfig configThenProvider = RipClientConfig.builder().circuitBreaker(config).circuitBreaker(provider)
+				.build();
+		assertNull(configThenProvider.getCircuitBreaker());
+		assertEquals(provider, configThenProvider.getCircuitBreakerProvider());
+
+		RipClientConfig providerThenConfig = RipClientConfig.builder().circuitBreaker(provider).circuitBreaker(config)
+				.build();
+		assertNull(providerThenConfig.getCircuitBreakerProvider());
+		assertEquals(config, providerThenConfig.getCircuitBreaker());
+	}
+
+	@Test
+	void bulkhead_configAndProvider_areMutuallyExclusive_lastCallWins() {
+		BulkheadConfig config = BulkheadConfig.builder().build();
+		BulkheadProvider provider = new BulkheadProvider() {
+			public boolean tryAcquirePermission() {
+				return true;
+			}
+
+			public void onComplete() {
+			}
+		};
+
+		RipClientConfig configThenProvider = RipClientConfig.builder().bulkhead(config).bulkhead(provider).build();
+		assertNull(configThenProvider.getBulkhead());
+		assertEquals(provider, configThenProvider.getBulkheadProvider());
+
+		RipClientConfig providerThenConfig = RipClientConfig.builder().bulkhead(provider).bulkhead(config).build();
+		assertNull(providerThenConfig.getBulkheadProvider());
+		assertEquals(config, providerThenConfig.getBulkhead());
+	}
+
 }

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import kong.unirest.JsonObjectMapper;
 
 import com.shri.restinpeace.CircuitBreakerConfig;
+import com.shri.restinpeace.CircuitBreakerProvider;
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -160,6 +161,49 @@ class CircuitBreakerIntegrationTest {
 		ExecutionException thrown = assertThrows(ExecutionException.class, () -> future.get(5, TimeUnit.SECONDS));
 		assertTrue(thrown.getCause() instanceof CircuitOpenException);
 		assertEquals(1, server.requestCount());
+	}
+
+	private static final class RecordingProvider implements CircuitBreakerProvider {
+		boolean permit = true;
+		int successCalls;
+		Integer lastStatusCode;
+
+		public boolean tryAcquirePermission() {
+			return permit;
+		}
+
+		public void onSuccess(long durationNanos, int statusCode) {
+			successCalls++;
+			lastStatusCode = statusCode;
+		}
+
+		public void onError(long durationNanos, Throwable t) {
+		}
+	}
+
+	@Test
+	void provider_permissionDenied_refusesWithoutReachingTheServer() {
+		RecordingProvider provider = new RecordingProvider();
+		provider.permit = false;
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).circuitBreaker((CircuitBreakerProvider) provider).build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"id\":\"1\"}"));
+
+		assertThrows(CircuitOpenException.class, () -> api.getOrder("1", "false"));
+		assertEquals(0, server.requestCount());
+	}
+
+	@Test
+	void provider_permissionGranted_reachesTheServerAndReportsTheOutcome() {
+		RecordingProvider provider = new RecordingProvider();
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class, RipClientConfig.builder()
+				.baseUrl(server.baseUrl()).circuitBreaker((CircuitBreakerProvider) provider).build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"id\":\"1\"}"));
+
+		assertEquals("{\"id\":\"1\"}", api.getOrder("1", "false"));
+		assertEquals(1, server.requestCount());
+		assertEquals(1, provider.successCalls);
+		assertEquals(200, provider.lastStatusCode);
 	}
 
 }

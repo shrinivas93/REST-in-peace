@@ -53,7 +53,9 @@ public final class RipClientConfig {
 	private final List<RequestInterceptor> interceptors;
 	private final RetryConfig retry;
 	private final CircuitBreakerConfig circuitBreaker;
+	private final CircuitBreakerProvider circuitBreakerProvider;
 	private final BulkheadConfig bulkhead;
+	private final BulkheadProvider bulkheadProvider;
 
 	private RipClientConfig(Builder builder) {
 		this.baseUrl = builder.baseUrl;
@@ -72,7 +74,9 @@ public final class RipClientConfig {
 		this.interceptors = builder.interceptors;
 		this.retry = builder.retry;
 		this.circuitBreaker = builder.circuitBreaker;
+		this.circuitBreakerProvider = builder.circuitBreakerProvider;
 		this.bulkhead = builder.bulkhead;
+		this.bulkheadProvider = builder.bulkheadProvider;
 	}
 
 	/**
@@ -255,6 +259,17 @@ public final class RipClientConfig {
 	}
 
 	/**
+	 * Returns this client's external circuit breaker provider.
+	 *
+	 * @return this client's {@link CircuitBreakerProvider}, or {@code null}
+	 *         if this client instead uses {@link #getCircuitBreaker()} (or
+	 *         neither is set)
+	 */
+	public CircuitBreakerProvider getCircuitBreakerProvider() {
+		return circuitBreakerProvider;
+	}
+
+	/**
 	 * Returns this client's bulkhead.
 	 *
 	 * @return this client's bulkhead config, or {@code null} for no
@@ -262,6 +277,17 @@ public final class RipClientConfig {
 	 */
 	public BulkheadConfig getBulkhead() {
 		return bulkhead;
+	}
+
+	/**
+	 * Returns this client's external bulkhead provider.
+	 *
+	 * @return this client's {@link BulkheadProvider}, or {@code null} if
+	 *         this client instead uses {@link #getBulkhead()} (or neither is
+	 *         set)
+	 */
+	public BulkheadProvider getBulkheadProvider() {
+		return bulkheadProvider;
 	}
 
 	/** Builds a {@link RipClientConfig}. */
@@ -283,7 +309,9 @@ public final class RipClientConfig {
 		private List<RequestInterceptor> interceptors = Collections.emptyList();
 		private RetryConfig retry;
 		private CircuitBreakerConfig circuitBreaker;
+		private CircuitBreakerProvider circuitBreakerProvider;
 		private BulkheadConfig bulkhead;
+		private BulkheadProvider bulkheadProvider;
 
 		private Builder() {
 		}
@@ -518,6 +546,30 @@ public final class RipClientConfig {
 		 */
 		public Builder circuitBreaker(CircuitBreakerConfig circuitBreaker) {
 			this.circuitBreaker = circuitBreaker;
+			this.circuitBreakerProvider = null;
+			return this;
+		}
+
+		/**
+		 * Sets this client's circuit breaker to delegate its open/closed
+		 * decision to an already-running external breaker instance
+		 * (resilience4j or otherwise) instead of RIP's own built-in
+		 * {@link CircuitBreakerConfig}-driven state machine. See
+		 * {@link CircuitBreakerProvider}'s own javadoc for the full
+		 * reasoning and a worked example. Overrides any earlier
+		 * {@link #circuitBreaker(CircuitBreakerConfig)} call, the same
+		 * "last call wins" shape {@link CircuitBreakerConfig.Builder}'s own
+		 * overloaded {@code slidingWindowSize} setters already use.
+		 *
+		 * @param circuitBreakerProvider this client's external circuit
+		 *                               breaker provider, or {@code null}
+		 *                               for no circuit breaker at all (the
+		 *                               default)
+		 * @return this builder
+		 */
+		public Builder circuitBreaker(CircuitBreakerProvider circuitBreakerProvider) {
+			this.circuitBreakerProvider = circuitBreakerProvider;
+			this.circuitBreaker = null;
 			return this;
 		}
 
@@ -535,6 +587,29 @@ public final class RipClientConfig {
 		 */
 		public Builder bulkhead(BulkheadConfig bulkhead) {
 			this.bulkhead = bulkhead;
+			this.bulkheadProvider = null;
+			return this;
+		}
+
+		/**
+		 * Sets this client's bulkhead to delegate its admission decision to
+		 * an already-running external bulkhead instance (resilience4j or
+		 * otherwise) instead of RIP's own built-in {@link BulkheadConfig}-driven
+		 * {@link java.util.concurrent.Semaphore}. See
+		 * {@link BulkheadProvider}'s own javadoc for the full reasoning and
+		 * a worked example. Overrides any earlier {@link #bulkhead(BulkheadConfig)}
+		 * call, the same "last call wins" shape this config's
+		 * {@link #circuitBreaker(CircuitBreakerProvider)} overload also
+		 * uses.
+		 *
+		 * @param bulkheadProvider this client's external bulkhead provider,
+		 *                         or {@code null} for no concurrency cap at
+		 *                         all (the default)
+		 * @return this builder
+		 */
+		public Builder bulkhead(BulkheadProvider bulkheadProvider) {
+			this.bulkheadProvider = bulkheadProvider;
+			this.bulkhead = null;
 			return this;
 		}
 

@@ -6,6 +6,7 @@ import java.util.function.Supplier;
 
 import com.shri.restinpeace.CircuitBreakerConfig;
 import com.shri.restinpeace.CircuitBreakerConfig.SlidingWindowType;
+import com.shri.restinpeace.CircuitBreakerProvider;
 import com.shri.restinpeace.exception.CircuitOpenException;
 
 import kong.unirest.HttpResponse;
@@ -41,6 +42,13 @@ import kong.unirest.HttpResponse;
  * complementary decision to never retry a {@link CircuitOpenException}
  * itself, since every attempt would fail identically until the cooldown
  * elapses.
+ *
+ * <p>
+ * Also the adapter for a {@link CircuitBreakerProvider}-backed client (see
+ * {@code docs/design/circuit-breaker-bulkhead.md} §5) - when configured
+ * this way, every state-machine decision below is delegated straight to
+ * the external provider instead of this class's own {@link State} machine,
+ * which then goes unused entirely.
  */
 final class CircuitBreakerCoordinator {
 
@@ -59,6 +67,13 @@ final class CircuitBreakerCoordinator {
 	}
 
 	private final CircuitBreakerConfig config;
+
+	// Non-null only when this client delegates to an external breaker (see
+	// docs/design/circuit-breaker-bulkhead.md §5) instead of using the
+	// built-in state machine below - config and provider are never both
+	// non-null. Checked first in both wrap methods so a provider-backed
+	// instance is never mistaken for unconfigured just because config is null.
+	private final CircuitBreakerProvider provider;
 
 	// COUNT_BASED window - a fixed-capacity ring buffer of failure flags,
 	// with a running failure count kept in sync incrementally so the failure
@@ -89,9 +104,21 @@ final class CircuitBreakerCoordinator {
 	 */
 	CircuitBreakerCoordinator(CircuitBreakerConfig config) {
 		this.config = config;
+		this.provider = null;
 		this.failureFlags = config != null && config.getSlidingWindowType() == SlidingWindowType.COUNT_BASED
 				? new boolean[config.getSlidingWindowSize()]
 				: null;
+	}
+
+	/**
+	 * @param provider this client's external circuit breaker provider (see
+	 *                 {@link CircuitBreakerProvider}'s own javadoc), or
+	 *                 {@code null} if none is configured
+	 */
+	CircuitBreakerCoordinator(CircuitBreakerProvider provider) {
+		this.config = null;
+		this.provider = provider;
+		this.failureFlags = null;
 	}
 
 	/**
@@ -107,6 +134,9 @@ final class CircuitBreakerCoordinator {
 	 *         of ever invoking {@code call}
 	 */
 	<B> Supplier<HttpResponse<B>> wrapWithCircuitBreaker(Supplier<HttpResponse<B>> call) {
+		if (provider != null) {
+			return wrapWithProvider(call);
+		}
 		if (config == null) {
 			return call;
 		}
@@ -118,6 +148,31 @@ final class CircuitBreakerCoordinator {
 				return response;
 			} catch (RuntimeException e) {
 				recordOutcome(false);
+				throw e;
+			}
+		};
+	}
+
+	/**
+	 * The {@link #provider}-backed counterpart of the built-in
+	 * {@link #wrapWithCircuitBreaker} logic - same shape (check permission,
+	 * invoke, report the outcome), but every decision and every recorded
+	 * outcome goes straight to the external provider instead of this
+	 * coordinator's own state machine.
+	 */
+	private <B> Supplier<HttpResponse<B>> wrapWithProvider(Supplier<HttpResponse<B>> call) {
+		return () -> {
+			if (!provider.tryAcquirePermission()) {
+				throw new CircuitOpenException(
+						"Circuit breaker is open (external provider); refusing call without attempting it.");
+			}
+			long startNanos = System.nanoTime();
+			try {
+				HttpResponse<B> response = call.get();
+				provider.onSuccess(System.nanoTime() - startNanos, response.getStatus());
+				return response;
+			} catch (RuntimeException e) {
+				provider.onError(System.nanoTime() - startNanos, e);
 				throw e;
 			}
 		};
@@ -143,6 +198,9 @@ final class CircuitBreakerCoordinator {
 	 */
 	<B> Supplier<CompletableFuture<HttpResponse<B>>> wrapWithCircuitBreakerAsync(
 			Supplier<CompletableFuture<HttpResponse<B>>> call) {
+		if (provider != null) {
+			return wrapWithProviderAsync(call);
+		}
 		if (config == null) {
 			return call;
 		}
@@ -159,6 +217,32 @@ final class CircuitBreakerCoordinator {
 					recordOutcome(false);
 				} else {
 					recordOutcome(!config.getRecordFailureForStatus().test(response.getStatus()));
+				}
+			});
+		};
+	}
+
+	/**
+	 * The {@link #provider}-backed counterpart of
+	 * {@link #wrapWithCircuitBreakerAsync} - same never-throw-synchronously
+	 * shape (see that method's own javadoc for why), but delegating to the
+	 * external provider instead of this coordinator's own state machine.
+	 */
+	private <B> Supplier<CompletableFuture<HttpResponse<B>>> wrapWithProviderAsync(
+			Supplier<CompletableFuture<HttpResponse<B>>> call) {
+		return () -> {
+			if (!provider.tryAcquirePermission()) {
+				CompletableFuture<HttpResponse<B>> failed = new CompletableFuture<>();
+				failed.completeExceptionally(new CircuitOpenException(
+						"Circuit breaker is open (external provider); refusing call without attempting it."));
+				return failed;
+			}
+			long startNanos = System.nanoTime();
+			return call.get().whenComplete((response, failure) -> {
+				if (failure != null) {
+					provider.onError(System.nanoTime() - startNanos, failure);
+				} else {
+					provider.onSuccess(System.nanoTime() - startNanos, response.getStatus());
 				}
 			});
 		};

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import kong.unirest.JsonObjectMapper;
 
 import com.shri.restinpeace.BulkheadConfig;
+import com.shri.restinpeace.BulkheadProvider;
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipClientConfig;
 import com.shri.restinpeace.constant.HTTPMethod;
@@ -155,6 +156,43 @@ class BulkheadIntegrationTest {
 		assertEquals("{\"id\":\"1\"}", waiting.get(5, TimeUnit.SECONDS));
 		assertEquals("{\"id\":\"1\"}", holding.get(5, TimeUnit.SECONDS));
 		assertEquals(2, server.requestCount());
+	}
+
+	private static final class RecordingProvider implements BulkheadProvider {
+		boolean permit = true;
+		int completeCalls;
+
+		public boolean tryAcquirePermission() {
+			return permit;
+		}
+
+		public void onComplete() {
+			completeCalls++;
+		}
+	}
+
+	@Test
+	void provider_permissionDenied_refusesWithoutReachingTheServer() {
+		RecordingProvider provider = new RecordingProvider();
+		provider.permit = false;
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class,
+				RipClientConfig.builder().baseUrl(server.baseUrl()).bulkhead((BulkheadProvider) provider).build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"id\":\"1\"}"));
+
+		assertThrows(BulkheadFullException.class, () -> api.getOrder("1", "false"));
+		assertEquals(0, server.requestCount());
+	}
+
+	@Test
+	void provider_permissionGranted_reachesTheServerAndReportsCompletion() {
+		RecordingProvider provider = new RecordingProvider();
+		MockServerTestApi api = RIP.getClient(MockServerTestApi.class,
+				RipClientConfig.builder().baseUrl(server.baseUrl()).bulkhead((BulkheadProvider) provider).build());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"id\":\"1\"}"));
+
+		assertEquals("{\"id\":\"1\"}", api.getOrder("1", "false"));
+		assertEquals(1, server.requestCount());
+		assertEquals(1, provider.completeCalls);
 	}
 
 }

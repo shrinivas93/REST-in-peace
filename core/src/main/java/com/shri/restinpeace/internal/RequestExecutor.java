@@ -18,6 +18,8 @@ import java.util.concurrent.CompletableFuture;
 import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 
+import com.shri.restinpeace.BulkheadConfig;
+import com.shri.restinpeace.CircuitBreakerConfig;
 import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
@@ -113,8 +115,8 @@ public class RequestExecutor {
 		this.responseDecoder = new ResponseDecoder(null);
 		this.interceptorDispatcher = new InterceptorDispatcher(Collections.emptyList(), responseDecoder);
 		this.retryExecutor = new RetryExecutor(interceptorDispatcher);
-		this.circuitBreakerCoordinator = new CircuitBreakerCoordinator(null);
-		this.bulkheadCoordinator = new BulkheadCoordinator(null);
+		this.circuitBreakerCoordinator = new CircuitBreakerCoordinator((CircuitBreakerConfig) null);
+		this.bulkheadCoordinator = new BulkheadCoordinator((BulkheadConfig) null);
 	}
 
 	/**
@@ -140,8 +142,12 @@ public class RequestExecutor {
 				? new RetryBudget(config.getRetryBudgetMaxRetries(), config.getRetryBudgetWindowMillis())
 				: null;
 		this.retryExecutor = new RetryExecutor(interceptorDispatcher, config.getRetry(), retryBudget);
-		this.circuitBreakerCoordinator = new CircuitBreakerCoordinator(config.getCircuitBreaker());
-		this.bulkheadCoordinator = new BulkheadCoordinator(config.getBulkhead());
+		this.circuitBreakerCoordinator = config.getCircuitBreakerProvider() != null
+				? new CircuitBreakerCoordinator(config.getCircuitBreakerProvider())
+				: new CircuitBreakerCoordinator(config.getCircuitBreaker());
+		this.bulkheadCoordinator = config.getBulkheadProvider() != null
+				? new BulkheadCoordinator(config.getBulkheadProvider())
+				: new BulkheadCoordinator(config.getBulkhead());
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
