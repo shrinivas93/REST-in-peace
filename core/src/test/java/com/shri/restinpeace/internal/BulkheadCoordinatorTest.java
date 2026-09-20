@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -25,6 +26,10 @@ class BulkheadCoordinatorTest {
 
 	private static Supplier<HttpResponse<String>> respondingWith(int status) {
 		return () -> new SyntheticHttpResponse<>(status, new kong.unirest.Headers(), "body");
+	}
+
+	private static Supplier<CompletableFuture<HttpResponse<String>>> respondingWithAsync(int status) {
+		return () -> CompletableFuture.completedFuture(new SyntheticHttpResponse<>(status, new kong.unirest.Headers(), "body"));
 	}
 
 	@Test
@@ -225,6 +230,152 @@ class BulkheadCoordinatorTest {
 		} finally {
 			holder.shutdownNow();
 			waiter.shutdownNow();
+		}
+	}
+
+	@Test
+	void async_unconfigured_neverRefusesAndNeverThrows() throws Exception {
+		BulkheadCoordinator coordinator = new BulkheadCoordinator(null);
+
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
+				.wrapWithBulkheadAsync(respondingWithAsync(200));
+
+		for (int i = 0; i < 20; i++) {
+			assertEquals(200, wrapped.get().get(5, TimeUnit.SECONDS).getStatus());
+		}
+	}
+
+	@Test
+	void async_permitIsReleasedOnCompletion_soASubsequentCallIsNeverRefused() throws Exception {
+		BulkheadConfig config = BulkheadConfig.builder().maxConcurrentCalls(1).build();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator(config);
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
+				.wrapWithBulkheadAsync(respondingWithAsync(200));
+
+		// If the permit weren't released once the first future completed, the
+		// second of these would find it still held and be refused.
+		assertEquals(200, wrapped.get().get(5, TimeUnit.SECONDS).getStatus());
+		assertEquals(200, wrapped.get().get(5, TimeUnit.SECONDS).getStatus());
+	}
+
+	@Test
+	void async_permitIsReleasedOnFailure_soASubsequentCallIsNeverRefused() throws Exception {
+		BulkheadConfig config = BulkheadConfig.builder().maxConcurrentCalls(1).build();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator(config);
+		RuntimeException transportFailure = new RuntimeException("connection refused");
+		Supplier<CompletableFuture<HttpResponse<String>>> failingCall = coordinator.wrapWithBulkheadAsync(() -> {
+			CompletableFuture<HttpResponse<String>> failed = new CompletableFuture<>();
+			failed.completeExceptionally(transportFailure);
+			return failed;
+		});
+
+		assertThrows(ExecutionException.class, () -> failingCall.get().get(5, TimeUnit.SECONDS));
+		// The permit consumed by the failed call above must have been released,
+		// not left held - otherwise this would be refused instead.
+		Supplier<CompletableFuture<HttpResponse<String>>> succeedingCall = coordinator
+				.wrapWithBulkheadAsync(respondingWithAsync(200));
+		assertEquals(200, succeedingCall.get().get(5, TimeUnit.SECONDS).getStatus());
+	}
+
+	@Test
+	void async_atCapWithNoWait_returnsAlreadyFailedFuture_withoutThrowingSynchronously() throws Exception {
+		BulkheadConfig config = BulkheadConfig.builder().maxConcurrentCalls(1).build();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator(config);
+		CountDownLatch holdingCallStarted = new CountDownLatch(1);
+		CountDownLatch releaseHoldingCall = new CountDownLatch(1);
+		Supplier<HttpResponse<String>> holdingCall = coordinator.wrapWithBulkhead(() -> {
+			holdingCallStarted.countDown();
+			await(releaseHoldingCall);
+			return new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body");
+		});
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		try {
+			Future<HttpResponse<String>> holding = executor.submit(holdingCall::get);
+			holdingCallStarted.await(5, TimeUnit.SECONDS);
+
+			// The whole point of the async wrap: calling .get() on the returned
+			// Supplier itself must never throw - the failure must arrive via the
+			// future it returns, since a synchronous throw here would be lost if
+			// this supplier is ever invoked from inside a scheduled retry callback
+			// (see the coordinator's own javadoc for wrapWithBulkheadAsync).
+			Supplier<CompletableFuture<HttpResponse<String>>> secondCall = coordinator
+					.wrapWithBulkheadAsync(respondingWithAsync(200));
+			CompletableFuture<HttpResponse<String>> result = secondCall.get();
+			ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+			assertTrue(thrown.getCause() instanceof BulkheadFullException);
+
+			releaseHoldingCall.countDown();
+			assertEquals(200, holding.get(5, TimeUnit.SECONDS).getStatus());
+		} finally {
+			executor.shutdownNow();
+		}
+	}
+
+	@Test
+	void async_maxWaitDuration_doesNotBlockTheCallingThreadWhileWaiting() throws Exception {
+		BulkheadConfig config = BulkheadConfig.builder().maxConcurrentCalls(1)
+				.maxWaitDuration(Duration.ofSeconds(5)).build();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator(config);
+		CountDownLatch holdingCallStarted = new CountDownLatch(1);
+		Supplier<HttpResponse<String>> holdingCall = coordinator.wrapWithBulkhead(() -> {
+			holdingCallStarted.countDown();
+			sleep(200);
+			return new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body");
+		});
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		try {
+			Future<HttpResponse<String>> holding = executor.submit(holdingCall::get);
+			holdingCallStarted.await(5, TimeUnit.SECONDS);
+
+			Supplier<CompletableFuture<HttpResponse<String>>> waitingCall = coordinator
+					.wrapWithBulkheadAsync(respondingWithAsync(200));
+
+			// Called directly on this test thread, not a background executor - if
+			// waiting for a permit blocked this thread for the ~200ms the holding
+			// call takes to finish, this call itself would take that long. It must
+			// return near-instantly instead, with the actual wait happening on a
+			// background thread and completing the returned future later - the
+			// whole reason wrapWithBulkheadAsync's timed wait exists separately
+			// from the sync path's plain blocking Semaphore#tryAcquire.
+			long startNanos = System.nanoTime();
+			CompletableFuture<HttpResponse<String>> waitingResult = waitingCall.get();
+			long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+			assertTrue(elapsedMillis < 100, "wrapWithBulkheadAsync blocked the calling thread for " + elapsedMillis + "ms");
+
+			assertEquals(200, waitingResult.get(5, TimeUnit.SECONDS).getStatus());
+			assertEquals(200, holding.get(5, TimeUnit.SECONDS).getStatus());
+		} finally {
+			executor.shutdownNow();
+		}
+	}
+
+	@Test
+	void async_maxWaitDuration_stillRefusesIfNoPermitFreesInTime() throws Exception {
+		BulkheadConfig config = BulkheadConfig.builder().maxConcurrentCalls(1)
+				.maxWaitDuration(Duration.ofMillis(50)).build();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator(config);
+		CountDownLatch holdingCallStarted = new CountDownLatch(1);
+		CountDownLatch releaseHoldingCall = new CountDownLatch(1);
+		Supplier<HttpResponse<String>> holdingCall = coordinator.wrapWithBulkhead(() -> {
+			holdingCallStarted.countDown();
+			await(releaseHoldingCall);
+			return new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body");
+		});
+		ExecutorService executor = Executors.newSingleThreadExecutor();
+		try {
+			Future<HttpResponse<String>> holding = executor.submit(holdingCall::get);
+			holdingCallStarted.await(5, TimeUnit.SECONDS);
+
+			Supplier<CompletableFuture<HttpResponse<String>>> waitingCall = coordinator
+					.wrapWithBulkheadAsync(respondingWithAsync(200));
+			CompletableFuture<HttpResponse<String>> result = waitingCall.get();
+			ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+			assertTrue(thrown.getCause() instanceof BulkheadFullException);
+
+			releaseHoldingCall.countDown();
+			assertEquals(200, holding.get(5, TimeUnit.SECONDS).getStatus());
+		} finally {
+			executor.shutdownNow();
 		}
 	}
 

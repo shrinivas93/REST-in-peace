@@ -36,9 +36,17 @@ public interface MockServerTestApi {
 	String getOrder(@PathParam("id") String id,
 			@QueryParam(value = "verbose", required = false, defaultValue = "false") String verbose);
 
+	@GET("/orders/{id}")
+	CompletableFuture<String> getOrderAsync(@PathParam("id") String id,
+			@QueryParam(value = "verbose", required = false, defaultValue = "false") String verbose);
+
 	@POST("/orders")
 	@Retry(delayMillis = 1)
 	String createOrder(@Body String payload);
+
+	@POST("/orders")
+	@Retry(delayMillis = 1)
+	CompletableFuture<String> createOrderAsync(@Body String payload);
 
 	@GET("/secure")
 	String getSecure(@HeaderParam("Authorization") String token);
