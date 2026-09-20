@@ -86,6 +86,7 @@ public class RequestExecutor {
 	private final ResponseDecoder responseDecoder;
 	private final InterceptorDispatcher interceptorDispatcher;
 	private final RetryExecutor retryExecutor;
+	private final CircuitBreakerCoordinator circuitBreakerCoordinator;
 
 	/** Creates a processor with no runtime base URL override. Cheap and stateless beyond the shared interceptor registry. */
 	public RequestExecutor() {
@@ -111,6 +112,7 @@ public class RequestExecutor {
 		this.responseDecoder = new ResponseDecoder(null);
 		this.interceptorDispatcher = new InterceptorDispatcher(Collections.emptyList(), responseDecoder);
 		this.retryExecutor = new RetryExecutor(interceptorDispatcher);
+		this.circuitBreakerCoordinator = new CircuitBreakerCoordinator(null);
 	}
 
 	/**
@@ -136,6 +138,7 @@ public class RequestExecutor {
 				? new RetryBudget(config.getRetryBudgetMaxRetries(), config.getRetryBudgetWindowMillis())
 				: null;
 		this.retryExecutor = new RetryExecutor(interceptorDispatcher, config.getRetry(), retryBudget);
+		this.circuitBreakerCoordinator = new CircuitBreakerCoordinator(config.getCircuitBreaker());
 	}
 
 	private static UnirestInstance buildInstance(RipClientConfig config) {
@@ -298,29 +301,33 @@ public class RequestExecutor {
 			Type innerType = resolveWrappedType(method.getGenericReturnType(), method);
 			if (innerType == byte[].class) {
 				HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
-						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
+						circuitBreakerCoordinator.wrapWithCircuitBreaker(
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes)));
 				return ResponseDecoder.wrapResponse(response, responseDecoder.decodeOrThrow(response, errorType, innerType));
 			}
-			HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, innerType, context, cacheCoordinator
-					.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)));
+			HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, innerType, context,
+					circuitBreakerCoordinator.wrapWithCircuitBreaker(cacheCoordinator.wrapWithCache(request, context,
+							interceptorDispatcher.wrapWithShortCircuit(context, request::asString))));
 			return ResponseDecoder.wrapResponse(response, responseDecoder.decodeOrThrow(response, errorType, innerType));
 		}
 		if (returnType == byte[].class) {
 			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, returnType, context,
-					interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
+					circuitBreakerCoordinator.wrapWithCircuitBreaker(
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes)));
 			return responseDecoder.decodeOrThrow(response, errorType, returnType);
 		}
 		if (returnType == File.class) {
 			File destination = resolveDestinationFile(method, args);
 			HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(method, byte[].class, context,
-					interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes));
+					circuitBreakerCoordinator.wrapWithCircuitBreaker(
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes)));
 			byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
 		}
 		Type genericReturnType = method.getGenericReturnType();
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, genericReturnType, context,
-				cacheCoordinator.wrapWithCache(request, context,
-						interceptorDispatcher.wrapWithShortCircuit(context, request::asString)));
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(cacheCoordinator.wrapWithCache(request, context,
+						interceptorDispatcher.wrapWithShortCircuit(context, request::asString))));
 		return responseDecoder.decodeOrThrow(response, errorType, genericReturnType);
 	}
 
@@ -488,7 +495,8 @@ public class RequestExecutor {
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, returnType, context,
-				cacheCoordinator.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)),
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(cacheCoordinator.wrapWithCache(request, context,
+						interceptorDispatcher.wrapWithShortCircuit(context, request::asString))),
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return responseDecoder.decodeOrThrow(response, errorType, returnType);
 	}
@@ -518,7 +526,8 @@ public class RequestExecutor {
 			double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context,
-				interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes), hasRetry, retryTimes,
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes)), hasRetry, retryTimes,
 				retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 	}
@@ -549,7 +558,8 @@ public class RequestExecutor {
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context,
-				interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes), hasRetry, retryTimes,
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes)), hasRetry, retryTimes,
 				retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 		return writeToFile(destination, bytes);
@@ -585,7 +595,8 @@ public class RequestExecutor {
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(errorType, innerType, context,
-				cacheCoordinator.wrapWithCache(request, context, interceptorDispatcher.wrapWithShortCircuit(context, request::asString)),
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(cacheCoordinator.wrapWithCache(request, context,
+						interceptorDispatcher.wrapWithShortCircuit(context, request::asString))),
 				hasRetry, retryTimes, retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		return (RipResponse<?>) ResponseDecoder.wrapResponse(response,
 				responseDecoder.decodeOrThrow(response, errorType, innerType));
@@ -616,7 +627,8 @@ public class RequestExecutor {
 			double retryBackoffMultiplier, double retryJitterFactor, int[] retryOnStatus) {
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		HttpResponse<byte[]> response = retryExecutor.executeSyncWithRetry(errorType, byte[].class, context,
-				interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes), hasRetry, retryTimes,
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(
+						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes)), hasRetry, retryTimes,
 				retryDelayMillis, retryBackoffMultiplier, retryJitterFactor, retryOnStatus);
 		@SuppressWarnings("unchecked")
 		RipResponse<byte[]> result = (RipResponse<byte[]>) ResponseDecoder.wrapResponse(response,
