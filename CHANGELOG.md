@@ -42,6 +42,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the config-based overload on the same builder method - whichever is
   called last wins. See `docs/design/circuit-breaker-bulkhead.md` for the
   full design and a worked example.
+- Spring Boot starter support for the above: `rest-in-peace.clients.<name>.circuit-breaker.*`/
+  `.bulkhead.*` properties, bound the same way the existing
+  `connect-timeout-millis`/`read-timeout-millis`/`proxy.*` properties
+  already are. Every option is independently optional, keeping
+  `CircuitBreakerConfig`/`BulkheadConfig`'s own builder default for
+  whatever's left unset. A `CircuitBreakerProvider`/`BulkheadProvider`
+  override still requires `RipClientConfig.Builder` directly, since a
+  provider is a Java object rather than something a property file can
+  express.
 
 ### Changed
 

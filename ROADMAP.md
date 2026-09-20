@@ -811,20 +811,27 @@ up.
       changes needed - `RecordedRequest.getHeader("Idempotency-Key")` and
       `getRecordedRequests()` (both pre-existing) are enough to assert the
       key is identical across every recorded attempt.
-- [ ] **Circuit breaker / bulkhead per client** — a natural extension of
+- [x] **Circuit breaker / bulkhead per client** — a natural extension of
       `RipClientConfig`: stop hammering a downstream that's clearly down,
-      the natural next step after retry and timeout. Design doc written:
+      the natural next step after retry and timeout. Design doc:
       [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md) -
       build-your-own default (no new dependency) with a pluggable
       `CircuitBreakerProvider`/`BulkheadProvider` override to delegate to
-      resilience4j or any other backend a consumer already runs. Chunked
-      rollout plan in the doc's §9; chunk 2 (the circuit breaker itself)
-      landed - `CircuitBreakerConfig`, `CircuitOpenException`,
-      `CircuitBreakerCoordinator`, wired into `RipClientConfig.Builder`,
-      sync path, both dispatch paths, both `COUNT_BASED` and `TIME_BASED`
-      sliding windows. Bulkhead (chunk 3), async parity (chunk 4), the
-      provider SPI (chunk 5), and Spring Boot starter wiring (chunk 6) not
-      started.
+      resilience4j or any other backend a consumer already runs. All six
+      chunks of the doc's §9 rollout plan landed: `CircuitBreakerConfig`/
+      `CircuitOpenException`/`CircuitBreakerCoordinator` (chunk 2, both
+      `COUNT_BASED` and `TIME_BASED` sliding windows) and
+      `BulkheadConfig`/`BulkheadFullException`/`BulkheadCoordinator`
+      (chunk 3), both wired into `RipClientConfig.Builder`; async
+      (`CompletableFuture`) parity for both, including `RetryExecutor`
+      never retrying a `CircuitOpenException` (chunk 4); the
+      `CircuitBreakerProvider`/`BulkheadProvider` override SPI to delegate
+      to resilience4j or any other backend, with no new dependency in
+      core's own `pom.xml` (chunk 5); and Spring Boot starter property
+      binding under `rest-in-peace.clients.<name>.circuit-breaker.*`/
+      `.bulkhead.*`, mirroring the existing timeout/proxy property groups
+      (chunk 6). See the design doc's own Status line for every real
+      deviation from the original sketch.
 - [x] **A pre-built `MetricsInterceptor`** — times every request and reports
       it, once its response comes back, to a small `MetricsSink` interface
       (`recordCall(httpMethod, url, status, durationMillis)`) - the metrics

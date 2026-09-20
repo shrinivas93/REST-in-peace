@@ -1,6 +1,7 @@
 # Design: Circuit breaker + bulkhead per client
 
-Status: **chunk 3 (the bulkhead) landed**, on top of chunk 2 (the circuit
+Status: **all six chunks landed** - the design doc's entire rollout plan
+(§9) is complete. **Chunk 3 (the bulkhead) landed**, on top of chunk 2 (the circuit
 breaker) - `BulkheadConfig`, `BulkheadFullException`, `BulkheadCoordinator`,
 and `RipClientConfig.Builder#bulkhead(...)`, sync path (both dispatch
 paths). One real deviation from §6.2/§8's sketch, caught before merging:
@@ -103,7 +104,34 @@ permission granted/denied, outcome reporting), and new `provider_*` cases
 in `CircuitBreakerIntegrationTest`/`BulkheadIntegrationTest` against a
 real `MockRestServer`.
 
-Spring Boot starter wiring (chunk 6) not started.
+**Chunk 6 (Spring Boot starter wiring) landed** - `RestInPeaceClientProperties`
+gained two new nested groups, `circuitBreaker`/`bulkhead`, mirroring the
+existing `proxy` nested-class pattern (§4.4 of
+`docs/design/spring-boot-starter.md`), bound the same way via
+`RestInPeaceClientsRegistrar`'s `Binder.get(environment).bind(...)` call at
+bean-registration time under `rest-in-peace.clients.<name>.circuit-breaker.*`/
+`.bulkhead.*`. Every field is optional and independently defaulted -
+`RestInPeaceClientsRegistrar#toCircuitBreakerConfig`/`#toBulkheadConfig`
+only call a `CircuitBreakerConfig.Builder`/`BulkheadConfig.Builder` setter
+for a property that was actually set, so any field left unset keeps that
+builder's own built-in default rather than some separately-maintained
+Spring-side default. One scoping decision, not a deviation: only the
+plain-scalar subset of each builder's options is exposed this way -
+`CircuitBreakerConfig.Builder#recordFailureForStatus(IntPredicate)` has no
+property-file equivalent (a lambda isn't a scalar) and stays
+programmatic-only, and a `CircuitBreakerProvider`/`BulkheadProvider`
+(chunk 5) is a Java object for the same reason, still wired via
+`RipClientConfig.Builder` directly rather than through these properties.
+Verified via `RestInPeaceClientCircuitBreakerAndBulkheadPropertiesTest`
+against a real `MockRestServer` (`@AutoConfigureMockRestServer`), the same
+way `RestInPeaceClientTimeoutAndProxyPropertiesTest` already proves
+timeout/proxy properties reach a hand-built config: repeated failures
+tripping a property-configured breaker and skipping the network call
+entirely, half-open recovery after cooldown, a time-based sliding window,
+a property-configured bulkhead refusing once full and letting a queued
+call through via `maxWaitDuration`, and - for every option - that leaving
+it unset preserves the builder's own default instead of some accidental
+zero/null value.
 
 Two real deviations from §6.1/§6.3's sketch, both caught before merging, not
 after:
@@ -677,12 +705,15 @@ its own PR, verified and merged before the next starts.
    never in `core`'s own `pom.xml`). See the Status line above for the one
    real deviation (`onSuccess` takes the response's status code, so
    classification stays entirely the consumer's decision).
-6. **Spring Boot starter wiring** - `RipClientConfig`'s new
+6. **Spring Boot starter wiring** ✅ - `RipClientConfig`'s new
    `circuitBreaker`/`bulkhead` settings bound from
    `rest-in-peace.clients.<name>.*`, the same `Binder` mechanism §4.4 of
    `docs/design/spring-boot-starter.md` already established for
-   timeout/proxy.
+   timeout/proxy. See the Status line above for the exact property shape
+   and the one scoping decision (no property-file equivalent for
+   `recordFailureForStatus` or a provider - both stay programmatic-only).
 
-Each chunk should update this doc's Status line with what actually landed
-and any real deviations from the sketch above, the same convention both
-existing design docs follow.
+Every chunk above has landed - this design doc's scope is complete. Each
+chunk updated this doc's Status line with what actually landed and any real
+deviations from the sketch above, the same convention both existing design
+docs follow.
