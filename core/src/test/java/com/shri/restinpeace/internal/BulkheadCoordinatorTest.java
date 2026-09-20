@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.BulkheadConfig;
+import com.shri.restinpeace.BulkheadProvider;
 import com.shri.restinpeace.exception.BulkheadFullException;
 import com.shri.restinpeace.exception.RestInPeaceException;
 
@@ -34,7 +35,7 @@ class BulkheadCoordinatorTest {
 
 	@Test
 	void unconfigured_neverRefusesAndNeverThrows() {
-		BulkheadCoordinator coordinator = new BulkheadCoordinator(null);
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadConfig) null);
 
 		Supplier<HttpResponse<String>> wrapped = coordinator.wrapWithBulkhead(respondingWith(200));
 
@@ -235,7 +236,7 @@ class BulkheadCoordinatorTest {
 
 	@Test
 	void async_unconfigured_neverRefusesAndNeverThrows() throws Exception {
-		BulkheadCoordinator coordinator = new BulkheadCoordinator(null);
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadConfig) null);
 
 		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
 				.wrapWithBulkheadAsync(respondingWithAsync(200));
@@ -395,6 +396,103 @@ class BulkheadCoordinatorTest {
 			Thread.currentThread().interrupt();
 			throw new RuntimeException(e);
 		}
+	}
+
+	private static final class RecordingProvider implements BulkheadProvider {
+		boolean permit = true;
+		int completeCalls;
+
+		public boolean tryAcquirePermission() {
+			return permit;
+		}
+
+		public void onComplete() {
+			completeCalls++;
+		}
+	}
+
+	@Test
+	void provider_permissionGranted_invokesRealCallAndReportsCompletion() {
+		RecordingProvider provider = new RecordingProvider();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadProvider) provider);
+		Supplier<HttpResponse<String>> wrapped = coordinator.wrapWithBulkhead(respondingWith(200));
+
+		assertEquals(200, wrapped.get().getStatus());
+		assertEquals(1, provider.completeCalls);
+	}
+
+	@Test
+	void provider_permissionDenied_refusesWithoutInvokingRealCall() {
+		RecordingProvider provider = new RecordingProvider();
+		provider.permit = false;
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadProvider) provider);
+		boolean[] realCallInvoked = { false };
+		Supplier<HttpResponse<String>> wrapped = coordinator.wrapWithBulkhead(() -> {
+			realCallInvoked[0] = true;
+			return new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body");
+		});
+
+		assertThrows(BulkheadFullException.class, wrapped::get);
+		assertTrue(!realCallInvoked[0]);
+		assertEquals(0, provider.completeCalls);
+	}
+
+	@Test
+	void provider_onComplete_calledEvenWhenTheRealCallFails() {
+		RecordingProvider provider = new RecordingProvider();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadProvider) provider);
+		RuntimeException transportFailure = new RuntimeException("connection refused");
+		Supplier<HttpResponse<String>> throwingCall = coordinator.wrapWithBulkhead(() -> {
+			throw transportFailure;
+		});
+
+		assertThrows(RuntimeException.class, throwingCall::get);
+		assertEquals(1, provider.completeCalls);
+	}
+
+	@Test
+	void async_provider_permissionGranted_invokesRealCallAndReportsCompletion() throws Exception {
+		RecordingProvider provider = new RecordingProvider();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadProvider) provider);
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator
+				.wrapWithBulkheadAsync(respondingWithAsync(200));
+
+		assertEquals(200, wrapped.get().get(5, TimeUnit.SECONDS).getStatus());
+		assertEquals(1, provider.completeCalls);
+	}
+
+	@Test
+	void async_provider_permissionDenied_returnsAlreadyFailedFuture_withoutThrowingSynchronously() throws Exception {
+		RecordingProvider provider = new RecordingProvider();
+		provider.permit = false;
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadProvider) provider);
+		boolean[] realCallInvoked = { false };
+		Supplier<CompletableFuture<HttpResponse<String>>> wrapped = coordinator.wrapWithBulkheadAsync(() -> {
+			realCallInvoked[0] = true;
+			return CompletableFuture
+					.completedFuture(new SyntheticHttpResponse<>(200, new kong.unirest.Headers(), "body"));
+		});
+
+		CompletableFuture<HttpResponse<String>> result = wrapped.get();
+		ExecutionException thrown = assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+		assertTrue(thrown.getCause() instanceof BulkheadFullException);
+		assertTrue(!realCallInvoked[0]);
+	}
+
+	@Test
+	void async_provider_onComplete_calledEvenWhenTheRealCallFails() throws Exception {
+		RecordingProvider provider = new RecordingProvider();
+		BulkheadCoordinator coordinator = new BulkheadCoordinator((BulkheadProvider) provider);
+		RuntimeException transportFailure = new RuntimeException("connection refused");
+		Supplier<CompletableFuture<HttpResponse<String>>> throwingCall = coordinator.wrapWithBulkheadAsync(() -> {
+			CompletableFuture<HttpResponse<String>> failed = new CompletableFuture<>();
+			failed.completeExceptionally(transportFailure);
+			return failed;
+		});
+
+		CompletableFuture<HttpResponse<String>> result = throwingCall.get();
+		assertThrows(ExecutionException.class, () -> result.get(5, TimeUnit.SECONDS));
+		assertEquals(1, provider.completeCalls);
 	}
 
 }

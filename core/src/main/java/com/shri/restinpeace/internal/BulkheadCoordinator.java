@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import com.shri.restinpeace.BulkheadConfig;
+import com.shri.restinpeace.BulkheadProvider;
 import com.shri.restinpeace.exception.BulkheadFullException;
 import com.shri.restinpeace.exception.RestInPeaceException;
 
@@ -30,6 +31,13 @@ import kong.unirest.HttpResponse;
  * bulkhead, so a call that was never going to be attempted doesn't
  * needlessly occupy (or wait for) a permit meant for calls that actually
  * get dispatched.
+ *
+ * <p>
+ * Also the adapter for a {@link BulkheadProvider}-backed client (see
+ * {@code docs/design/circuit-breaker-bulkhead.md} §5) - when configured
+ * this way, every acquire/release call above is delegated straight to the
+ * external provider instead of this class's own {@link Semaphore}, which
+ * then goes unused ({@code null}) entirely.
  */
 final class BulkheadCoordinator {
 
@@ -46,6 +54,14 @@ final class BulkheadCoordinator {
 	});
 
 	private final BulkheadConfig config;
+
+	// Non-null only when this client delegates to an external bulkhead (see
+	// docs/design/circuit-breaker-bulkhead.md §5) instead of using the
+	// built-in Semaphore below - config and provider are never both non-null.
+	// Checked first in both wrap methods so a provider-backed instance is
+	// never mistaken for unconfigured just because config is null.
+	private final BulkheadProvider provider;
+
 	private final Semaphore semaphore;
 
 	/**
@@ -57,7 +73,19 @@ final class BulkheadCoordinator {
 	 */
 	BulkheadCoordinator(BulkheadConfig config) {
 		this.config = config;
+		this.provider = null;
 		this.semaphore = config != null ? new Semaphore(config.getMaxConcurrentCalls()) : null;
+	}
+
+	/**
+	 * @param provider this client's external bulkhead provider (see
+	 *                 {@link BulkheadProvider}'s own javadoc), or
+	 *                 {@code null} if none is configured
+	 */
+	BulkheadCoordinator(BulkheadProvider provider) {
+		this.config = null;
+		this.provider = provider;
+		this.semaphore = null;
 	}
 
 	/**
@@ -73,6 +101,19 @@ final class BulkheadCoordinator {
 	 *         of ever invoking {@code call}
 	 */
 	<B> Supplier<HttpResponse<B>> wrapWithBulkhead(Supplier<HttpResponse<B>> call) {
+		if (provider != null) {
+			return () -> {
+				if (!provider.tryAcquirePermission()) {
+					throw new BulkheadFullException(
+							"Bulkhead is full (external provider); refusing call without attempting it.");
+				}
+				try {
+					return call.get();
+				} finally {
+					provider.onComplete();
+				}
+			};
+		}
 		if (config == null) {
 			return call;
 		}
@@ -108,6 +149,17 @@ final class BulkheadCoordinator {
 	 */
 	<B> Supplier<CompletableFuture<HttpResponse<B>>> wrapWithBulkheadAsync(
 			Supplier<CompletableFuture<HttpResponse<B>>> call) {
+		if (provider != null) {
+			return () -> {
+				if (!provider.tryAcquirePermission()) {
+					CompletableFuture<HttpResponse<B>> failed = new CompletableFuture<>();
+					failed.completeExceptionally(new BulkheadFullException(
+							"Bulkhead is full (external provider); refusing call without attempting it."));
+					return failed;
+				}
+				return call.get().whenComplete((response, failure) -> provider.onComplete());
+			};
+		}
 		if (config == null) {
 			return call;
 		}

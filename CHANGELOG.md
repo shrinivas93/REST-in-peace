@@ -32,6 +32,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   default. Works for a `CompletableFuture`-returning method too - waiting
   for a permit never blocks the calling thread, even with `maxWaitDuration`
   set.
+- `CircuitBreakerProvider`/`BulkheadProvider`: escape hatches for a
+  consumer already running resilience4j (or anything else) elsewhere in
+  their stack - `RipClientConfig.Builder#circuitBreaker(CircuitBreakerProvider)`/
+  `#bulkhead(BulkheadProvider)` delegate the actual permission/outcome
+  decisions to that existing instance instead of RIP's own built-in
+  `CircuitBreakerConfig`/`BulkheadConfig`-driven implementation, with no
+  hard dependency on resilience4j added to `core`. Mutually exclusive with
+  the config-based overload on the same builder method - whichever is
+  called last wins. See `docs/design/circuit-breaker-bulkhead.md` for the
+  full design and a worked example.
 
 ### Changed
 

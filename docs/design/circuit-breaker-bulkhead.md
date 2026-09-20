@@ -63,8 +63,47 @@ and new `async_*` cases in `CircuitBreakerIntegrationTest`/
 `BulkheadIntegrationTest` against a real `MockRestServer` over the
 compile-time-generated dispatch path.
 
-The provider SPI (chunk 5) and Spring Boot starter wiring (chunk 6) not
-started.
+**Chunk 5 (the provider SPI) landed** - `CircuitBreakerProvider`/
+`BulkheadProvider` (§5, Option C), plus overloaded `RipClientConfig.Builder#circuitBreaker(CircuitBreakerProvider)`/
+`#bulkhead(BulkheadProvider)` alongside the existing `CircuitBreakerConfig`/
+`BulkheadConfig` overloads - setting one clears the other, "last call wins"
+(the same shape `CircuitBreakerConfig.Builder`'s own `slidingWindowSize`
+overloads already use). `CircuitBreakerCoordinator`/`BulkheadCoordinator`
+both grew a second constructor taking the provider type instead of the
+config type, checked first in every wrap method so a provider-backed
+instance is never mistaken for unconfigured just because its
+`CircuitBreakerConfig`/`BulkheadConfig` field is null. One real deviation
+from §5's original sketch, caught before merging:
+
+- **`CircuitBreakerProvider#onSuccess` takes the response's status code as
+  a second parameter** (`onSuccess(long durationNanos, int statusCode)`),
+  not just a duration as §5's original two-line sketch showed. Without it,
+  RIP would have to hardcode its own opinion of what counts as a failure
+  (its own built-in default, `status >= 500`) before ever calling the
+  provider - silently overriding whatever failure predicate the
+  consumer's own external breaker (e.g. resilience4j's own
+  `CircuitBreakerConfig`) was actually configured with, for a feature
+  whose entire point is deferring that decision to the consumer. Passing
+  the status code instead hands classification entirely to the provider's
+  own adapter code, exactly as the updated example in `CircuitBreakerProvider`'s
+  javadoc shows.
+
+No documented example adapter as a separate sample module: the worked
+`CircuitBreakerProvider`/`BulkheadProvider` examples live directly in
+each interface's own javadoc (a `resilience4j` `CircuitBreaker`/`Bulkhead`
+wired in a few lines) rather than a full new Maven module with a real
+`resilience4j` dependency, since core's own `pom.xml` must never carry
+that dependency and a whole sample module felt like more scope than this
+SPI itself needed. Revisit if a real consumer asks for a runnable one.
+
+Verified via `RipClientConfigTest` (the config/provider "last call wins"
+mutual-exclusion behavior), new `provider_*`-prefixed cases in
+`CircuitBreakerCoordinatorTest`/`BulkheadCoordinatorTest` (sync and async,
+permission granted/denied, outcome reporting), and new `provider_*` cases
+in `CircuitBreakerIntegrationTest`/`BulkheadIntegrationTest` against a
+real `MockRestServer`.
+
+Spring Boot starter wiring (chunk 6) not started.
 
 Two real deviations from §6.1/§6.3's sketch, both caught before merging, not
 after:
@@ -632,10 +671,12 @@ its own PR, verified and merged before the next starts.
    real, safety-driven deviations from this item's original sketch (neither
    async wrap ever throws synchronously; the bulkhead's bounded wait runs
    on a dedicated background executor, never the caller's thread).
-5. **`CircuitBreakerProvider`/`BulkheadProvider`** override SPI (§5, Option
-   C) - the resilience4j-delegation escape hatch, plus a documented
-   example adapter (not a hard dependency - the example lives in docs/a
-   sample, never in `core`'s own `pom.xml`).
+5. **`CircuitBreakerProvider`/`BulkheadProvider`** ✅ override SPI (§5,
+   Option C) - the resilience4j-delegation escape hatch, with a worked
+   example adapter in each interface's own javadoc (not a hard dependency -
+   never in `core`'s own `pom.xml`). See the Status line above for the one
+   real deviation (`onSuccess` takes the response's status code, so
+   classification stays entirely the consumer's decision).
 6. **Spring Boot starter wiring** - `RipClientConfig`'s new
    `circuitBreaker`/`bulkhead` settings bound from
    `rest-in-peace.clients.<name>.*`, the same `Binder` mechanism §4.4 of
