@@ -93,7 +93,7 @@ class ReflectiveRestClientValidatorPaginationTest {
 
 	@RestClient
 	public interface PaginatedWithUrl {
-		@GET("http://example.com/orders")
+		@GET
 		@Paginated(itemsField = "orders", pointerKind = PointerKind.FULL_URL, pointerField = "next")
 		Page<Order> listOrders(@Url String url);
 	}

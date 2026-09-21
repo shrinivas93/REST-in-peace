@@ -172,7 +172,7 @@ public class ReflectiveRestClientValidator {
 					}
 					validateBody(method, httpMethod, validationResult);
 					validateReturnType(method, validationResult);
-					validatePaginated(method, validationResult);
+					validatePaginated(method, url, validationResult);
 					validateRetry(method, validationResult);
 					validateMapParam(method, QueryMap.class, "@QueryMap", validationResult);
 					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
@@ -410,7 +410,7 @@ public class ReflectiveRestClientValidator {
 	 * {@code Iterator<T>}/{@code CompletableFuture<Page<T>>}) is rejected by
 	 * name rather than silently misbehaving at call time.
 	 */
-	private static void validatePaginated(Method method, ValidationResult validationResult) {
+	private static void validatePaginated(Method method, String url, ValidationResult validationResult) {
 		Paginated paginated = method.getAnnotation(Paginated.class);
 		boolean returnsPage = method.getReturnType() == Page.class;
 
@@ -433,7 +433,11 @@ public class ReflectiveRestClientValidator {
 		}
 		validateParameterizedReturnType(method, method.getGenericReturnType(), "Page", false, validationResult);
 
-		if (hasUrlParam(method)) {
+		// Only reported when there's no static URL - validateUrlParam already reports
+		// a more specific "has both a @Url parameter and a static URL" error for that
+		// combination; stacking a second, less specific message about the same
+		// underlying @Url misuse on the same method would be redundant noise.
+		if (hasUrlParam(method) && RIPConstants.DEFAULT.equals(url)) {
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with both @Paginated and @Url - remove one or the other.",
 					method.getDeclaringClass().getName(), method.getName()));

@@ -131,7 +131,7 @@ final class CompileTimeRestClientValidator {
 				}
 				validateBody(method, httpMethodAndUrl.httpMethod, reporter);
 				validateReturnType(method, env.getTypeUtils(), reporter);
-				validatePaginated(method, env.getTypeUtils(), reporter);
+				validatePaginated(method, httpMethodAndUrl.urlTemplate, env.getTypeUtils(), reporter);
 				validateRetry(method, reporter);
 				validateMapParam(method, QueryMap.class, "@QueryMap", env, reporter);
 				validateMapParam(method, HeaderMap.class, "@HeaderMap", env, reporter);
@@ -438,7 +438,7 @@ final class CompileTimeRestClientValidator {
 	 * javadoc for the chunk-2-supported subset of
 	 * {@code docs/design/pagination-helper.md} §7 this implements.
 	 */
-	private static void validatePaginated(ExecutableElement method, Types types, Reporter reporter) {
+	private static void validatePaginated(ExecutableElement method, String url, Types types, Reporter reporter) {
 		Paginated paginated = method.getAnnotation(Paginated.class);
 		TypeMirror returnType = method.getReturnType();
 		boolean returnsPage = returnType.getKind() == TypeKind.DECLARED
@@ -462,7 +462,11 @@ final class CompileTimeRestClientValidator {
 		}
 		validateParameterizedReturnType(method, (DeclaredType) returnType, "Page", false, types, reporter);
 
-		if (hasUrlParam(method)) {
+		// Only reported when there's no static URL - validateUrlParam already reports
+		// a more specific "has both a @Url parameter and a static URL" error for that
+		// combination; stacking a second, less specific message about the same
+		// underlying @Url misuse on the same method would be redundant noise.
+		if (hasUrlParam(method) && com.shri.restinpeace.constant.RIPConstants.DEFAULT.equals(url)) {
 			reporter.error(String.format("The method %s is annotated with both @Paginated and @Url - remove one "
 					+ "or the other.", qualifiedName(method)), method);
 		}

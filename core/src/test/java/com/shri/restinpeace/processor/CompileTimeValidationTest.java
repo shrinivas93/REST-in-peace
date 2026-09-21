@@ -1563,7 +1563,7 @@ class CompileTimeValidationTest {
 				+ "import com.shri.restinpeace.annotation.request.Url;\n" //
 				+ "@RestClient\n" //
 				+ "public interface PaginatedWithUrl {\n" //
-				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @GET\n" //
 				+ "  @Paginated(itemsField = \"orders\", pointerKind = PointerKind.FULL_URL, pointerField = \"next\")\n" //
 				+ "  Page<String> listOrders(@Url String url);\n" //
 				+ "}\n");
