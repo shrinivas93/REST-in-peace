@@ -851,22 +851,28 @@ up.
       attempt, since every attempt gets its own `afterResponse` notification
       - verified with a dedicated test asserting three samples
       (`503, 503, 200`) for a call that fails twice before succeeding.
-- [ ] **Parked: a pagination helper** — an annotation or small utility that
-      follows a `next`/cursor field automatically and hands back a lazy
-      `Iterator`/`Stream` of pages, using the `@Url` mechanism above under
-      the hood. Parked rather than started: a first design sketch (a fixed
-      `Page<T>` interface with `getItems()`/`getNextUrl()`) turned out not
-      to be generic enough - real APIs disagree on both the item-list field
-      name (`results`/`data`/`orders`) and the next-page pointer's shape
-      (a full URL vs. a bare cursor needing re-injection as a query param
-      vs. a `Link` response header, GitHub-style). A revised sketch
-      (`@Paginated(itemsField, nextUrlField | nextCursorField,
-      cursorQueryParam)`, decoding `Page<T>` generically the same way
-      `RipResponse<T>` already resolves `T`) covers the first two but still
-      leaves the header-based case as a structurally different annotation
-      shape, and nested field paths unaddressed - enough open surface area
-      to park until real usage narrows which shape(s) actually matter,
-      rather than building against a guess.
+- [ ] **A pagination helper** — an annotation (`@Paginated`) or, for
+      whatever it can't reach, a programmatic `PaginationStrategy<T>`
+      escape hatch, following a `next`/cursor field or response header
+      automatically and handing back a `Page<T>` (manual) or lazy
+      `Stream`/`Iterator` (auto-flattened) of items, reusing the `@Url`
+      mechanism above under the hood. Design doc:
+      [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) -
+      the two earlier sketches (a fixed `Page<T>` interface with
+      `getItems()`/`getNextUrl()`, then a flatter `@Paginated(itemsField,
+      nextUrlField | nextCursorField, cursorQueryParam)`) were both parked
+      for not being generic enough; this doc replaces them with a design
+      built from an exhaustive survey of 46 real-world pagination shapes
+      (response header/body, top-level/nested, keyset, arithmetic
+      offset/total, and every combination of how the client resends
+      state), reusing existing `@QueryParam`/`@PathParam`/`@HeaderParam`/
+      `@Body` vocabulary via one new `@PaginationCursor` parameter marker
+      rather than inventing parallel carrier annotations, plus a
+      `PaginationStrategy<T>` override (mirroring
+      `CircuitBreakerConfig`/`CircuitBreakerProvider`'s build-your-own-
+      default-pluggable-override shape) for the residue no closed
+      annotation vocabulary can ever fully anticipate. Chunked rollout
+      plan in the doc's §12; not started - design doc only.
 - [x] **Spring integration module** — auto-registers every `@RestClient`
       interface found on the classpath as a bean, the way OpenFeign
       integrates with Spring Cloud, via the optional
