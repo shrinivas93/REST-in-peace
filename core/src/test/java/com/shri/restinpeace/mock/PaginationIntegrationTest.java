@@ -236,6 +236,49 @@ class PaginationIntegrationTest {
 		assertThrows(RestInPeaceException.class, page1::next);
 	}
 
+	@Test
+	void longCursor_coercesTheExtractedValueAndAdvances() {
+		server.on(HTTPMethod.GET, "/orders", queryParams("seq", "42"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"2\"}]}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next_seq\":42}"));
+
+		Page<Order> page1 = api.listOrdersByLongCursor(0L);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void longCursor_nonNumericExtractedValue_throws() {
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next_seq\":\"not-a-number\"}"));
+
+		Page<Order> page1 = api.listOrdersByLongCursor(0L);
+		assertThrows(RestInPeaceException.class, page1::next);
+	}
+
+	@Test
+	void nestedItemsFieldMissingIntermediateSegment_throws() {
+		// itemsField = "data.orders" but the response has no "data" object at all -
+		// exercises the dotted-path getPath's missing-intermediate-segment branch.
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"other\":true}"));
+
+		assertThrows(RestInPeaceException.class, () -> api.listOrdersByNestedItemsField(null));
+	}
+
+	@Test
+	void nestedItemsField_resolvesThroughTheNestedPath() {
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"data\":{\"orders\":[{\"id\":\"1\"}]}}"));
+
+		Page<Order> page1 = api.listOrdersByNestedItemsField(null);
+		assertEquals(1, page1.items().size());
+		assertFalse(page1.hasNext());
+	}
+
 	private static Map<String, String> queryParams(String name, String value) {
 		Map<String, String> params = new HashMap<>();
 		params.put(name, value);

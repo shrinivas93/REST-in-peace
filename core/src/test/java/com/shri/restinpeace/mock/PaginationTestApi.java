@@ -40,6 +40,14 @@ public interface PaginationTestApi {
 	@Paginated(itemsField = "orders", pointerField = "next_page")
 	Page<Order> listOrdersByIntCursor(@QueryParam("page") @PaginationCursor int page);
 
+	@GET("/orders")
+	@Paginated(itemsField = "data.orders", pointerField = "next_cursor")
+	Page<Order> listOrdersByNestedItemsField(@QueryParam("cursor") @PaginationCursor String cursor);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerField = "next_seq")
+	Page<Order> listOrdersByLongCursor(@QueryParam("seq") @PaginationCursor long seq);
+
 	final class Order {
 		public String id;
 	}
