@@ -238,7 +238,8 @@ picks sync vs. async elsewhere in RIP:
 public interface Page<T> {
     List<T> items();
     boolean hasNext();
-    Page<T> next();   // blocking fetch of the next page, through the full call pipeline
+    Page<T> next();               // blocking fetch of the next page, through the full call pipeline
+    HttpResponse<?> rawResponse(); // status/headers of the call that produced THIS page - see §6.4.1
 }
 ```
 
@@ -256,6 +257,43 @@ Stream<Order> streamOrders(@QueryParam("cursor") @PaginationCursor String cursor
 
 `Iterator<T>` works identically to `Stream<T>` for a consumer who prefers
 imperative iteration.
+
+#### 6.4.1 Composing with `CompletableFuture<T>` and `RipResponse<T>`
+
+**`CompletableFuture<Page<T>>` / `CompletableFuture<Stream<T>>` /
+`CompletableFuture<Iterator<T>>`** - supported, but only the *first* page
+fetch is actually async, matching how `CompletableFuture<T>` already
+behaves everywhere else in RIP. `Page<T>.next()` stays a blocking call
+(as declared above) once the future resolves and the consumer holds a
+`Page<T>`/`Stream<T>`/`Iterator<T>` - walking to page 2 and beyond is
+synchronous by construction (§6.9). A fully async iteration protocol (an
+async `Page<T>.next()` returning its own `CompletableFuture<Page<T>>`) is
+real, plausible future work, but a materially bigger feature than "the
+first call can be async like any other RIP call" - left as the
+still-open half of the async question in §11.
+
+**`RipResponse<Page<T>>`** - deliberately *not* supported, resolving the
+open question this doc originally posed about it. `RipResponse<T>` wraps
+one call's metadata; after `Page<T>.next()` advances, that metadata would
+describe page 1 while the consumer is looking at page 4 - stale and
+misleading. `Page<T>.rawResponse()` above is the actual fix: it returns
+the metadata of *whichever* page is currently held, correct across the
+whole iteration instead of just the first page, and makes
+`RipResponse<Page<T>>` unnecessary rather than merely redundant.
+
+**`RipResponse<Stream<T>>` / `RipResponse<Iterator<T>>`** - rejected at
+validation time (§7). Auto-flattening exists specifically to erase page
+boundaries; a stream spans an unknown number of underlying calls, so there
+is no single coherent response left to wrap. The validator error should
+point at `Page<T>` + `rawResponse()` as the way to get per-fetch metadata
+without giving up manual page control.
+
+**No `CompletableFuture<RipResponse<Page<T>>>` triple-nesting.** RIP
+already supports this depth of nesting elsewhere (`CompletableFuture<RipResponse<List<User>>>`,
+per E12), so the precedent exists - but `Page<T>.rawResponse()` makes it
+unnecessary here specifically: `CompletableFuture<Page<T>>` alone already
+gives a consumer both an async first fetch and per-page response metadata,
+with no added expressiveness from wrapping a third layer around it.
 
 ### 6.5 Termination precedence
 
@@ -459,6 +497,13 @@ implemented independently in both `ReflectiveRestClientValidator`
 - `@Paginated` combined with a `PaginationStrategy<T>` parameter on the
   same method is rejected - pick declarative or programmatic, not both
   (§6.8).
+- A return type of `RipResponse<Stream<T>>` or `RipResponse<Iterator<T>>`
+  is rejected (§6.4.1) - auto-flattening spans an unknown number of
+  underlying calls, so there is no single response left to wrap; the
+  error message points at `Page<T>.rawResponse()` as the supported way to
+  get per-fetch metadata. `RipResponse<Page<T>>` is not itself rejected as
+  a type (nothing stops it compiling), but is documented as unnecessary
+  now that `Page<T>` carries its own `rawResponse()`.
 
 ## 8. Interaction with existing features
 
@@ -608,15 +653,18 @@ the only option, not a stylistic choice:
 
 ## 11. Open questions
 
-- **`RipResponse<Page<T>>`?** Does a consumer ever need the raw
-  `HttpResponse` alongside a page (status code, all headers) rather than
-  just the decoded items - and if so, does `RipResponse<T>`'s existing
-  wrapping compose with `Page<T>` cleanly, or does `Page<T>` need its own
-  `rawResponse()`-style accessor mirroring `PaginationContext<T>`'s?
-- **Async pagination.** This design is sync-only (`Page<T>.next()` blocks;
-  `Stream<T>`/`Iterator<T>` block on each internal advance). A
-  `CompletableFuture`-driven equivalent (an async `Publisher`-like shape)
-  is a real, plausible future need but adds real complexity - deliberately
+- ~~**`RipResponse<Page<T>>`?**~~ **Resolved (§6.4.1)**: `Page<T>` gets its
+  own `rawResponse()` accessor, correct across the whole iteration instead
+  of just page 1; `RipResponse<Page<T>>` is deliberately not supported,
+  and `RipResponse<Stream<T>>`/`RipResponse<Iterator<T>>` are rejected at
+  validation time since auto-flattening leaves no single response to wrap.
+- **Async pagination - partially resolved (§6.4.1).** `CompletableFuture<Page<T>>`/
+  `CompletableFuture<Stream<T>>`/`CompletableFuture<Iterator<T>>` are
+  supported for an async *first* fetch, matching `CompletableFuture<T>`'s
+  existing behavior elsewhere in RIP. Still open: a fully async iteration
+  protocol (`Page<T>.next()` itself returning a `CompletableFuture<Page<T>>`)
+  is real, plausible future work but a materially bigger feature than
+  "the first call can be async like any other RIP call" - deliberately
   deferred rather than guessed at now, consistent with parking the whole
   feature until usage was concrete enough to design against.
 - **`MockRestServer` multi-page fixtures.** Testing a paginated fetch needs
