@@ -1826,6 +1826,48 @@ class CompileTimeValidationTest {
 		assertNoErrors(diagnostics);
 	}
 
+	@Test
+	void paginatedStreamReturn_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedStreamApi", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedStreamApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Stream<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedStreamApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginatedRipResponseWrappingIterator_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseIterator", "" //
+				+ "import java.util.Iterator;\n" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseIterator {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<Iterator<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns RipResponse<Iterator<T>>, which is not supported");
+	}
+
 	private List<Diagnostic<? extends JavaFileObject>> compile(String className, String source) throws IOException {
 		JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();

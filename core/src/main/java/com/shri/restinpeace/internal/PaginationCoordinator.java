@@ -4,9 +4,15 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -53,21 +59,21 @@ final class PaginationCoordinator {
 
 	/**
 	 * Resolves a {@code @Paginated} method's item type {@code T} from its
-	 * {@code Page<T>} return type - assumes the method already passed
-	 * {@code ReflectiveRestClientValidator}, which guarantees the return
-	 * type actually is a parameterized {@code Page<T>}.
+	 * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} return type -
+	 * assumes the method already passed {@code ReflectiveRestClientValidator},
+	 * which guarantees the return type actually is one of those, parameterized.
 	 */
 	Type resolveItemType(Method method) {
 		Type genericReturnType = method.getGenericReturnType();
 		if (!(genericReturnType instanceof ParameterizedType)) {
-			throw new RestInPeaceException(
-					String.format("The method %s returns a raw Page with no type parameter.", method));
+			throw new RestInPeaceException(String.format("The method %s returns a raw %s with no type parameter.",
+					method, method.getReturnType().getSimpleName()));
 		}
 		Type itemType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
 		if (!(itemType instanceof Class) && !(itemType instanceof ParameterizedType)) {
 			throw new RestInPeaceException(
-					String.format("The method %s returns Page<%s>, which is not a supported type parameter.", method,
-							itemType));
+					String.format("The method %s returns %s<%s>, which is not a supported type parameter.", method,
+							method.getReturnType().getSimpleName(), itemType));
 		}
 		return itemType;
 	}
@@ -106,6 +112,80 @@ final class PaginationCoordinator {
 			Class<?> errorType, Object[] initialArgs,
 			BiFunction<Object[], String, HttpResponse<String>> pageFetch) {
 		return fetchPage(method, paginated, itemType, cursorParamIndex, errorType, initialArgs, null, 0, 0, pageFetch);
+	}
+
+	/**
+	 * Lazily flattens every page into one {@link Iterator} - the first page
+	 * isn't fetched until the first {@link Iterator#hasNext()}/{@link Iterator#next()}
+	 * call, matching ordinary lazy-iterator/lazy-stream semantics (no I/O at
+	 * construction time). Each underlying page fetch still goes through the
+	 * exact same pipeline as {@link #fetchFirstPage}/{@link Page#next()}.
+	 *
+	 * @param firstPageSupplier fetches the first page, called at most once,
+	 *                          on first use
+	 * @return an iterator over every item across every page
+	 */
+	Iterator<Object> flatten(Supplier<Page<Object>> firstPageSupplier) {
+		return new PageItemIterator(firstPageSupplier);
+	}
+
+	/**
+	 * The {@link java.util.stream.Stream} counterpart of {@link #flatten} -
+	 * built directly on top of it, since a {@code Stream} is just a richer
+	 * view over the same lazy iteration.
+	 *
+	 * @param firstPageSupplier fetches the first page, called at most once,
+	 *                          on first use (i.e. the stream's first terminal
+	 *                          operation)
+	 * @return a stream over every item across every page
+	 */
+	Stream<Object> flattenToStream(Supplier<Page<Object>> firstPageSupplier) {
+		Iterator<Object> iterator = flatten(firstPageSupplier);
+		return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false);
+	}
+
+	/**
+	 * Walks every page's {@link Page#items()} in order, calling
+	 * {@link Page#next()} to advance once the current page's items are
+	 * exhausted, until {@link Page#hasNext()} is {@code false}.
+	 */
+	private static final class PageItemIterator implements Iterator<Object> {
+
+		private final Supplier<Page<Object>> firstPageSupplier;
+		private Page<Object> currentPage;
+		private Iterator<Object> currentPageItems;
+		private boolean started;
+
+		PageItemIterator(Supplier<Page<Object>> firstPageSupplier) {
+			this.firstPageSupplier = firstPageSupplier;
+		}
+
+		private void ensureStarted() {
+			if (!started) {
+				currentPage = firstPageSupplier.get();
+				currentPageItems = currentPage.items().iterator();
+				started = true;
+			}
+		}
+
+		@Override
+		public boolean hasNext() {
+			ensureStarted();
+			while (!currentPageItems.hasNext() && currentPage.hasNext()) {
+				currentPage = currentPage.next();
+				currentPageItems = currentPage.items().iterator();
+			}
+			return currentPageItems.hasNext();
+		}
+
+		@Override
+		public Object next() {
+			if (!hasNext()) {
+				throw new NoSuchElementException();
+			}
+			return currentPageItems.next();
+		}
+
 	}
 
 	private Page<Object> fetchPage(Method method, Paginated paginated, Type itemType, int cursorParamIndex,

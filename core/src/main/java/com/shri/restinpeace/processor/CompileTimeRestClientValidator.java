@@ -441,26 +441,39 @@ final class CompileTimeRestClientValidator {
 	private static void validatePaginated(ExecutableElement method, String url, Types types, Reporter reporter) {
 		Paginated paginated = method.getAnnotation(Paginated.class);
 		TypeMirror returnType = method.getReturnType();
-		boolean returnsPage = returnType.getKind() == TypeKind.DECLARED
-				&& "com.shri.restinpeace.Page".equals(types.erasure(returnType).toString());
+		boolean isDeclared = returnType.getKind() == TypeKind.DECLARED;
+		String rawReturnTypeName = isDeclared ? types.erasure(returnType).toString() : "";
+		boolean returnsPage = isDeclared && "com.shri.restinpeace.Page".equals(rawReturnTypeName);
+		boolean returnsStream = isDeclared && "java.util.stream.Stream".equals(rawReturnTypeName);
+		boolean returnsIterator = isDeclared && "java.util.Iterator".equals(rawReturnTypeName);
+		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator;
 
-		if (returnsPage && paginated == null) {
-			reporter.error(String.format("The method %s returns Page<T> but is not annotated with @Paginated.",
-					qualifiedName(method)), method);
+		if (returnsSupportedType && paginated == null) {
+			reporter.error(String.format("The method %s returns %s<T> but is not annotated with @Paginated.",
+					qualifiedName(method), simpleTypeName(rawReturnTypeName)), method);
 			return;
 		}
 		if (paginated == null) {
 			return;
 		}
-		if (!returnsPage) {
+		if (isDeclared && "com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+				&& streamOrIteratorInnerName(returnType, types) != null) {
 			reporter.error(String.format(
-					"The method %s is annotated with @Paginated but does not return Page<T> - Stream<T>/Iterator<T> "
-							+ "auto-flattening and an async CompletableFuture<Page<T>> first fetch are not "
-							+ "implemented yet.",
+					"The method %s is annotated with @Paginated and returns RipResponse<%s<T>>, which is not "
+							+ "supported - auto-flattening spans an unknown number of underlying calls, so there is "
+							+ "no single response to wrap; use Page<T> and its rawResponse() instead.",
+					qualifiedName(method), streamOrIteratorInnerName(returnType, types)), method);
+			return;
+		}
+		if (!returnsSupportedType) {
+			reporter.error(String.format(
+					"The method %s is annotated with @Paginated but does not return Page<T>, Stream<T>, or "
+							+ "Iterator<T> - wrapping in CompletableFuture is not implemented yet.",
 					qualifiedName(method)), method);
 			return;
 		}
-		validateParameterizedReturnType(method, (DeclaredType) returnType, "Page", false, types, reporter);
+		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+		validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 
 		// Only reported when there's no static URL - validateUrlParam already reports
 		// a more specific "has both a @Url parameter and a static URL" error for that
@@ -507,6 +520,31 @@ final class CompileTimeRestClientValidator {
 		for (VariableElement cursorParam : cursorParams) {
 			validatePaginationCursorParam(method, cursorParam, reporter);
 		}
+	}
+
+	private static String simpleTypeName(String qualifiedName) {
+		int lastDot = qualifiedName.lastIndexOf('.');
+		return lastDot < 0 ? qualifiedName : qualifiedName.substring(lastDot + 1);
+	}
+
+	/**
+	 * "Stream"/"Iterator" if {@code ripResponseType}'s (a {@code RipResponse<T>}
+	 * return type) {@code T} is itself {@code Stream<?>}/{@code Iterator<?>},
+	 * else {@code null} - see §7's dedicated rejection for that shape.
+	 */
+	private static String streamOrIteratorInnerName(TypeMirror ripResponseType, Types types) {
+		List<? extends TypeMirror> typeArguments = ((DeclaredType) ripResponseType).getTypeArguments();
+		if (typeArguments.isEmpty() || typeArguments.get(0).getKind() != TypeKind.DECLARED) {
+			return null;
+		}
+		String innerRawTypeName = types.erasure(typeArguments.get(0)).toString();
+		if ("java.util.stream.Stream".equals(innerRawTypeName)) {
+			return "Stream";
+		}
+		if ("java.util.Iterator".equals(innerRawTypeName)) {
+			return "Iterator";
+		}
+		return null;
 	}
 
 	private static void validatePaginatedValuePointer(ExecutableElement method, Paginated paginated,

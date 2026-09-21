@@ -1,5 +1,8 @@
 package com.shri.restinpeace.mock;
 
+import java.util.Iterator;
+import java.util.stream.Stream;
+
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
@@ -11,9 +14,11 @@ import com.shri.restinpeace.annotation.request.QueryParam;
 
 /**
  * A {@code @Paginated} test fixture against a real {@link MockRestServer} -
- * covers the chunk-2-supported shapes: a {@code VALUE} query-param cursor,
- * a {@code FULL_URL} pointer, and the {@code hasMore}/{@code total}
- * termination signals (§6.5 of {@code docs/design/pagination-helper.md}).
+ * covers a {@code VALUE} query-param cursor, a {@code FULL_URL} pointer, the
+ * {@code hasMore}/{@code total} termination signals (§6.5 of
+ * {@code docs/design/pagination-helper.md}), and the {@code Page<T>}/
+ * {@code Stream<T>}/{@code Iterator<T>} return-type-driven iteration styles
+ * (§6.4).
  */
 @RestClient
 public interface PaginationTestApi {
@@ -47,6 +52,14 @@ public interface PaginationTestApi {
 	@GET("/orders")
 	@Paginated(itemsField = "orders", pointerField = "next_seq")
 	Page<Order> listOrdersByLongCursor(@QueryParam("seq") @PaginationCursor long seq);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerField = "next_cursor")
+	Stream<Order> streamOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerField = "next_cursor")
+	Iterator<Order> iterateOrders(@QueryParam("cursor") @PaginationCursor String cursor);
 
 	final class Order {
 		public String id;

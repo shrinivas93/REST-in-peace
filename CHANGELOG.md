@@ -26,9 +26,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reflective proxy. See `docs/design/pagination-helper.md` for the full
   design, every default, and exactly which of its 46 cataloged real-world
   pagination shapes this chunk covers - an `@Body` cursor carrier, keyset
-  pagination, client-driven advancement, `Stream<T>`/`Iterator<T>`
-  auto-flattening, a programmatic `PaginationStrategy<T>` escape hatch, and
-  an async first fetch land in later chunks.
+  pagination, client-driven advancement, a programmatic
+  `PaginationStrategy<T>` escape hatch, and an async first fetch land in
+  later chunks.
+- `@Paginated` also supports `Stream<T>`/`Iterator<T>` return types, lazily
+  auto-flattening every page into one sequence instead of managing pages by
+  hand via `Page<T>` - a pure wrapper over the same `Page<T>` chain, with no
+  new fetch logic. Unlike `Page<T>`, which fetches its first page eagerly
+  like any other RIP call, `Stream<T>`/`Iterator<T>` fetch nothing until the
+  first `hasNext()`/terminal stream operation, matching ordinary
+  lazy-iterator/lazy-stream semantics. `RipResponse<Stream<T>>`/
+  `RipResponse<Iterator<T>>` are rejected at validation time - auto-flattened
+  iteration spans an unknown number of underlying calls, so there is no
+  single response left to wrap; use `Page<T>` and its `rawResponse()`
+  instead.
 
 ## [1.0.0.48] - 2026-09-20
 

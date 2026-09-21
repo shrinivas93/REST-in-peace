@@ -872,13 +872,14 @@ up.
       `CircuitBreakerConfig`/`CircuitBreakerProvider`'s build-your-own-
       default-pluggable-override shape) for the residue no closed
       annotation vocabulary can ever fully anticipate. Chunked rollout
-      plan in the doc's §12; chunk 2 has landed (`@Paginated`,
-      `@PaginationCursor`, `Page<T>`, `FULL_URL`/`VALUE` pointers via
+      plan in the doc's §12; chunks 2-3 have landed (`@Paginated`,
+      `@PaginationCursor`, `Page<T>`, `Stream<T>`/`Iterator<T>` lazy
+      auto-flattening, `FULL_URL`/`VALUE` pointers via
       `@QueryParam`/`@PathParam`/`@HeaderParam`, `hasMore`/`total`/
-      `totalPages` termination signals, synchronous only) - chunks 3-9
+      `totalPages` termination signals, synchronous only) - chunks 4-9
       (an `@Body` carrier, keyset pagination, client-driven advancement,
-      `Stream<T>`/`Iterator<T>`, `PaginationStrategy<T>`, an async first
-      fetch, `MockRestServer` multi-page fixtures) remain unstarted.
+      `PaginationStrategy<T>`, an async first fetch, `MockRestServer`
+      multi-page fixtures) remain unstarted.
 - [x] **Spring integration module** — auto-registers every `@RestClient`
       interface found on the classpath as a bean, the way OpenFeign
       integrates with Spring Cloud, via the optional

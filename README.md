@@ -915,6 +915,24 @@ the pointer populated even on the genuinely last page. `page.rawResponse()`
 returns that page's own `RipResponse<Void>` (status/headers, no body —
 `page.items()` already has the content).
 
+Declare `Stream<T>`/`Iterator<T>` instead of `Page<T>` on the exact same
+method to auto-flatten every page into one lazy sequence, instead of
+managing pages by hand:
+
+```java
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Stream<Order> streamOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+
+```java
+orderApi.streamOrders(null).forEach(this::process);   // fetches pages on demand as the stream is consumed
+```
+
+Both are lazy — no network call happens until the first `hasNext()`
+(`Iterator<T>`) or terminal stream operation, unlike `Page<T>` itself,
+which fetches its first page eagerly like any other RIP call.
+
 This is an incrementally-landing feature — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
 the full design, an exhaustive 46-row catalogue of real-world pagination
@@ -922,12 +940,11 @@ shapes, the programmatic `PaginationStrategy<T>` escape hatch for whatever
 a closed annotation vocabulary can't express, and exactly which shapes are
 implemented so far. As of now: a `VALUE`/`FULL_URL` pointer sourced from the
 response body/headers, resent via `@QueryParam`/`@PathParam`/
-`@HeaderParam`, and a synchronous `Page<T>` return type only —
-`RIP.getClient(...)` rejects an unsupported shape (an `@Body` cursor
+`@HeaderParam`, and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>` return
+type — `RIP.getClient(...)` rejects an unsupported shape (an `@Body` cursor
 carrier, keyset/`ITEM_FIELD` pagination, client-driven `advance`,
-`Stream<T>`/`Iterator<T>` auto-flattening, `PaginationStrategy<T>`, an
-async first fetch) by name, naming the rollout chunk that adds it, rather
-than silently misbehaving.
+`PaginationStrategy<T>`, an async first fetch) by name, naming the rollout
+chunk that adds it, rather than silently misbehaving.
 
 ## Error handling
 

@@ -1,18 +1,21 @@
 # Design: Pagination helper
 
-Status: **chunk 2 of the rollout plan (§12) has landed.** `@Paginated`,
-`@PaginationCursor`, `Page<T>`, and the three enums in §6.1 are real code -
-a `PointerKind.FULL_URL` or `VALUE` pointer sourced from
-`PaginationSignalSource.RESPONSE_BODY`/`RESPONSE_HEADER`, resent via
-`@QueryParam`/`@PathParam`/`@HeaderParam`, with `hasMoreSource`/
-`totalSource`/`totalPagesSource` termination signals, synchronous only.
-Everything else in this doc - an `@Body` carrier, `ITEM_FIELD` keyset
-pagination, `PaginationAdvance` client-driven advancement,
-`Stream<T>`/`Iterator<T>` auto-flattening, `PaginationStrategy<T>`, an
-async first fetch, and `MockRestServer` multi-page fixtures - is still
-design only, chunked per §12; `RIP.getClient(...)` rejects a method using
-one of those not-yet-supported shapes by name rather than silently
-misbehaving. The feature was previously parked (see `ROADMAP.md`) after a
+Status: **chunks 2-3 of the rollout plan (§12) have landed.** `@Paginated`,
+`@PaginationCursor`, `Page<T>`, `Stream<T>`/`Iterator<T>` auto-flattening,
+and the three enums in §6.1 are real code - a `PointerKind.FULL_URL` or
+`VALUE` pointer sourced from `PaginationSignalSource.RESPONSE_BODY`/
+`RESPONSE_HEADER`, resent via `@QueryParam`/`@PathParam`/`@HeaderParam`,
+with `hasMoreSource`/`totalSource`/`totalPagesSource` termination signals,
+synchronous only. A `Stream<T>`/`Iterator<T>` return type is lazy - the
+first page (and every page after it) is only fetched on first use, matching
+ordinary lazy-iterator/lazy-stream semantics; `Page<T>` still fetches its
+first page eagerly, like any other RIP call. Everything else in this doc -
+an `@Body` carrier, `ITEM_FIELD` keyset pagination, `PaginationAdvance`
+client-driven advancement, `PaginationStrategy<T>`, an async first fetch,
+and `MockRestServer` multi-page fixtures - is still design only, chunked
+per §12; `RIP.getClient(...)` rejects a method using one of those
+not-yet-supported shapes by name rather than silently misbehaving. The
+feature was previously parked (see `ROADMAP.md`) after a
 first sketch (a fixed `Page<T>` interface with `getItems()`/
 `getNextUrl()`) turned out not to be generic enough for how differently
 real APIs shape pagination. This doc replaces that sketch with a design
@@ -712,8 +715,11 @@ chunk its own PR, verified and merged before the next starts.
    only partially - a header whose raw value *is* the next URL works today,
    but RFC 5988 `rel="next"` parsing of a real `Link` header is chunk 6's
    job, not this one's.
-3. **`Stream<T>`/`Iterator<T>` auto-flatten** on top of chunk 2 - pure
-   wrapper, no new fetch logic.
+3. **`Stream<T>`/`Iterator<T>` auto-flatten** on top of chunk 2. Landed.
+   A pure wrapper over the existing `Page<T>` chain, no new fetch logic -
+   both return types are lazy (no page fetched until the first
+   `hasNext()`/terminal stream operation), unlike `Page<T>` itself, which
+   still fetches its first page eagerly like any other RIP call.
 4. **`@Body Map<String,Object>` + `bodyField` carrier**, including
    composite-keyset-into-one-body-field. Covers rows 3, 11, 16, 17, 29,
    36, 43, 46.
