@@ -70,6 +70,7 @@ test server for unit tests.
   - [Generic collection return types: `List<User>`](#generic-collection-return-types-listuser)
   - [Binary downloads: `byte[]` and `File`](#binary-downloads-byte-and-file)
   - [Response headers and status: `RipResponse<T>`](#response-headers-and-status-ripresponset)
+- [Pagination](#pagination)
 - [Error handling](#error-handling)
 - [Async](#async)
 - [Retries](#retries)
@@ -189,6 +190,10 @@ for what actually happens under `getUser(...)`.
   reporting
 - `RipResponse<T>` wraps `T` with the response's status code and headers,
   for a method that needs more than just the body
+- `@Paginated` follows a next-page pointer automatically into a `Page<T>`,
+  reusing the client's full `@Retry`/cache/circuit-breaker/interceptor
+  pipeline for every page fetch; see [Pagination](#pagination) for what's
+  implemented so far
 - A non-2xx response always throws `RestInPeaceHttpException`, with
   `@ErrorType` to deserialize the error body into a class
 - `CompletableFuture<T>` return types fire requests asynchronously
@@ -872,6 +877,57 @@ raw body, `Void` to discard it, anything else deserialized from JSON).
 `RipResponse<T>` only ever wraps a successful response — a non-2xx status
 still throws `RestInPeaceHttpException` as described below, it's never
 wrapped.
+
+## Pagination
+
+`@Paginated` follows a next-page pointer automatically instead of leaving
+the fetch-extract-repeat loop to hand-written code:
+
+```java
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+
+```java
+Page<Order> page = orderApi.listOrders(null);
+while (true) {
+    for (Order order : page.items()) {
+        process(order);
+    }
+    if (!page.hasNext()) {
+        break;
+    }
+    page = page.next();       // re-fetches through @Retry/cache/circuit breaker/interceptors, same as any call
+}
+```
+
+`page.next()` re-invokes the exact same method, substituting only the
+`@QueryParam`/`@PathParam`/`@HeaderParam` parameter marked
+`@PaginationCursor` with the freshly extracted value — every other argument
+stays exactly as first supplied. `pointerKind = PointerKind.FULL_URL`
+instead follows an extracted absolute URL verbatim (no `@PaginationCursor`
+parameter at all), the same way an `@Url` parameter would. `hasMoreSource`/
+`totalSource`/`totalPagesSource` (`RESPONSE_BODY` or `RESPONSE_HEADER`) let
+a `has_more` boolean or a total-count comparison decide termination instead
+of "the pointer is gone" — needed for an API (Stripe's, for one) that keeps
+the pointer populated even on the genuinely last page. `page.rawResponse()`
+returns that page's own `RipResponse<Void>` (status/headers, no body —
+`page.items()` already has the content).
+
+This is an incrementally-landing feature — see
+[`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
+the full design, an exhaustive 46-row catalogue of real-world pagination
+shapes, the programmatic `PaginationStrategy<T>` escape hatch for whatever
+a closed annotation vocabulary can't express, and exactly which shapes are
+implemented so far. As of now: a `VALUE`/`FULL_URL` pointer sourced from the
+response body/headers, resent via `@QueryParam`/`@PathParam`/
+`@HeaderParam`, and a synchronous `Page<T>` return type only —
+`RIP.getClient(...)` rejects an unsupported shape (an `@Body` cursor
+carrier, keyset/`ITEM_FIELD` pagination, client-driven `advance`,
+`Stream<T>`/`Iterator<T>` auto-flattening, `PaginationStrategy<T>`, an
+async first fetch) by name, naming the rollout chunk that adds it, rather
+than silently misbehaving.
 
 ## Error handling
 
