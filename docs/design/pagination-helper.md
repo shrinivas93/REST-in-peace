@@ -1,13 +1,31 @@
 # Design: Pagination helper
 
-Status: **design doc only - nothing implemented yet.** This is chunk 1 of
-the rollout plan in §12. The feature was previously parked (see
-`ROADMAP.md`) after a first sketch (a fixed `Page<T>` interface with
-`getItems()`/`getNextUrl()`) turned out not to be generic enough for how
-differently real APIs shape pagination. This doc replaces that sketch with
-a design built from a deliberately exhaustive survey of real-world
-pagination conventions (§5, 46 cataloged variants) plus a programmatic
-escape hatch (§6.8) for whatever that survey still doesn't cover.
+Status: **chunk 2 of the rollout plan (§12) has landed.** `@Paginated`,
+`@PaginationCursor`, `Page<T>`, and the three enums in §6.1 are real code -
+a `PointerKind.FULL_URL` or `VALUE` pointer sourced from
+`PaginationSignalSource.RESPONSE_BODY`/`RESPONSE_HEADER`, resent via
+`@QueryParam`/`@PathParam`/`@HeaderParam`, with `hasMoreSource`/
+`totalSource`/`totalPagesSource` termination signals, synchronous only.
+Everything else in this doc - an `@Body` carrier, `ITEM_FIELD` keyset
+pagination, `PaginationAdvance` client-driven advancement,
+`Stream<T>`/`Iterator<T>` auto-flattening, `PaginationStrategy<T>`, an
+async first fetch, and `MockRestServer` multi-page fixtures - is still
+design only, chunked per §12; `RIP.getClient(...)` rejects a method using
+one of those not-yet-supported shapes by name rather than silently
+misbehaving. The feature was previously parked (see `ROADMAP.md`) after a
+first sketch (a fixed `Page<T>` interface with `getItems()`/
+`getNextUrl()`) turned out not to be generic enough for how differently
+real APIs shape pagination. This doc replaces that sketch with a design
+built from a deliberately exhaustive survey of real-world pagination
+conventions (§5, 46 cataloged variants) plus a programmatic escape hatch
+(§6.8) for whatever that survey still doesn't cover.
+
+**Implementation note (§6.4.1):** `Page<T>.rawResponse()` returns
+`RipResponse<Void>`, not the `HttpResponse<?>` sketched in §6.4's original
+snippet - RIP's own status/headers vocabulary (already used everywhere
+else in the public API) instead of leaking the underlying `kong.unirest`
+client type. Its body is always `null` since `Page<T>.items()` already
+carries the page's decoded content.
 
 ## 1. Problem
 
@@ -238,8 +256,8 @@ picks sync vs. async elsewhere in RIP:
 public interface Page<T> {
     List<T> items();
     boolean hasNext();
-    Page<T> next();               // blocking fetch of the next page, through the full call pipeline
-    HttpResponse<?> rawResponse(); // status/headers of the call that produced THIS page - see §6.4.1
+    Page<T> next();                 // blocking fetch of the next page, through the full call pipeline
+    RipResponse<Void> rawResponse(); // status/headers of the call that produced THIS page - see §6.4.1
 }
 ```
 
@@ -683,14 +701,17 @@ the only option, not a stylistic choice:
 Mirrors the chunking convention the other three design docs use - each
 chunk its own PR, verified and merged before the next starts.
 
-1. **This design doc.**
-2. **`NEXT_URL` pointer style + `Page<T>`, sync only.** `@Paginated`,
+1. **This design doc.** Landed.
+2. **`NEXT_URL` pointer style + `Page<T>`, sync only.** Landed. `@Paginated`,
    `@PaginationCursor` (query/path/header carriers only - `@Body` deferred
    to its own chunk), `PointerKind.FULL_URL` and `PointerKind.VALUE`,
-   §6.5's termination precedence (`hasMoreSource`/`totalSource` included -
-   they're cheap scalar reads off the same parsed tree the two-phase
-   decode already builds, no reason to defer them). Covers §9 rows 1-2,
-   9-10, 20-22.
+   §6.5's termination precedence (`hasMoreSource`/`totalSource`/
+   `totalPagesSource` included - they're cheap scalar reads off the same
+   parsed tree the two-phase decode already builds, no reason to defer
+   them). Covers §9 rows 9-10, 20-22 fully; row 1 (GitHub's `Link` header)
+   only partially - a header whose raw value *is* the next URL works today,
+   but RFC 5988 `rel="next"` parsing of a real `Link` header is chunk 6's
+   job, not this one's.
 3. **`Stream<T>`/`Iterator<T>` auto-flatten** on top of chunk 2 - pure
    wrapper, no new fetch logic.
 4. **`@Body Map<String,Object>` + `bodyField` carrier**, including

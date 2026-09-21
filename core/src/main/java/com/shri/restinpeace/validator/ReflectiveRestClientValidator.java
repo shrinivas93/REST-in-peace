@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.shri.restinpeace.Page;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -33,18 +34,25 @@ import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
 import com.shri.restinpeace.annotation.method.meta.HTTPMethodMarker;
+import com.shri.restinpeace.annotation.pagination.Paginated;
+import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
+import com.shri.restinpeace.annotation.pagination.PaginationCursor;
+import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
+import com.shri.restinpeace.annotation.pagination.PointerKind;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.Field;
 import com.shri.restinpeace.annotation.request.FieldMap;
 import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
+import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
@@ -164,6 +172,7 @@ public class ReflectiveRestClientValidator {
 					}
 					validateBody(method, httpMethod, validationResult);
 					validateReturnType(method, validationResult);
+					validatePaginated(method, validationResult);
 					validateRetry(method, validationResult);
 					validateMapParam(method, QueryMap.class, "@QueryMap", validationResult);
 					validateMapParam(method, HeaderMap.class, "@HeaderMap", validationResult);
@@ -385,6 +394,172 @@ public class ReflectiveRestClientValidator {
 					"The method %s.%s returns RipResponse<File>, which is not supported - use a plain File return "
 							+ "type with @Destination instead.",
 					method.getDeclaringClass().getName(), method.getName()));
+		}
+	}
+
+	/**
+	 * Validates a {@code @Paginated} method - the chunk-2-supported subset of
+	 * {@code docs/design/pagination-helper.md} §7: {@link PointerKind#FULL_URL}/
+	 * {@link PointerKind#VALUE} pointers sourced from
+	 * {@link PaginationSignalSource#RESPONSE_BODY}/{@link PaginationSignalSource#RESPONSE_HEADER},
+	 * resent via a single {@code @QueryParam}/{@code @PathParam}/
+	 * {@code @HeaderParam} {@code @PaginationCursor}, and a synchronous
+	 * {@code Page<T>} return type. Every not-yet-implemented shape (an
+	 * {@code @Body} carrier, {@code ITEM_FIELD}/keyset, client-driven
+	 * {@code advance}, composite pointers, {@code Stream<T>}/
+	 * {@code Iterator<T>}/{@code CompletableFuture<Page<T>>}) is rejected by
+	 * name rather than silently misbehaving at call time.
+	 */
+	private static void validatePaginated(Method method, ValidationResult validationResult) {
+		Paginated paginated = method.getAnnotation(Paginated.class);
+		boolean returnsPage = method.getReturnType() == Page.class;
+
+		if (returnsPage && paginated == null) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns Page<T> but is not annotated with @Paginated.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		if (paginated == null) {
+			return;
+		}
+		if (!returnsPage) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Paginated but does not return Page<T> - "
+							+ "Stream<T>/Iterator<T> auto-flattening and an async CompletableFuture<Page<T>> first "
+							+ "fetch are not implemented yet.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		validateParameterizedReturnType(method, method.getGenericReturnType(), "Page", false, validationResult);
+
+		if (hasUrlParam(method)) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with both @Paginated and @Url - remove one or the other.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		List<Parameter> cursorParams = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getAnnotation(PaginationCursor.class) != null)
+				.collect(Collectors.toList());
+
+		if (paginated.advance() != PaginationAdvance.NONE) {
+			validationResult.addError(String.format(
+					"The method %s.%s's @Paginated sets advance() but client-driven advancement is not "
+							+ "implemented yet (rollout chunk 7).",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (paginated.pointerKind() == PointerKind.FULL_URL) {
+			if (!cursorParams.isEmpty()) {
+				validationResult.addError(String.format(
+						"The method %s.%s's @Paginated has pointerKind = FULL_URL but also has a "
+								+ "@PaginationCursor parameter - a full URL is followed as-is, with nothing to inject.",
+						method.getDeclaringClass().getName(), method.getName()));
+			}
+			validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", validationResult);
+		} else {
+			validatePaginatedValuePointer(method, paginated, cursorParams, validationResult);
+		}
+
+		validatePaginationSignal(method, paginated.hasMoreSource(), paginated.hasMoreField(), "hasMoreSource",
+				"hasMoreField", validationResult);
+		validatePaginationSignal(method, paginated.totalSource(), paginated.totalField(), "totalSource", "totalField",
+				validationResult);
+		validatePaginationSignal(method, paginated.totalPagesSource(), paginated.totalPagesField(), "totalPagesSource",
+				"totalPagesField", validationResult);
+
+		for (Parameter cursorParam : cursorParams) {
+			validatePaginationCursorParam(method, cursorParam, validationResult);
+		}
+	}
+
+	private static void validatePaginatedValuePointer(Method method, Paginated paginated,
+			List<Parameter> cursorParams, ValidationResult validationResult) {
+		PaginationSignalSource source = paginated.pointerSource();
+		if (source == PaginationSignalSource.NONE) {
+			validationResult.addError(String.format(
+					"The method %s.%s's @Paginated has pointerSource = NONE, which needs advance() to be set - "
+							+ "client-driven advancement is not implemented yet (rollout chunk 7).",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		if (source == PaginationSignalSource.ITEM_FIELD) {
+			validationResult.addError(String.format(
+					"The method %s.%s's @Paginated has pointerSource = ITEM_FIELD (keyset pagination), which is "
+							+ "not implemented yet (rollout chunk 5).",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", validationResult);
+		if (paginated.pointerField().contains(",")) {
+			validationResult.addError(String.format(
+					"The method %s.%s's @Paginated has a comma-separated pointerField - a composite pointer is "
+							+ "only supported for pointerSource = ITEM_FIELD, which is not implemented yet "
+							+ "(rollout chunk 5).",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+		if (cursorParams.size() != 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s's @Paginated has pointerKind = VALUE with pointerSource != NONE, which "
+							+ "needs exactly one @PaginationCursor parameter - found %d.",
+					method.getDeclaringClass().getName(), method.getName(), cursorParams.size()));
+		}
+	}
+
+	private static void validatePaginationSignal(Method method, PaginationSignalSource source, String field,
+			String sourceAttributeName, String fieldAttributeName, ValidationResult validationResult) {
+		if (source == PaginationSignalSource.NONE) {
+			return;
+		}
+		if (source == PaginationSignalSource.ITEM_FIELD) {
+			validationResult.addError(String.format(
+					"The method %s.%s's @Paginated sets %s = ITEM_FIELD, which is only meaningful for "
+							+ "pointerSource.",
+					method.getDeclaringClass().getName(), method.getName(), sourceAttributeName));
+			return;
+		}
+		validatePaginationFieldNonEmpty(method, field, fieldAttributeName, validationResult);
+	}
+
+	private static void validatePaginationFieldNonEmpty(Method method, String field, String attributeName,
+			ValidationResult validationResult) {
+		if (field.isEmpty()) {
+			validationResult.addError(String.format("The method %s.%s's @Paginated must set %s.",
+					method.getDeclaringClass().getName(), method.getName(), attributeName));
+		}
+	}
+
+	private static void validatePaginationCursorParam(Method method, Parameter cursorParam,
+			ValidationResult validationResult) {
+		if (method.getAnnotation(Paginated.class) == null) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @PaginationCursor parameter but is not annotated with @Paginated.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		boolean onQuery = cursorParam.getAnnotation(QueryParam.class) != null;
+		boolean onPath = cursorParam.getAnnotation(PathParam.class) != null;
+		boolean onHeader = cursorParam.getAnnotation(HeaderParam.class) != null;
+		boolean onBody = cursorParam.getAnnotation(Body.class) != null;
+		int carrierCount = (onQuery ? 1 : 0) + (onPath ? 1 : 0) + (onHeader ? 1 : 0) + (onBody ? 1 : 0);
+		if (onBody) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @PaginationCursor stacked on @Body, which is not implemented yet "
+							+ "(rollout chunk 4) - use @QueryParam/@PathParam/@HeaderParam instead.",
+					method.getDeclaringClass().getName(), method.getName()));
+		} else if (carrierCount != 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @PaginationCursor parameter that must be stacked on exactly one of "
+							+ "@QueryParam/@PathParam/@HeaderParam.",
+					method.getDeclaringClass().getName(), method.getName()));
+		}
+		Class<?> type = cursorParam.getType();
+		if (type != String.class && type != int.class && type != long.class) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @PaginationCursor parameter of type %s - only String, int, and long "
+							+ "are supported.",
+					method.getDeclaringClass().getName(), method.getName(), type.getName()));
 		}
 	}
 

@@ -1476,6 +1476,48 @@ class CompileTimeValidationTest {
 		assertErrorContains(diagnostics, "has a parameter annotated with @QueryMap that is not a Map");
 	}
 
+	@Test
+	void paginatedInterface_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedApi", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		// Page<T> has a type argument RestClientProcessor doesn't recognize - the
+		// same E9 disqualification a raw List<User> return type already gets - so
+		// this compiles clean but generates no _RipImpl (the method falls all the
+		// way back to the reflective proxy at runtime).
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginatedMethodNotReturningPage_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedWrongReturnType", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedWrongReturnType {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  String listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with @Paginated but does not return Page<T>");
+	}
+
 	private List<Diagnostic<? extends JavaFileObject>> compile(String className, String source) throws IOException {
 		JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();

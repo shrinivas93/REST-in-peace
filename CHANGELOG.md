@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `@Paginated` follows a next-page pointer automatically instead of
+  hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for
+  manual, page-at-a-time iteration. `page.next()` re-invokes the exact same
+  method through the client's entire existing call pipeline - `@Retry`,
+  cache, circuit breaker, bulkhead, interceptors - exactly as if it were
+  called again by hand. This chunk supports a `PointerKind.FULL_URL` or
+  `VALUE` pointer sourced from the response body/headers
+  (`PaginationSignalSource.RESPONSE_BODY`/`RESPONSE_HEADER`), resent via a
+  parameter marked `@PaginationCursor` (stacked on `@QueryParam`/
+  `@PathParam`/`@HeaderParam`), plus `hasMoreSource`/`totalSource`/
+  `totalPagesSource` termination signals that take priority over "the
+  pointer is gone" - needed for an API (Stripe's, for one) that keeps the
+  pointer populated even on the genuinely last page. Reflective-only:
+  `Page<T>`'s type argument disqualifies compile-time codegen the same way
+  a raw `List<User>` return type already does, falling back to the
+  reflective proxy. See `docs/design/pagination-helper.md` for the full
+  design, every default, and exactly which of its 46 cataloged real-world
+  pagination shapes this chunk covers - an `@Body` cursor carrier, keyset
+  pagination, client-driven advancement, `Stream<T>`/`Iterator<T>`
+  auto-flattening, a programmatic `PaginationStrategy<T>` escape hatch, and
+  an async first fetch land in later chunks.
+
 ## [1.0.0.48] - 2026-09-20
 
 ### Added
