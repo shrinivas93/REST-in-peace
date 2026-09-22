@@ -985,18 +985,34 @@ header no longer has one:
 Page<Repo> listRepos();
 ```
 
+Not every API gives back a pointer to follow at all — a homegrown endpoint
+might just expect the client to compute the next offset or page number
+itself. Setting `pointerSource = NONE` and `advance` hands that arithmetic
+to RIP: `INCREMENT_BY_PAGE_SIZE` advances the offset by `pageSize` each
+fetch (stopping on a short page if there's no `total`/`totalPages` signal
+to check instead), and `INCREMENT_BY_ONE` advances the page number by one
+(stopping on an empty page absent any other signal):
+
+```java
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+        advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50,
+        totalSource = PaginationSignalSource.RESPONSE_HEADER, totalField = "X-Total-Count")
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+```
+
 This is an incrementally-landing feature — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
 the full design, an exhaustive 46-row catalogue of real-world pagination
 shapes, the programmatic `PaginationStrategy<T>` escape hatch for whatever
 a closed annotation vocabulary can't express, and exactly which shapes are
 implemented so far. As of now: a `VALUE`/`FULL_URL` pointer sourced from the
-response body/headers/last item, resent via `@QueryParam`/`@PathParam`/
-`@HeaderParam`/`@Body`, and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>`
-return type — `RIP.getClient(...)` rejects an unsupported shape
-(client-driven `advance`, `PaginationStrategy<T>`, an async first fetch) by
-name, naming the rollout chunk that adds it, rather than silently
-misbehaving.
+response body/headers/last item, or client-driven `advance` when there's no
+pointer at all, resent via `@QueryParam`/`@PathParam`/`@HeaderParam`/`@Body`,
+and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>` return type —
+`RIP.getClient(...)` rejects an unsupported shape (`PaginationStrategy<T>`,
+an async first fetch) by name, naming the rollout chunk that adds it,
+rather than silently misbehaving.
 
 ## Error handling
 

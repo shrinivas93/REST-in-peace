@@ -32,8 +32,8 @@ import com.shri.restinpeace.exception.RestInPeaceValidationException;
 /**
  * Validation rules for {@code @Paginated}/{@code @PaginationCursor}/
  * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} - the
- * chunk-2/3-supported subset of {@code docs/design/pagination-helper.md} §7
- * (see {@code ReflectiveRestClientValidator.validatePaginated}'s own
+ * chunk-2/3/4/5/7-supported subset of {@code docs/design/pagination-helper.md}
+ * §7 (see {@code ReflectiveRestClientValidator.validatePaginated}'s own
  * javadoc).
  */
 class ReflectiveRestClientValidatorPaginationTest {
@@ -213,6 +213,55 @@ class ReflectiveRestClientValidatorPaginationTest {
 		@GET("http://example.com/orders")
 		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE)
 		Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+	}
+
+	@RestClient
+	public interface AdvanceIncrementByPageSize {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+				advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50, totalField = "total")
+		Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+	}
+
+	@RestClient
+	public interface AdvanceIncrementByOne {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+				advance = PaginationAdvance.INCREMENT_BY_ONE)
+		Page<Order> listOrders(@QueryParam("page") @PaginationCursor int page);
+	}
+
+	@RestClient
+	public interface AdvanceIntoBody {
+		@POST("http://example.com/orders/search")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+				advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50)
+		Page<Order> listOrders(@Body @PaginationCursor(bodyField = "offset") java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface AdvanceIncrementByPageSizeMissingPageSize {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+				advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE)
+		Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+	}
+
+	@RestClient
+	public interface AdvanceWithTwoCursorParams {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+				advance = PaginationAdvance.INCREMENT_BY_ONE)
+		Page<Order> listOrders(@QueryParam("page") @PaginationCursor int page,
+				@HeaderParam("X-Page") @PaginationCursor int pageHeader);
+	}
+
+	@RestClient
+	public interface AdvanceWithNoCursorParams {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+				advance = PaginationAdvance.INCREMENT_BY_ONE)
+		Page<Order> listOrders();
 	}
 
 	@RestClient
@@ -594,11 +643,52 @@ class ReflectiveRestClientValidatorPaginationTest {
 	}
 
 	@Test
-	void validate_advanceSet_throwsWithError() {
+	void validate_advanceSetWithPointerSourceNotNone_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(AdvanceSet.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("sets advance() but client-driven advancement is not implemented yet"));
+				.contains("sets advance() but pointerSource is not NONE"));
+	}
+
+	@Test
+	void validate_advanceIncrementByPageSize_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(AdvanceIncrementByPageSize.class));
+	}
+
+	@Test
+	void validate_advanceIncrementByOne_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(AdvanceIncrementByOne.class));
+	}
+
+	@Test
+	void validate_advanceIntoBody_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(AdvanceIntoBody.class));
+	}
+
+	@Test
+	void validate_advanceIncrementByPageSizeMissingPageSize_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(AdvanceIncrementByPageSizeMissingPageSize.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("needs pageSize() to be a positive number"));
+	}
+
+	@Test
+	void validate_advanceWithTwoCursorParams_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(AdvanceWithTwoCursorParams.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("needs exactly one @PaginationCursor parameter to carry the client-computed "
+						+ "offset/page value - found 2"));
+	}
+
+	@Test
+	void validate_advanceWithNoCursorParams_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(AdvanceWithNoCursorParams.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("needs exactly one @PaginationCursor parameter to carry the client-computed "
+						+ "offset/page value - found 0"));
 	}
 
 	@Test

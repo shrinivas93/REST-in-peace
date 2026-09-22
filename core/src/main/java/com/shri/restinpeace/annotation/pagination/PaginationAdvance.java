@@ -4,12 +4,8 @@ package com.shri.restinpeace.annotation.pagination;
  * How the client advances to the next page on its own, when
  * {@code pointerSource = NONE} (no server-given pointer at all) - offset or
  * page-number arithmetic instead of following an extracted value. See
- * {@code docs/design/pagination-helper.md} §6.1.
- *
- * <p>
- * Not yet implemented (planned rollout chunk 7, §12) -
- * {@code RIP.getClient(...)} currently rejects any value other than
- * {@link #NONE}.
+ * {@code docs/design/pagination-helper.md} §6.1 and §6.5 (rollout chunk 7,
+ * §12).
  */
 public enum PaginationAdvance {
 

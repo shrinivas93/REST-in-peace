@@ -21,19 +21,21 @@ import java.lang.annotation.Target;
  *
  * <p>
  * Landing incrementally per the design doc's rollout plan (§12) - chunks
- * 2-5 support {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE}
+ * 2-5 and 7 support {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE}
  * pointers sourced from {@link PaginationSignalSource#RESPONSE_BODY}/
  * {@link PaginationSignalSource#RESPONSE_HEADER}/
  * {@link PaginationSignalSource#ITEM_FIELD} (keyset pagination, including
  * an N-way composite key), resent via {@code @QueryParam}/
  * {@code @PathParam}/{@code @HeaderParam}/{@code @Body}, with
  * {@code hasMoreSource}/{@code totalSource}/{@code totalPagesSource}
- * termination signals, and a synchronous {@code Page<T>}/{@code Stream<T>}/
- * {@code Iterator<T>} return type. {@link PaginationAdvance} client-driven
- * advancement, {@code PaginationStrategy<T>}, and an async first fetch are
- * not implemented yet - {@code RIP.getClient(...)} rejects a method using
- * one of those shapes, naming what's missing, rather than silently
- * misbehaving at call time.
+ * termination signals, {@link PaginationAdvance} client-driven offset/
+ * page-number advancement when there's no server-given pointer at all
+ * ({@code pointerSource = NONE}), and a synchronous {@code Page<T>}/
+ * {@code Stream<T>}/{@code Iterator<T>} return type.
+ * {@code PaginationStrategy<T>} and an async first fetch are not
+ * implemented yet - {@code RIP.getClient(...)} rejects a method using one
+ * of those shapes, naming what's missing, rather than silently misbehaving
+ * at call time.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -74,7 +76,10 @@ public @interface Paginated {
 
 	/**
 	 * How the client advances when there's no server-given pointer at all
-	 * ({@code pointerSource = NONE}) - not yet implemented.
+	 * ({@code pointerSource = NONE}) - only meaningful together with
+	 * {@code pointerSource = NONE}; a {@code hasMoreSource}/{@code totalSource}/
+	 * {@code totalPagesSource} termination signal, if set, still takes
+	 * precedence over the advance-based fallback (§6.5).
 	 *
 	 * @return the client-driven advancement style
 	 */
@@ -82,7 +87,8 @@ public @interface Paginated {
 
 	/**
 	 * The page size {@link PaginationAdvance#INCREMENT_BY_PAGE_SIZE} advances
-	 * the offset by - not yet implemented.
+	 * the offset by, and - absent any other termination signal - compares
+	 * against the fetched item count to detect a short (final) page.
 	 *
 	 * @return the page size, meaningless unless {@link #advance()} is {@code INCREMENT_BY_PAGE_SIZE}
 	 */

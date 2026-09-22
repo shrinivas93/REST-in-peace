@@ -575,6 +575,100 @@ class PaginationIntegrationTest {
 		assertEquals("2", page1.next().items().get(0).id);
 	}
 
+	@Test
+	void advanceOffsetWithTotal_advancesByPageSizeAndStopsWhenTotalReached() {
+		// Row 6/27/29-31: no pointer at all (pointerSource = NONE) - RIP computes the
+		// next offset itself from pageSize, and totalField (read like any other
+		// termination signal) decides when to stop.
+		server.on(HTTPMethod.GET, "/orders", queryParams("offset", "2"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}],\"total\":3}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"},{\"id\":\"2\"}],\"total\":3}"));
+
+		Page<Order> page1 = api.listOrdersByOffsetWithTotal(0);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext(), "2 fetched < 3 total must keep going");
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("3", page2.items().get(0).id);
+		assertFalse(page2.hasNext(), "3 fetched == 3 total must stop");
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void advancePageNumberWithTotalPages_advancesByOneAndStopsWhenTotalPagesReached() {
+		// Row 32-34: Algolia-style page-count arithmetic - no pointer, RIP just
+		// increments the page number, and totalPagesField decides when to stop.
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"2\"}],\"totalPages\":2}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"totalPages\":2}"));
+
+		Page<Order> page1 = api.listOrdersByPageNumberWithTotalPages(1);
+		assertTrue(page1.hasNext(), "1 page fetched < 2 total pages must keep going");
+
+		Page<Order> page2 = page1.next();
+		assertEquals("2", page2.items().get(0).id);
+		assertFalse(page2.hasNext(), "2 pages fetched == 2 total pages must stop");
+	}
+
+	@Test
+	void advanceOffsetNoSignal_stopsOnAShortPage() {
+		// Row 35/37/38: no hasMore/total/totalPages signal at all - a page shorter
+		// than pageSize is, by construction, the last one (§6.5's advance-based
+		// fallback).
+		server.on(HTTPMethod.GET, "/orders", queryParams("offset", "2"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}]}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"},{\"id\":\"2\"}]}"));
+
+		Page<Order> page1 = api.listOrdersByOffsetShortPageStop(0);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext(), "a full pageSize-sized page must not be assumed to be the last one");
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertFalse(page2.hasNext(), "fewer items than pageSize must be treated as the last page");
+	}
+
+	@Test
+	void advancePageNumberNoSignal_stopsOnAnEmptyPage() {
+		// Row 39/40: page-number-only, no signal at all - falls through to the
+		// unconditional empty-items safety net (§6.5 step 5) to terminate.
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"), MockResponse.ok("{\"orders\":[]}"));
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
+
+		Page<Order> page1 = api.listOrdersByPageNumberNoSignal(1);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertTrue(page2.items().isEmpty());
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void advanceOffsetIntoBody_writesTheComputedOffsetAsAJsonNumber() {
+		// Row 29/36: an advance-computed value written into a @Body carrier is a
+		// real JSON number (not a quoted string like an extracted pointer value),
+		// matching what a numeric field such as Elasticsearch's from/size expects.
+		server.on(HTTPMethod.POST, "/orders/search", request -> request.getBody().contains("\"offset\":2"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}]}"));
+		server.on(HTTPMethod.POST, "/orders/search",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"},{\"id\":\"2\"}]}"));
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("query", "active");
+		Page<Order> page1 = api.searchOrdersByOffsetIntoBody(body);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("3", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
 	private static Map<String, String> queryParams(String name, String value) {
 		Map<String, String> params = new HashMap<>();
 		params.put(name, value);

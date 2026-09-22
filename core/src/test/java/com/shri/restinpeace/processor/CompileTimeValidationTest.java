@@ -1827,7 +1827,7 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void paginatedAdvanceSet_failsCompilation() throws IOException {
+	void paginatedAdvanceSetWithPointerSourceNotNone_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceSet", "" //
 				+ "import com.shri.restinpeace.Page;\n" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
@@ -1843,7 +1843,124 @@ class CompileTimeValidationTest {
 				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "sets advance() but client-driven advancement is not implemented yet");
+		assertErrorContains(diagnostics, "sets advance() but pointerSource is not NONE");
+	}
+
+	@Test
+	void paginatedAdvanceIncrementByPageSize_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIncrementByPageSize", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceIncrementByPageSize {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50, totalField = \"total\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"offset\") @PaginationCursor int offset);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedAdvanceIncrementByOne_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIncrementByOne", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceIncrementByOne {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_ONE)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"page\") @PaginationCursor int page);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedAdvanceIntoBody_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIntoBody", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceIntoBody {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50)\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"offset\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedAdvanceIncrementByPageSizeMissingPageSize_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIncrementByPageSizeMissingPageSize",
+				"" //
+						+ "import com.shri.restinpeace.Page;\n" //
+						+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+						+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+						+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+						+ "@RestClient\n" //
+						+ "public interface AdvanceIncrementByPageSizeMissingPageSize {\n" //
+						+ "  @GET(\"http://localhost/orders\")\n" //
+						+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+						+ "advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE)\n" //
+						+ "  Page<String> listOrders(@QueryParam(\"offset\") @PaginationCursor int offset);\n" //
+						+ "}\n");
+
+		assertErrorContains(diagnostics, "needs pageSize() to be a positive number");
+	}
+
+	@Test
+	void paginatedAdvanceWithTwoCursorParams_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceWithTwoCursorParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.HeaderParam;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceWithTwoCursorParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_ONE)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"page\") @PaginationCursor int page,\n" //
+				+ "      @HeaderParam(\"X-Page\") @PaginationCursor int pageHeader);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"needs exactly one @PaginationCursor parameter to carry the client-computed offset/page value - "
+						+ "found 2");
 	}
 
 	@Test

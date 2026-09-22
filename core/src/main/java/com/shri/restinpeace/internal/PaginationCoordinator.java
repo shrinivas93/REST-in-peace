@@ -25,6 +25,7 @@ import com.google.gson.JsonPrimitive;
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.pagination.Paginated;
+import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
 import com.shri.restinpeace.annotation.pagination.PaginationCursor;
 import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
 import com.shri.restinpeace.annotation.pagination.PointerKind;
@@ -238,6 +239,8 @@ final class PaginationCoordinator {
 		int itemsFetchedTotal = itemsFetchedSoFar + items.size();
 		int pagesFetchedTotal = pagesFetchedSoFar + 1;
 
+		boolean advanceDriven = paginated.pointerSource() == PaginationSignalSource.NONE;
+
 		boolean hasNext;
 		if (hasMore != null) {
 			hasNext = hasMore;
@@ -245,6 +248,14 @@ final class PaginationCoordinator {
 			hasNext = itemsFetchedTotal < total;
 		} else if (totalPages != null) {
 			hasNext = pagesFetchedTotal < totalPages;
+		} else if (advanceDriven) {
+			// No server-given signal at all - validation guarantees advance() is set here
+			// (§6.5's client-driven fallback, chunk 7): INCREMENT_BY_PAGE_SIZE stops on a
+			// short page (fewer items than pageSize means this was the last one);
+			// INCREMENT_BY_ONE has no such signal of its own and relies on the
+			// unconditional empty-items safety net below.
+			hasNext = paginated.advance() != PaginationAdvance.INCREMENT_BY_PAGE_SIZE
+					|| items.size() >= paginated.pageSize();
 		} else {
 			hasNext = !anyPointerMissing;
 		}
@@ -261,7 +272,7 @@ final class PaginationCoordinator {
 		if (!hasNext) {
 			return new PageImpl(items, false, rawResponse, null);
 		}
-		if (anyPointerMissing) {
+		if (anyPointerMissing && !advanceDriven) {
 			throw new RestInPeaceException(String.format(
 					"The @Paginated method %s indicated another page exists but no next-page pointer could be "
 							+ "extracted (pointerField '%s').",
@@ -273,24 +284,40 @@ final class PaginationCoordinator {
 			nextPageSupplier = () -> fetchPage(method, paginated, itemType, cursorParamIndices, errorType, args,
 					pointerValue, itemsFetchedTotal, pagesFetchedTotal, pageFetch);
 		} else {
-			// Coercing/substituting the extracted value(s) into the cursor parameter(s) is
-			// deferred into the supplier (evaluated only when next() is actually called)
-			// rather than done eagerly here - a malformed value is a problem with
-			// fetching the NEXT page, not with the page already successfully returned.
-			String bodyField = method.getParameters()[cursorParamIndices[0]].getAnnotation(PaginationCursor.class)
+			// Coercing/substituting the extracted (or, for advance-driven pagination,
+			// client-computed) value(s) into the cursor parameter(s) is deferred into the
+			// supplier (evaluated only when next() is actually called) rather than done
+			// eagerly here - a malformed value is a problem with fetching the NEXT page,
+			// not with the page already successfully returned.
+			int cursorParamIndex = cursorParamIndices[0];
+			String bodyField = method.getParameters()[cursorParamIndex].getAnnotation(PaginationCursor.class)
 					.bodyField();
 			boolean isBodyCarrier = cursorParamIndices.length == 1 && !bodyField.isEmpty();
 			nextPageSupplier = () -> {
 				Object[] nextArgs = args.clone();
-				if (isBodyCarrier) {
-					int paramIndex = cursorParamIndices[0];
+				if (advanceDriven) {
+					// §6.5/§9 rows 6/8/27-40: no pointer to extract at all - RIP computes the next
+					// offset/page number itself instead. An Integer written straight into a @Body
+					// carrier's field serializes as a JSON number (matching e.g. Elasticsearch's
+					// numeric from/size), unlike the always-String pointer values above.
+					int nextValue = paginated.advance() == PaginationAdvance.INCREMENT_BY_PAGE_SIZE
+							? itemsFetchedTotal : pagesFetchedTotal + 1;
+					if (isBodyCarrier) {
+						@SuppressWarnings("unchecked")
+						Map<String, Object> body = (Map<String, Object>) args[cursorParamIndex];
+						nextArgs[cursorParamIndex] = withFieldSet(body, bodyField, nextValue);
+					} else {
+						nextArgs[cursorParamIndex] = coerceCursorValue(String.valueOf(nextValue),
+								method.getParameters()[cursorParamIndex].getType(), method);
+					}
+				} else if (isBodyCarrier) {
 					String[] bodyFields = bodyField.split(",", -1);
 					@SuppressWarnings("unchecked")
-					Map<String, Object> body = (Map<String, Object>) args[paramIndex];
+					Map<String, Object> body = (Map<String, Object>) args[cursorParamIndex];
 					for (int i = 0; i < bodyFields.length; i++) {
 						body = withFieldSet(body, bodyFields[i], pointerValues.get(i));
 					}
-					nextArgs[paramIndex] = body;
+					nextArgs[cursorParamIndex] = body;
 				} else {
 					for (int i = 0; i < cursorParamIndices.length; i++) {
 						int paramIndex = cursorParamIndices[i];
