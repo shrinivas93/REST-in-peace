@@ -98,7 +98,8 @@ final class ResponseDecoder {
 		return getObjectMapper().readValue((String) rawBody, RuntimeGenericType.of(returnType));
 	}
 
-	private ObjectMapper getObjectMapper() {
+	/** Package-private so {@link PaginationCoordinator} can share this instead of duplicating it. */
+	ObjectMapper getObjectMapper() {
 		try {
 			return unirestInstance != null ? unirestInstance.config().getObjectMapper()
 					: Unirest.config().getObjectMapper();

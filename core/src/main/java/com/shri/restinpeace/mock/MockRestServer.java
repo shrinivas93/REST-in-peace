@@ -293,6 +293,56 @@ public final class MockRestServer implements AutoCloseable {
 	}
 
 	/**
+	 * Scripts an ordered sequence of responses for a route - the 1st matching request gets
+	 * {@code responses[0]}, the 2nd gets {@code responses[1]}, and so on, with the last response answering every
+	 * request after the sequence is exhausted. Sugar for {@link #on(HTTPMethod, String, MockResponse)} with the
+	 * last response and {@link #enqueueFor(HTTPMethod, String, MockResponse)} with the rest, in the right order -
+	 * the natural way to script a {@code @Paginated}/{@code PaginationStrategy<T>} fetch's page-by-page response
+	 * sequence in one call, without needing a separate route per page distinguished by cursor/offset query param
+	 * value (see {@code docs/design/pagination-helper.md} §11).
+	 *
+	 * <pre>
+	 * server.onPages(HTTPMethod.GET, "/orders",
+	 *         MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next\":true}"),
+	 *         MockResponse.ok("{\"orders\":[{\"id\":\"2\"}],\"next\":false}"));
+	 * </pre>
+	 *
+	 * @param httpMethod   the HTTP method to match
+	 * @param pathTemplate the path to match, with optional {@code {name}} placeholders
+	 * @param responses    the page sequence, in order; must not be empty
+	 * @return this server
+	 * @throws IllegalArgumentException if {@code responses} is empty
+	 */
+	public MockRestServer onPages(HTTPMethod httpMethod, String pathTemplate, MockResponse... responses) {
+		return onPages(httpMethod, pathTemplate, Collections.emptyMap(), responses);
+	}
+
+	/**
+	 * Same as {@link #onPages(HTTPMethod, String, MockResponse...)}, but only matches a request whose query params
+	 * contain every entry in {@code requiredQueryParams} - for a path also serving other, non-paginated traffic
+	 * that a bare {@link #onPages(HTTPMethod, String, MockResponse...)} route would otherwise intercept too.
+	 *
+	 * @param httpMethod          the HTTP method to match
+	 * @param pathTemplate        the path to match, with optional {@code {name}} placeholders
+	 * @param requiredQueryParams the query params that must be present with these exact values for this route to
+	 *                            match
+	 * @param responses           the page sequence, in order; must not be empty
+	 * @return this server
+	 * @throws IllegalArgumentException if {@code responses} is empty
+	 */
+	public MockRestServer onPages(HTTPMethod httpMethod, String pathTemplate, Map<String, String> requiredQueryParams,
+			MockResponse... responses) {
+		if (responses.length == 0) {
+			throw new IllegalArgumentException("onPages needs at least one response.");
+		}
+		on(httpMethod, pathTemplate, requiredQueryParams, responses[responses.length - 1]);
+		for (int i = 0; i < responses.length - 1; i++) {
+			enqueueFor(httpMethod, pathTemplate, requiredQueryParams, responses[i]);
+		}
+		return this;
+	}
+
+	/**
 	 * Removes a route registered via
 	 * {@link #on(HTTPMethod, String, MockResponse)}, so a later request to
 	 * that path falls through to any other registered route, the

@@ -70,6 +70,7 @@ test server for unit tests.
   - [Generic collection return types: `List<User>`](#generic-collection-return-types-listuser)
   - [Binary downloads: `byte[]` and `File`](#binary-downloads-byte-and-file)
   - [Response headers and status: `RipResponse<T>`](#response-headers-and-status-ripresponset)
+- [Pagination](#pagination)
 - [Error handling](#error-handling)
 - [Async](#async)
 - [Retries](#retries)
@@ -189,6 +190,10 @@ for what actually happens under `getUser(...)`.
   reporting
 - `RipResponse<T>` wraps `T` with the response's status code and headers,
   for a method that needs more than just the body
+- `@Paginated` follows a next-page pointer automatically into a `Page<T>`,
+  reusing the client's full `@Retry`/cache/circuit-breaker/interceptor
+  pipeline for every page fetch; see [Pagination](#pagination) for what's
+  implemented so far
 - A non-2xx response always throws `RestInPeaceHttpException`, with
   `@ErrorType` to deserialize the error body into a class
 - `CompletableFuture<T>` return types fire requests asynchronously
@@ -872,6 +877,180 @@ raw body, `Void` to discard it, anything else deserialized from JSON).
 `RipResponse<T>` only ever wraps a successful response — a non-2xx status
 still throws `RestInPeaceHttpException` as described below, it's never
 wrapped.
+
+## Pagination
+
+`@Paginated` follows a next-page pointer automatically instead of leaving
+the fetch-extract-repeat loop to hand-written code:
+
+```java
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+
+```java
+Page<Order> page = orderApi.listOrders(null);
+while (true) {
+    for (Order order : page.items()) {
+        process(order);
+    }
+    if (!page.hasNext()) {
+        break;
+    }
+    page = page.next();       // re-fetches through @Retry/cache/circuit breaker/interceptors, same as any call
+}
+```
+
+`page.next()` re-invokes the exact same method, substituting only the
+`@QueryParam`/`@PathParam`/`@HeaderParam` parameter marked
+`@PaginationCursor` with the freshly extracted value — every other argument
+stays exactly as first supplied. `pointerKind = PointerKind.FULL_URL`
+instead follows an extracted absolute URL verbatim (no `@PaginationCursor`
+parameter at all), the same way an `@Url` parameter would. `hasMoreSource`/
+`totalSource`/`totalPagesSource` (`RESPONSE_BODY` or `RESPONSE_HEADER`) let
+a `has_more` boolean or a total-count comparison decide termination instead
+of "the pointer is gone" — needed for an API (Stripe's, for one) that keeps
+the pointer populated even on the genuinely last page. `page.rawResponse()`
+returns that page's own `RipResponse<Void>` (status/headers, no body —
+`page.items()` already has the content).
+
+Declare `Stream<T>`/`Iterator<T>` instead of `Page<T>` on the exact same
+method to auto-flatten every page into one lazy sequence, instead of
+managing pages by hand:
+
+```java
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Stream<Order> streamOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+
+```java
+orderApi.streamOrders(null).forEach(this::process);   // fetches pages on demand as the stream is consumed
+```
+
+Both are lazy — no network call happens until the first `hasNext()`
+(`Iterator<T>`) or terminal stream operation, unlike `Page<T>` itself,
+which fetches its first page eagerly like any other RIP call.
+
+For a POST-based API whose cursor is resent as a JSON request body field
+(Elasticsearch's `search_after`, DynamoDB's `ExclusiveStartKey`) rather than
+a query/path/header value, stack `@PaginationCursor` on a `@Body
+Map<String,Object>` parameter instead, with `bodyField` naming the
+(dotted-path) field inside that body to write the next-page value into:
+
+```java
+@POST("/orders/search")
+@Paginated(itemsField = "orders", pointerField = "search_after")
+Page<Order> searchOrders(@Body @PaginationCursor(bodyField = "search_after") Map<String, Object> body);
+```
+
+Every field the caller put in `body` on the first call — a filter, a page
+size — carries forward unchanged on every subsequent page; only `bodyField`
+gets overwritten, and the caller's own map is never mutated in place.
+
+For a `since_id`/keyset-style API whose cursor isn't in the response
+envelope at all but derived from the last item on the page (Stripe,
+classic Twitter), set `pointerSource = ITEM_FIELD`:
+
+```java
+@GET("/charges")
+@Paginated(itemsField = "data", pointerSource = ITEM_FIELD, pointerField = "id")
+Page<Charge> listCharges(@QueryParam("starting_after") @PaginationCursor String startingAfter);
+```
+
+`pointerField` accepts a comma-separated list for a composite key (an
+`(id, timestamp)` pair for a stable sort under concurrent writes) —
+resent via either N separate `@PaginationCursor` parameters, positionally
+matched to the N entries, or one `@Body` parameter whose comma-separated
+`bodyField` names the same N values:
+
+```java
+@GET("/events")
+@Paginated(itemsField = "events", pointerSource = ITEM_FIELD, pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
+        @QueryParam("lastTs") @PaginationCursor String lastTimestamp);
+```
+
+An API that follows GitHub/Shopify's convention of an RFC 8288 `Link`
+response header (`<url>; rel="next", <url>; rel="last"`) needs no special
+handling — a `FULL_URL` pointer sourced from that header is parsed
+automatically, following the `rel="next"` target until a page's `Link`
+header no longer has one:
+
+```java
+@GET("/repos")
+@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+        pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+Page<Repo> listRepos();
+```
+
+Not every API gives back a pointer to follow at all — a homegrown endpoint
+might just expect the client to compute the next offset or page number
+itself. Setting `pointerSource = NONE` and `advance` hands that arithmetic
+to RIP: `INCREMENT_BY_PAGE_SIZE` advances the offset by `pageSize` each
+fetch (stopping on a short page if there's no `total`/`totalPages` signal
+to check instead), and `INCREMENT_BY_ONE` advances the page number by one
+(stopping on an empty page absent any other signal):
+
+```java
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+        advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50,
+        totalSource = PaginationSignalSource.RESPONSE_HEADER, totalField = "X-Total-Count")
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+```
+
+Whatever the closed `@Paginated` attribute vocabulary can't reach — a
+cursor needing decoding before reuse, termination logic combining several
+signals with OR instead of the fixed precedence above, a page count that
+needs a separate API call, and the other cases in the design doc's §10 —
+drop down to `PaginationStrategy<T>`, a plain parameter (no annotation)
+recognized by its declared type, the same idiom RIP already uses for
+`CompletableFuture<T>`/`RipResponse<T>` return types:
+
+```java
+@GET("/orders")
+Page<Order> listOrders(@QueryParam("status") String status, PaginationStrategy<Order> strategy);
+```
+
+```java
+PaginationStrategy<Order> strategy = ctx -> ctx.items().isEmpty() ? Optional.empty()
+        : Optional.of(PaginationRequest.withQueryParam("since",
+                ctx.items().get(ctx.items().size() - 1).getId()));
+
+Page<Order> page = api.listOrders("active", strategy);
+```
+
+The lambda is consulted after every fetch (including the first) with this
+page's decoded `items()`, its parsed body, and its headers, and answers
+just one question — what should the next request look like, or nothing if
+this was the last page — via `PaginationRequest.toUrl`/`withQueryParam`/
+`withPathParam`/`withHeader`/`withBodyField`, combinable with `.and(...)`
+for more than one override at once. Unlike `@Paginated`, there's no
+`itemsField` — the response body must itself be the JSON items array.
+`@Paginated` and a `PaginationStrategy<T>` parameter are mutually
+exclusive on one method - pick declarative or programmatic, not both.
+
+Testing a paginated method against `MockRestServer` usually means scripting
+a short, fixed sequence of pages rather than one canned response — see
+[`onPages(...)`](#testing-with-mockrestserver) in the testing section
+below, which answers each successive request in order and then sticks on
+the last response for anything after.
+
+Every numbered chunk of the rollout plan (2 through 9) has now landed — see
+[`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
+the full design and an exhaustive 46-row catalogue of real-world pagination
+shapes mapped onto the feature surface above. Supported today: a
+`VALUE`/`FULL_URL` pointer sourced from the response body/headers/last
+item (including RFC 8288 `Link` headers and composite keyset cursors),
+client-driven `advance` when there's no pointer at all, or the fully
+programmatic `PaginationStrategy<T>` escape hatch, through a
+`Page<T>`/`Stream<T>`/`Iterator<T>` return type — including an async
+*first* fetch via `CompletableFuture<Page<T>>` (each subsequent
+`page.next()` call is still synchronous). Only a fully async iteration
+protocol (`page.next()` itself returning a `CompletableFuture<Page<T>>`)
+remains deliberately deferred — see §11 of the design doc.
 
 ## Error handling
 
@@ -1881,6 +2060,20 @@ server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2,
         MockResponse.status(503, ""), MockResponse.json(new Order("42", "shipped")));
 
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt
+```
+
+The same per-route queue scripts a `@Paginated`/`PaginationStrategy<T>`
+fetch's page-by-page sequence — `onPages(...)` answers by request order,
+not by matching each page's differing cursor/offset query param value, so
+there's no need for a separate route per page's exact cursor:
+
+```java
+server.onPages(HTTPMethod.GET, "/orders",
+        MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"has_more\":true,\"next_cursor\":\"tok\"}"),
+        MockResponse.ok("{\"orders\":[{\"id\":\"2\"}],\"has_more\":false}"));
+
+Page<Order> page1 = api.listOrders(null);   // page1.items() -> [{"id": "1"}]
+Page<Order> page2 = page1.next();           // page2.items() -> [{"id": "2"}]
 ```
 
 `RecordedRequest` (via `server.getRecordedRequests()`/`takeRequest()`)

@@ -30,18 +30,25 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.pagination.Paginated;
+import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
+import com.shri.restinpeace.annotation.pagination.PaginationCursor;
+import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
+import com.shri.restinpeace.annotation.pagination.PointerKind;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.Field;
 import com.shri.restinpeace.annotation.request.FieldMap;
 import com.shri.restinpeace.annotation.request.FormUrlEncoded;
 import com.shri.restinpeace.annotation.request.HeaderMap;
+import com.shri.restinpeace.annotation.request.HeaderParam;
 import com.shri.restinpeace.annotation.request.Headers;
 import com.shri.restinpeace.annotation.request.Multipart;
 import com.shri.restinpeace.annotation.request.Part;
 import com.shri.restinpeace.annotation.request.PartMap;
 import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryMap;
+import com.shri.restinpeace.annotation.request.QueryParam;
 import com.shri.restinpeace.annotation.request.Url;
 import com.shri.restinpeace.annotation.retry.Retry;
 import com.shri.restinpeace.annotation.timeout.Timeout;
@@ -124,6 +131,7 @@ final class CompileTimeRestClientValidator {
 				}
 				validateBody(method, httpMethodAndUrl.httpMethod, reporter);
 				validateReturnType(method, env.getTypeUtils(), reporter);
+				validatePaginated(method, httpMethodAndUrl.urlTemplate, env, reporter);
 				validateRetry(method, reporter);
 				validateMapParam(method, QueryMap.class, "@QueryMap", env, reporter);
 				validateMapParam(method, HeaderMap.class, "@HeaderMap", env, reporter);
@@ -424,6 +432,355 @@ final class CompileTimeRestClientValidator {
 		return typeArgument.getKind() == TypeKind.DECLARED;
 	}
 
+	/**
+	 * The compile-time counterpart of
+	 * {@code ReflectiveRestClientValidator#validatePaginated} - see its own
+	 * javadoc for the chunk-2/3/4/5/7/8-supported subset of
+	 * {@code docs/design/pagination-helper.md} §7 this implements.
+	 */
+	private static void validatePaginated(ExecutableElement method, String url, ProcessingEnvironment env,
+			Reporter reporter) {
+		Types types = env.getTypeUtils();
+		Paginated paginated = method.getAnnotation(Paginated.class);
+		List<VariableElement> strategyParams = new ArrayList<>();
+		for (VariableElement parameter : method.getParameters()) {
+			if (parameter.asType().getKind() == TypeKind.DECLARED
+					&& "com.shri.restinpeace.PaginationStrategy".equals(types.erasure(parameter.asType()).toString())) {
+				strategyParams.add(parameter);
+			}
+		}
+		TypeMirror returnType = method.getReturnType();
+		boolean isDeclared = returnType.getKind() == TypeKind.DECLARED;
+		String rawReturnTypeName = isDeclared ? types.erasure(returnType).toString() : "";
+		boolean returnsPage = isDeclared && "com.shri.restinpeace.Page".equals(rawReturnTypeName);
+		boolean returnsStream = isDeclared && "java.util.stream.Stream".equals(rawReturnTypeName);
+		boolean returnsIterator = isDeclared && "java.util.Iterator".equals(rawReturnTypeName);
+		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator;
+
+		if (paginated != null && !strategyParams.isEmpty()) {
+			reporter.error(String.format(
+					"The method %s is annotated with @Paginated and also has a PaginationStrategy<T> parameter - "
+							+ "use one or the other.",
+					qualifiedName(method)), method);
+			return;
+		}
+		if (returnsSupportedType && paginated == null && strategyParams.isEmpty()) {
+			reporter.error(String.format(
+					"The method %s returns %s<T> but is not annotated with @Paginated and has no "
+							+ "PaginationStrategy<T> parameter.",
+					qualifiedName(method), simpleTypeName(rawReturnTypeName)), method);
+			return;
+		}
+		if (paginated == null && strategyParams.isEmpty()) {
+			return;
+		}
+		// A raw RipResponse/CompletableFuture (no type parameter at all) is already
+		// flagged by validateReturnType regardless of @Paginated/PaginationStrategy -
+		// skip adding a second, overlapping message about the same underlying "raw
+		// generic return type" mistake on the same method.
+		if (isDeclared
+				&& ("com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+						|| "java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))
+				&& ((DeclaredType) returnType).getTypeArguments().isEmpty()) {
+			return;
+		}
+		if (isDeclared && "com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+				&& streamOrIteratorInnerName(returnType, types) != null) {
+			reporter.error(String.format(
+					"The method %s is annotated with @Paginated and returns RipResponse<%s<T>>, which is not "
+							+ "supported - auto-flattening spans an unknown number of underlying calls, so there is "
+							+ "no single response to wrap; use Page<T> and its rawResponse() instead.",
+					qualifiedName(method), streamOrIteratorInnerName(returnType, types)), method);
+			return;
+		}
+		if (!returnsSupportedType) {
+			reporter.error(String.format(
+					"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
+							+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
+							+ "implemented yet.",
+					qualifiedName(method)), method);
+			return;
+		}
+		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+		validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
+
+		// Only reported when there's no static URL - validateUrlParam already reports
+		// a more specific "has both a @Url parameter and a static URL" error for that
+		// combination; stacking a second, less specific message about the same
+		// underlying @Url misuse on the same method would be redundant noise.
+		if (hasUrlParam(method) && com.shri.restinpeace.constant.RIPConstants.DEFAULT.equals(url)) {
+			reporter.error(String.format("The method %s is annotated with both @Paginated and @Url - remove one "
+					+ "or the other.", qualifiedName(method)), method);
+		}
+
+		if (paginated == null) {
+			validatePaginationStrategyParams(method, returnType, strategyParams, types, reporter);
+			return;
+		}
+
+		List<VariableElement> cursorParams = new ArrayList<>();
+		for (VariableElement parameter : method.getParameters()) {
+			if (parameter.getAnnotation(PaginationCursor.class) != null) {
+				cursorParams.add(parameter);
+			}
+		}
+
+		if (paginated.advance() != PaginationAdvance.NONE && paginated.pointerSource() != PaginationSignalSource.NONE) {
+			reporter.error(String.format(
+					"The method %s's @Paginated sets advance() but pointerSource is not NONE - advance() is only "
+							+ "meaningful for client-driven pagination with no server-given pointer (pointerSource "
+							+ "= NONE).",
+					qualifiedName(method)), method);
+		}
+
+		if (paginated.advance() == PaginationAdvance.INCREMENT_BY_PAGE_SIZE && paginated.pageSize() <= 0) {
+			reporter.error(String.format(
+					"The method %s's @Paginated sets advance = INCREMENT_BY_PAGE_SIZE, which needs pageSize() to "
+							+ "be a positive number.",
+					qualifiedName(method)), method);
+		}
+
+		if (paginated.pointerKind() == PointerKind.FULL_URL) {
+			if (!cursorParams.isEmpty()) {
+				reporter.error(String.format(
+						"The method %s's @Paginated has pointerKind = FULL_URL but also has a @PaginationCursor "
+								+ "parameter - a full URL is followed as-is, with nothing to inject.",
+						qualifiedName(method)), method);
+			}
+			validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", reporter);
+		} else {
+			validatePaginatedValuePointer(method, paginated, cursorParams, reporter);
+		}
+
+		validatePaginationSignal(method, paginated.hasMoreSource(), paginated.hasMoreField(), "hasMoreSource",
+				"hasMoreField", reporter);
+		validatePaginationSignal(method, paginated.totalSource(), paginated.totalField(), "totalSource",
+				"totalField", reporter);
+		validatePaginationSignal(method, paginated.totalPagesSource(), paginated.totalPagesField(),
+				"totalPagesSource", "totalPagesField", reporter);
+
+		for (VariableElement cursorParam : cursorParams) {
+			validatePaginationCursorParam(method, cursorParam, env, reporter);
+		}
+	}
+
+	/**
+	 * Validates the {@code PaginationStrategy<T>}-parameter path (§6.8, chunk 8): exactly one such parameter is
+	 * allowed, and when both its {@code T} and the method's own {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>}
+	 * return type argument are known (i.e. neither is a raw, unparameterized use), they must be the same type -
+	 * otherwise the items {@code PaginationContext<T>.items()} hands back at runtime silently wouldn't be the type
+	 * the consumer's strategy lambda declared.
+	 */
+	private static void validatePaginationStrategyParams(ExecutableElement method, TypeMirror returnType,
+			List<VariableElement> strategyParams, Types types, Reporter reporter) {
+		if (strategyParams.size() > 1) {
+			reporter.error(String.format("The method %s has more than one PaginationStrategy<T> parameter.",
+					qualifiedName(method)), method);
+			return;
+		}
+		List<? extends TypeMirror> returnTypeArguments = ((DeclaredType) returnType).getTypeArguments();
+		TypeMirror itemType = returnTypeArguments.isEmpty() ? null : returnTypeArguments.get(0);
+		// Always a DeclaredType - strategyParams is already filtered to erasure-match
+		// com.shri.restinpeace.PaginationStrategy - getTypeArguments() is empty for a
+		// raw (unparameterized) PaginationStrategy parameter, same as the return type
+		// case above.
+		List<? extends TypeMirror> strategyTypeArguments = ((DeclaredType) strategyParams.get(0).asType())
+				.getTypeArguments();
+		TypeMirror strategyItemType = strategyTypeArguments.isEmpty() ? null : strategyTypeArguments.get(0);
+		if (itemType != null && strategyItemType != null && !types.isSameType(itemType, strategyItemType)) {
+			reporter.error(String.format(
+					"The method %s's PaginationStrategy<%s> parameter doesn't match its %s<%s> return type - they "
+							+ "must share the same item type.",
+					qualifiedName(method), strategyItemType, simpleTypeName(types.erasure(returnType).toString()),
+					itemType), method);
+		}
+	}
+
+	/** Only ever called with one of the three fully-qualified pagination return type names, which always have a dot. */
+	private static String simpleTypeName(String qualifiedName) {
+		return qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
+	}
+
+	/**
+	 * "Stream"/"Iterator" if {@code ripResponseType}'s (a {@code RipResponse<T>}
+	 * return type) {@code T} is itself {@code Stream<?>}/{@code Iterator<?>},
+	 * else {@code null} - see §7's dedicated rejection for that shape. Callers only reach this once the
+	 * raw-generic-return-type guard above has confirmed {@code ripResponseType} has a type argument, so an empty
+	 * argument list isn't re-checked here.
+	 */
+	private static String streamOrIteratorInnerName(TypeMirror ripResponseType, Types types) {
+		List<? extends TypeMirror> typeArguments = ((DeclaredType) ripResponseType).getTypeArguments();
+		if (typeArguments.get(0).getKind() != TypeKind.DECLARED) {
+			return null;
+		}
+		String innerRawTypeName = types.erasure(typeArguments.get(0)).toString();
+		if ("java.util.stream.Stream".equals(innerRawTypeName)) {
+			return "Stream";
+		}
+		if ("java.util.Iterator".equals(innerRawTypeName)) {
+			return "Iterator";
+		}
+		return null;
+	}
+
+	private static void validatePaginatedValuePointer(ExecutableElement method, Paginated paginated,
+			List<VariableElement> cursorParams, Reporter reporter) {
+		PaginationSignalSource source = paginated.pointerSource();
+		if (source == PaginationSignalSource.NONE) {
+			if (paginated.advance() == PaginationAdvance.NONE) {
+				reporter.error(String.format(
+						"The method %s's @Paginated has pointerSource = NONE, which needs advance() to be set for "
+								+ "client-driven pagination.",
+						qualifiedName(method)), method);
+				return;
+			}
+			validateAdvanceCursorParam(method, cursorParams, reporter);
+			return;
+		}
+		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", reporter);
+		if (paginated.pointerField().isEmpty()) {
+			return;
+		}
+		int fieldCount = paginated.pointerField().split(",", -1).length;
+		if (fieldCount > 1 && source != PaginationSignalSource.ITEM_FIELD) {
+			reporter.error(String.format(
+					"The method %s's @Paginated has a comma-separated pointerField - a composite pointer is only "
+							+ "supported for pointerSource = ITEM_FIELD.",
+					qualifiedName(method)), method);
+			return;
+		}
+		validateCursorParamCount(method, cursorParams, fieldCount, reporter);
+	}
+
+	/**
+	 * A {@code VALUE} pointer needs either exactly {@code fieldCount} non-{@code @Body} cursor parameters,
+	 * positionally matched to {@code pointerField}'s comma-separated entries (§6.6 - N-way composite keyset via
+	 * N separate carriers), or exactly one {@code @Body} cursor parameter whose comma-separated
+	 * {@code bodyField} names the same {@code fieldCount} values (§6.7 - composite keyset into one JSON body).
+	 */
+	private static void validateCursorParamCount(ExecutableElement method, List<VariableElement> cursorParams,
+			int fieldCount, Reporter reporter) {
+		List<VariableElement> bodyParams = new ArrayList<>();
+		for (VariableElement param : cursorParams) {
+			if (param.getAnnotation(Body.class) != null) {
+				bodyParams.add(param);
+			}
+		}
+		if (!bodyParams.isEmpty()) {
+			if (cursorParams.size() > 1) {
+				reporter.error(String.format(
+						"The method %s has a @PaginationCursor stacked on @Body alongside other @PaginationCursor "
+								+ "parameters - a @Body carrier must be the method's only @PaginationCursor "
+								+ "parameter.",
+						qualifiedName(method)), method);
+				return;
+			}
+			String bodyField = bodyParams.get(0).getAnnotation(PaginationCursor.class).bodyField();
+			if (bodyField.isEmpty()) {
+				return; // already flagged by validatePaginationCursorParam
+			}
+			int bodyFieldCount = bodyField.split(",", -1).length;
+			if (bodyFieldCount != fieldCount) {
+				reporter.error(String.format(
+						"The method %s's @Paginated has a pointerField naming %d value(s) but its @Body "
+								+ "@PaginationCursor's bodyField names %d - they must match.",
+						qualifiedName(method), fieldCount, bodyFieldCount), method);
+			}
+			return;
+		}
+		if (cursorParams.size() != fieldCount) {
+			reporter.error(String.format(
+					"The method %s's @Paginated has pointerKind = VALUE with pointerSource != NONE, which needs "
+							+ "%d @PaginationCursor parameter(s) (matching pointerField's %d comma-separated "
+							+ "entries) - found %d.",
+					qualifiedName(method), fieldCount, fieldCount, cursorParams.size()), method);
+		}
+	}
+
+	/**
+	 * Client-driven pagination (§6.5's advance-based fallback, chunk 7) has exactly one computed value - an offset
+	 * or a page number - so it needs exactly one {@code @PaginationCursor} parameter, on any one of the four
+	 * carriers; unlike {@link #validateCursorParamCount}, there's no {@code pointerField} entry count to match it
+	 * against.
+	 */
+	private static void validateAdvanceCursorParam(ExecutableElement method, List<VariableElement> cursorParams,
+			Reporter reporter) {
+		if (cursorParams.size() != 1) {
+			reporter.error(String.format(
+					"The method %s's @Paginated has pointerSource = NONE with advance() set, which needs exactly "
+							+ "one @PaginationCursor parameter to carry the client-computed offset/page value - "
+							+ "found %d.",
+					qualifiedName(method), cursorParams.size()), method);
+		}
+	}
+
+	private static void validatePaginationSignal(ExecutableElement method, PaginationSignalSource source,
+			String field, String sourceAttributeName, String fieldAttributeName, Reporter reporter) {
+		if (source == PaginationSignalSource.NONE) {
+			return;
+		}
+		if (source == PaginationSignalSource.ITEM_FIELD) {
+			reporter.error(String.format(
+					"The method %s's @Paginated sets %s = ITEM_FIELD, which is only meaningful for pointerSource.",
+					qualifiedName(method), sourceAttributeName), method);
+			return;
+		}
+		validatePaginationFieldNonEmpty(method, field, fieldAttributeName, reporter);
+	}
+
+	private static void validatePaginationFieldNonEmpty(ExecutableElement method, String field,
+			String attributeName, Reporter reporter) {
+		if (field.isEmpty()) {
+			reporter.error(String.format("The method %s's @Paginated must set %s.", qualifiedName(method),
+					attributeName), method);
+		}
+	}
+
+	private static void validatePaginationCursorParam(ExecutableElement method, VariableElement cursorParam,
+			ProcessingEnvironment env, Reporter reporter) {
+		boolean onQuery = cursorParam.getAnnotation(QueryParam.class) != null;
+		boolean onPath = cursorParam.getAnnotation(PathParam.class) != null;
+		boolean onHeader = cursorParam.getAnnotation(HeaderParam.class) != null;
+		boolean onBody = cursorParam.getAnnotation(Body.class) != null;
+		int carrierCount = (onQuery ? 1 : 0) + (onPath ? 1 : 0) + (onHeader ? 1 : 0) + (onBody ? 1 : 0);
+		if (carrierCount != 1) {
+			reporter.error(String.format(
+					"The method %s has a @PaginationCursor parameter that must be stacked on exactly one of "
+							+ "@QueryParam/@PathParam/@HeaderParam/@Body.",
+					qualifiedName(method)), cursorParam);
+			return;
+		}
+		String bodyField = cursorParam.getAnnotation(PaginationCursor.class).bodyField();
+		if (onBody) {
+			if (bodyField.isEmpty()) {
+				reporter.error(String.format(
+						"The method %s has a @PaginationCursor stacked on @Body but bodyField is empty - set it to "
+								+ "the JSON path inside the body to write the next-page value to.",
+						qualifiedName(method)), cursorParam);
+			}
+			if (!isMapOfStringToObject(cursorParam.asType(), env)) {
+				reporter.error(String.format(
+						"The method %s has a @PaginationCursor stacked on @Body but the parameter's declared type "
+								+ "is not Map<String,Object>.",
+						qualifiedName(method)), cursorParam);
+			}
+			return;
+		}
+		if (!bodyField.isEmpty()) {
+			reporter.error(String.format(
+					"The method %s has a @PaginationCursor with a non-empty bodyField but is not stacked on @Body "
+							+ "- bodyField is only meaningful there.",
+					qualifiedName(method)), cursorParam);
+		}
+		String typeName = cursorParam.asType().toString();
+		if (!"java.lang.String".equals(typeName) && !"int".equals(typeName) && !"long".equals(typeName)) {
+			reporter.error(String.format(
+					"The method %s has a @PaginationCursor parameter of type %s - only String, int, and long are "
+							+ "supported.",
+					qualifiedName(method), typeName), cursorParam);
+		}
+	}
+
 	private static boolean returnsFile(ExecutableElement method, Types types) {
 		TypeMirror returnType = method.getReturnType();
 		if (returnType.getKind() == TypeKind.DECLARED && "java.io.File".equals(types.erasure(returnType).toString())) {
@@ -590,6 +947,21 @@ final class CompileTimeRestClientValidator {
 		TypeMirror mapErasure = types.erasure(env.getElementUtils().getTypeElement("java.util.Map").asType());
 		TypeMirror paramErasure = types.erasure(type);
 		return types.isSubtype(paramErasure, mapErasure);
+	}
+
+	/** Whether {@code type} is exactly {@code Map<String,Object>} - the required shape for a {@code @Body @PaginationCursor} carrier (§6.7). */
+	private static boolean isMapOfStringToObject(TypeMirror type, ProcessingEnvironment env) {
+		if (!isMapType(type, env)) {
+			return false;
+		}
+		List<? extends TypeMirror> typeArguments = ((DeclaredType) type).getTypeArguments();
+		if (typeArguments.size() != 2) {
+			return false;
+		}
+		Types types = env.getTypeUtils();
+		TypeMirror stringType = env.getElementUtils().getTypeElement("java.lang.String").asType();
+		TypeMirror objectType = env.getElementUtils().getTypeElement("java.lang.Object").asType();
+		return types.isSameType(typeArguments.get(0), stringType) && types.isSameType(typeArguments.get(1), objectType);
 	}
 
 	private static boolean isURLValid(String url) {

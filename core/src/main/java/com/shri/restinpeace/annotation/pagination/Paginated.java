@@ -1,0 +1,146 @@
+package com.shri.restinpeace.annotation.pagination;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+/**
+ * Declares that a method's response is paginated - following a next-page
+ * pointer automatically, extracting each page's items into a
+ * {@code Page<T>}, instead of leaving the fetch-extract-repeat loop to
+ * hand-written code. See {@code docs/design/pagination-helper.md} for the
+ * full design, every default, and the exhaustive catalogue of real-world
+ * shapes this is built to cover (§9).
+ *
+ * <pre>
+ * {@literal @}GET("/orders")
+ * {@literal @}Paginated(itemsField = "orders", pointerField = "next")
+ * Page{@literal <}Order{@literal >} listOrders({@literal @}QueryParam("cursor") {@literal @}PaginationCursor String cursor);
+ * </pre>
+ *
+ * <p>
+ * Every rollout chunk in the design doc's plan (§12) has landed: a
+ * {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE} pointer sourced
+ * from {@link PaginationSignalSource#RESPONSE_BODY}/
+ * {@link PaginationSignalSource#RESPONSE_HEADER}/
+ * {@link PaginationSignalSource#ITEM_FIELD} (keyset pagination, including
+ * an N-way composite key, and RFC 8288 {@code Link} response headers),
+ * resent via {@code @QueryParam}/{@code @PathParam}/{@code @HeaderParam}/
+ * {@code @Body}, with {@code hasMoreSource}/{@code totalSource}/
+ * {@code totalPagesSource} termination signals, {@link PaginationAdvance}
+ * client-driven offset/page-number advancement when there's no
+ * server-given pointer at all ({@code pointerSource = NONE}), and a
+ * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} return type,
+ * including an async first fetch via {@code CompletableFuture<Page<T>>}.
+ * Whatever this closed attribute vocabulary can't reach, a
+ * {@link com.shri.restinpeace.PaginationStrategy} parameter is the fully
+ * programmatic escape hatch instead - mutually exclusive with this
+ * annotation on the same method. Only a fully async iteration protocol
+ * ({@code Page<T>.next()} itself returning a future) remains deliberately
+ * deferred (§11) - {@code RIP.getClient(...)} rejects that shape by name
+ * rather than silently misbehaving at call time.
+ */
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Paginated {
+
+	/**
+	 * Dotted path to the items array within the response body; empty means
+	 * the response body itself is the array (no wrapper object).
+	 *
+	 * @return the dotted path to the items array, or {@code ""} for the response body itself
+	 */
+	String itemsField() default "";
+
+	/**
+	 * Whether the extracted pointer is a complete URL or a bare value to
+	 * resend via a {@code @PaginationCursor} carrier.
+	 *
+	 * @return the pointer's kind
+	 */
+	PointerKind pointerKind() default PointerKind.VALUE;
+
+	/**
+	 * Where the next-page pointer is read from.
+	 *
+	 * @return the pointer's source
+	 */
+	PaginationSignalSource pointerSource() default PaginationSignalSource.RESPONSE_BODY;
+
+	/**
+	 * Where the pointer is read from within that source: a dotted body path,
+	 * a header name, or - for {@link PaginationSignalSource#ITEM_FIELD}
+	 * keyset pagination - a comma-separated list of item field names for an
+	 * N-way composite key.
+	 *
+	 * @return the pointer's field/header name, or comma-separated names for a composite keyset
+	 */
+	String pointerField() default "";
+
+	/**
+	 * How the client advances when there's no server-given pointer at all
+	 * ({@code pointerSource = NONE}) - only meaningful together with
+	 * {@code pointerSource = NONE}; a {@code hasMoreSource}/{@code totalSource}/
+	 * {@code totalPagesSource} termination signal, if set, still takes
+	 * precedence over the advance-based fallback (§6.5).
+	 *
+	 * @return the client-driven advancement style
+	 */
+	PaginationAdvance advance() default PaginationAdvance.NONE;
+
+	/**
+	 * The page size {@link PaginationAdvance#INCREMENT_BY_PAGE_SIZE} advances
+	 * the offset by, and - absent any other termination signal - compares
+	 * against the fetched item count to detect a short (final) page.
+	 *
+	 * @return the page size, meaningless unless {@link #advance()} is {@code INCREMENT_BY_PAGE_SIZE}
+	 */
+	int pageSize() default 0;
+
+	/**
+	 * Where a "more pages exist" boolean signal is read from, if any -
+	 * authoritative over pointer presence when set (§6.5).
+	 *
+	 * @return the {@code hasMore} signal's source, or {@code NONE} if the API gives no such signal
+	 */
+	PaginationSignalSource hasMoreSource() default PaginationSignalSource.NONE;
+
+	/**
+	 * Where the {@link #hasMoreSource()} boolean is read from within that source.
+	 *
+	 * @return the {@code hasMore} field's dotted path or header name
+	 */
+	String hasMoreField() default "";
+
+	/**
+	 * Where a total-record-count signal is read from, if any - compared
+	 * against a running fetched-items counter for termination (§6.5).
+	 *
+	 * @return the total-record-count signal's source, or {@code NONE} if the API gives no such signal
+	 */
+	PaginationSignalSource totalSource() default PaginationSignalSource.NONE;
+
+	/**
+	 * Where the {@link #totalSource()} record count is read from within that source.
+	 *
+	 * @return the total-record-count field's dotted path or header name
+	 */
+	String totalField() default "";
+
+	/**
+	 * Where a total-page-count signal is read from, if any - compared
+	 * against a running fetched-pages counter for termination (§6.5).
+	 *
+	 * @return the total-page-count signal's source, or {@code NONE} if the API gives no such signal
+	 */
+	PaginationSignalSource totalPagesSource() default PaginationSignalSource.NONE;
+
+	/**
+	 * Where the {@link #totalPagesSource()} page count is read from within that source.
+	 *
+	 * @return the total-page-count field's dotted path or header name
+	 */
+	String totalPagesField() default "";
+
+}

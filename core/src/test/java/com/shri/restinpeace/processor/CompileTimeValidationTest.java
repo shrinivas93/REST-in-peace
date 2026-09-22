@@ -1476,6 +1476,1092 @@ class CompileTimeValidationTest {
 		assertErrorContains(diagnostics, "has a parameter annotated with @QueryMap that is not a Map");
 	}
 
+	@Test
+	void paginatedInterface_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedApi", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		// Page<T> has a type argument RestClientProcessor doesn't recognize - the
+		// same E9 disqualification a raw List<User> return type already gets - so
+		// this compiles clean but generates no _RipImpl (the method falls all the
+		// way back to the reflective proxy at runtime).
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginatedMethodNotReturningPage_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedWrongReturnType", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedWrongReturnType {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  String listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void paginatedValuePointerFieldEmpty_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ValuePointerFieldEmpty", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ValuePointerFieldEmpty {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "must set pointerField");
+	}
+
+	@Test
+	void paginatedVoidReturn_failsCompilation() throws IOException {
+		// void's TypeMirror.getKind() is VOID, not DECLARED - exercises the
+		// isDeclared == false branch of the raw-RipResponse/CompletableFuture and
+		// RipResponse-wrapping-Stream/Iterator guards, which String (a declared
+		// type) can't reach.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedVoidReturn", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedVoidReturn {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  void listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void pageReturnWithoutPaginated_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PageWithoutPaginated", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PageWithoutPaginated {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns Page<T> but is not annotated with @Paginated");
+	}
+
+	@Test
+	void rawPageReturn_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawPageReturn", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PointerKind;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawPageReturn {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerKind = PointerKind.FULL_URL, pointerField = \"next\")\n" //
+				+ "  Page listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw Page with no type parameter");
+	}
+
+	@Test
+	void paginatedWithUrlParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedWithUrl", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PointerKind;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Url;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedWithUrl {\n" //
+				+ "  @GET\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerKind = PointerKind.FULL_URL, pointerField = \"next\")\n" //
+				+ "  Page<String> listOrders(@Url String url);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with both @Paginated and @Url");
+	}
+
+	@Test
+	void fullUrlPointerWithCursorParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("FullUrlWithCursorParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PointerKind;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface FullUrlWithCursorParam {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerKind = PointerKind.FULL_URL, pointerField = \"next\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "pointerKind = FULL_URL but also has a @PaginationCursor parameter");
+	}
+
+	@Test
+	void valuePointerWithNoCursorParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ValuePointerNoCursorParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ValuePointerNoCursorParam {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "found 0");
+	}
+
+	@Test
+	void valuePointerWithTwoCursorParams_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ValuePointerTwoCursorParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ValuePointerTwoCursorParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"a\") @PaginationCursor String a,\n" //
+				+ "      @QueryParam(\"b\") @PaginationCursor String b);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "found 2");
+	}
+
+	@Test
+	void pointerSourceNone_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PointerSourceNone", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PointerSourceNone {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"offset\") @PaginationCursor int offset);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "pointerSource = NONE, which needs advance() to be set");
+	}
+
+	@Test
+	void pointerSourceItemField_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PointerSourceItemField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PointerSourceItemField {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = \"id\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"since\") @PaginationCursor String since);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PointerSourceItemField_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void compositeItemFieldTwoParams_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldTwoParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldTwoParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"lastId\") @PaginationCursor String lastId,\n" //
+				+ "      @QueryParam(\"lastTs\") @PaginationCursor String lastTimestamp);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void compositeItemFieldWrongParamCount_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldWrongParamCount", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldWrongParamCount {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"lastId\") @PaginationCursor String lastId);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"needs 2 @PaginationCursor parameter(s) (matching pointerField's 2 comma-separated entries) - "
+						+ "found 1");
+	}
+
+	@Test
+	void compositeItemFieldIntoBody_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldIntoBody", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldIntoBody {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"lastId,lastTimestamp\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void compositeItemFieldIntoBodyWrongCount_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldIntoBodyWrongCount", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldIntoBodyWrongCount {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt,tenantId\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"lastId,lastTimestamp\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"pointerField naming 3 value(s) but its @Body @PaginationCursor's bodyField names 2");
+	}
+
+	@Test
+	void bodyCursorAlongsideAnotherCursorParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("BodyCursorAlongsideAnotherCursorParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface BodyCursorAlongsideAnotherCursorParam {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"lastId\") @PaginationCursor String lastId,\n" //
+				+ "      @Body @PaginationCursor(bodyField = \"lastTimestamp\") Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "must be the method's only @PaginationCursor parameter");
+	}
+
+	@Test
+	void paginatedAdvanceSetWithPointerSourceNotNone_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceSet", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceSet {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\", advance = PaginationAdvance.INCREMENT_BY_ONE)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "sets advance() but pointerSource is not NONE");
+	}
+
+	@Test
+	void paginatedAdvanceIncrementByPageSize_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIncrementByPageSize", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceIncrementByPageSize {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50, totalField = \"total\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"offset\") @PaginationCursor int offset);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedAdvanceIncrementByOne_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIncrementByOne", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceIncrementByOne {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_ONE)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"page\") @PaginationCursor int page);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedAdvanceIntoBody_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIntoBody", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceIntoBody {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50)\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"offset\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedAdvanceIncrementByPageSizeMissingPageSize_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceIncrementByPageSizeMissingPageSize",
+				"" //
+						+ "import com.shri.restinpeace.Page;\n" //
+						+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+						+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+						+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+						+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+						+ "@RestClient\n" //
+						+ "public interface AdvanceIncrementByPageSizeMissingPageSize {\n" //
+						+ "  @GET(\"http://localhost/orders\")\n" //
+						+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+						+ "advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE)\n" //
+						+ "  Page<String> listOrders(@QueryParam(\"offset\") @PaginationCursor int offset);\n" //
+						+ "}\n");
+
+		assertErrorContains(diagnostics, "needs pageSize() to be a positive number");
+	}
+
+	@Test
+	void paginatedAdvanceWithTwoCursorParams_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("AdvanceWithTwoCursorParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationAdvance;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.HeaderParam;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface AdvanceWithTwoCursorParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.NONE, "
+				+ "advance = PaginationAdvance.INCREMENT_BY_ONE)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"page\") @PaginationCursor int page,\n" //
+				+ "      @HeaderParam(\"X-Page\") @PaginationCursor int pageHeader);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"needs exactly one @PaginationCursor parameter to carry the client-computed offset/page value - "
+						+ "found 2");
+	}
+
+	@Test
+	void strategyPage_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyPage", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyPage {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"status\") String status, "
+				+ "PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("StrategyPage_RipImpl.class")),
+				"Expected no _RipImpl to be generated for a PaginationStrategy method, found: " + list(outputDir));
+	}
+
+	@Test
+	void strategyAndPaginatedTogether_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyAndPaginatedTogether", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyAndPaginatedTogether {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor,\n" //
+				+ "      PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"is annotated with @Paginated and also has a PaginationStrategy<T> parameter");
+	}
+
+	@Test
+	void twoStrategyParams_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("TwoStrategyParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface TwoStrategyParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy<String> first, PaginationStrategy<String> second);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "has more than one PaginationStrategy<T> parameter");
+	}
+
+	@Test
+	void strategyItemTypeMismatch_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyItemTypeMismatch", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyItemTypeMismatch {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy<Integer> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "parameter doesn't match its Page<java.lang.String> return type");
+	}
+
+	@Test
+	void strategyNotReturningPage_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyNotReturningPage", "" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import java.util.List;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyNotReturningPage {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  List<String> listOrders(PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void rawPageWithStrategy_failsCompilationWithRawTypeErrorOnly() throws IOException {
+		// A raw Page return type is already flagged generically - the item-type-match
+		// check must not also crash (or add a second error) when there's no return
+		// type argument to compare the strategy's own type argument against.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawPageWithStrategy", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawPageWithStrategy {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page listOrders(PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw Page with no type parameter");
+		assertFalse(errorMessages(diagnostics).stream().anyMatch(message -> message.contains("doesn't match")));
+	}
+
+	@Test
+	void rawStrategyParam_compilesCleanAndFallsBackReflectively() throws IOException {
+		// A raw PaginationStrategy parameter (no type argument) has nothing to compare
+		// against the method's own Page<String> return type - skipped, not an error.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawStrategyParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawStrategyParam {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy strategy);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginationCursorOnBody_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBody", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBody {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("CursorOnBody_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginationCursorOnBodyMissingBodyField_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyMissingBodyField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyMissingBodyField {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "stacked on @Body but bodyField is empty");
+	}
+
+	@Test
+	void paginationCursorOnBodyCompositeBodyField_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyCompositeBodyField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyCompositeBodyField {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"lastId,lastTimestamp\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"pointerField naming 1 value(s) but its @Body @PaginationCursor's bodyField names 2");
+	}
+
+	@Test
+	void paginationCursorOnBodyWrongMapType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyWrongMapType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyWrongMapType {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") Map<String,String> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "declared type is not Map<String,Object>");
+	}
+
+	@Test
+	void paginationCursorOnBodyRawMapType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyRawMapType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyRawMapType {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") Map body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "declared type is not Map<String,Object>");
+	}
+
+	@Test
+	void paginationCursorOnBodyNonMapType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyNonMapType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyNonMapType {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") String body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "declared type is not Map<String,Object>");
+	}
+
+	@Test
+	void paginationCursorBodyFieldWithoutBodyCarrier_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("BodyFieldWithoutBodyCarrier", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface BodyFieldWithoutBodyCarrier {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor(bodyField = \"cursor\") "
+				+ "String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "non-empty bodyField but is not stacked on @Body");
+	}
+
+	@Test
+	void bareParaginationCursor_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("BareCursorParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "public interface BareCursorParam {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "must be stacked on exactly one of @QueryParam/@PathParam/@HeaderParam/@Body");
+	}
+
+	@Test
+	void paginationCursorWrongType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorParamWrongType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorParamWrongType {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor double cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "only String, int, and long are supported");
+	}
+
+	@Test
+	void hasMoreFieldMissing_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("HasMoreFieldMissing", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface HasMoreFieldMissing {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\", hasMoreSource = PaginationSignalSource.RESPONSE_BODY)\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "must set hasMoreField");
+	}
+
+	@Test
+	void hasMoreSourceItemField_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("HasMoreSourceItemField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface HasMoreSourceItemField {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\", hasMoreSource = PaginationSignalSource.ITEM_FIELD, hasMoreField = \"done\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "hasMoreSource = ITEM_FIELD, which is only meaningful for pointerSource");
+	}
+
+	@Test
+	void compositePointerField_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositePointerField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositePointerField {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "composite pointer is only supported for pointerSource = ITEM_FIELD");
+	}
+
+	@Test
+	void paginatedWithHasMoreAndTotalSignals_compilesClean() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedFullSignals", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedFullSignals {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\",\n" //
+				+ "      hasMoreSource = PaginationSignalSource.RESPONSE_BODY, hasMoreField = \"has_more\",\n" //
+				+ "      totalSource = PaginationSignalSource.RESPONSE_HEADER, totalField = \"X-Total-Count\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedStreamReturn_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedStreamApi", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedStreamApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Stream<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedStreamApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginatedRipResponseWrappingIterator_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseIterator", "" //
+				+ "import java.util.Iterator;\n" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseIterator {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<Iterator<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns RipResponse<Iterator<T>>, which is not supported");
+	}
+
+	@Test
+	void paginatedRipResponseWrappingStream_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseStream", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseStream {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<Stream<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns RipResponse<Stream<T>>, which is not supported");
+	}
+
+	@Test
+	void paginatedRipResponseWrappingNonStreamType_failsWithGenericError() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseNonStream", "" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseNonStream {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void paginatedRipResponseWrappingArrayType_failsWithGenericError() throws IOException {
+		// RipResponse<byte[]>'s type argument isn't a DECLARED type (it's an
+		// array), so streamOrIteratorInnerName's remaining guard rejects it
+		// before comparing raw type names - falls through to the generic
+		// "does not return Page/Stream/Iterator" message.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseArray", "" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseArray {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<byte[]> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void paginatedRawRipResponseReturn_failsWithTheExistingRawTypeError() throws IOException {
+		// validateReturnType already flags a raw RipResponse regardless of
+		// @Paginated - the pagination-specific checks add nothing further for
+		// this exact case, avoiding a second, overlapping message.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRawRipResponse", "" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRawRipResponse {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw RipResponse with no type parameter");
+	}
+
+	@Test
+	void paginatedRawCompletableFutureReturn_failsWithTheExistingRawTypeError() throws IOException {
+		// Same overlap-avoidance as the raw RipResponse case above, but for the
+		// other raw-generic return type the early-return guard covers.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRawCompletableFuture", "" //
+				+ "import java.util.concurrent.CompletableFuture;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRawCompletableFuture {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  CompletableFuture listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw CompletableFuture with no type parameter");
+	}
+
+	@Test
+	void paginatedIteratorReturn_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedIteratorApi", "" //
+				+ "import java.util.Iterator;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedIteratorApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Iterator<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedIteratorApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void rawStreamReturn_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawStreamReturn", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface RawStreamReturn {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Stream listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw Stream with no type parameter");
+	}
+
+	@Test
+	void returnsStreamWithoutPaginated_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ReturnsStreamWithoutPaginated", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ReturnsStreamWithoutPaginated {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Stream<String> listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns Stream<T> but is not annotated with @Paginated");
+	}
+
 	private List<Diagnostic<? extends JavaFileObject>> compile(String className, String source) throws IOException {
 		JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();

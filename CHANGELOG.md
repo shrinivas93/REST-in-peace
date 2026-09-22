@@ -6,6 +6,108 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `@Paginated` follows a next-page pointer automatically instead of
+  hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for
+  manual, page-at-a-time iteration. `page.next()` re-invokes the exact same
+  method through the client's entire existing call pipeline - `@Retry`,
+  cache, circuit breaker, bulkhead, interceptors - exactly as if it were
+  called again by hand. This chunk supports a `PointerKind.FULL_URL` or
+  `VALUE` pointer sourced from the response body/headers
+  (`PaginationSignalSource.RESPONSE_BODY`/`RESPONSE_HEADER`), resent via a
+  parameter marked `@PaginationCursor` (stacked on `@QueryParam`/
+  `@PathParam`/`@HeaderParam`), plus `hasMoreSource`/`totalSource`/
+  `totalPagesSource` termination signals that take priority over "the
+  pointer is gone" - needed for an API (Stripe's, for one) that keeps the
+  pointer populated even on the genuinely last page. Reflective-only:
+  `Page<T>`'s type argument disqualifies compile-time codegen the same way
+  a raw `List<User>` return type already does, falling back to the
+  reflective proxy. See `docs/design/pagination-helper.md` for the full
+  design, every default, and exactly which of its 46 cataloged real-world
+  pagination shapes this chunk covers - client-driven advancement, a
+  programmatic `PaginationStrategy<T>` escape hatch, and an async first
+  fetch land in later chunks.
+- `@Paginated` also supports `Stream<T>`/`Iterator<T>` return types, lazily
+  auto-flattening every page into one sequence instead of managing pages by
+  hand via `Page<T>` - a pure wrapper over the same `Page<T>` chain, with no
+  new fetch logic. Unlike `Page<T>`, which fetches its first page eagerly
+  like any other RIP call, `Stream<T>`/`Iterator<T>` fetch nothing until the
+  first `hasNext()`/terminal stream operation, matching ordinary
+  lazy-iterator/lazy-stream semantics. `RipResponse<Stream<T>>`/
+  `RipResponse<Iterator<T>>` are rejected at validation time - auto-flattened
+  iteration spans an unknown number of underlying calls, so there is no
+  single response left to wrap; use `Page<T>` and its `rawResponse()`
+  instead.
+- `@PaginationCursor` now also stacks on a `@Body Map<String,Object>`
+  parameter, for a POST-based API whose cursor is resent as a JSON request
+  body field (Elasticsearch's `search_after`, DynamoDB's
+  `ExclusiveStartKey`) rather than a query/path/header value. `bodyField`
+  names the (dotted-path) field inside that body to write the next-page
+  value into - a copy-on-write `set`, symmetric with the response side's
+  existing dotted-path `get`, so neither the caller's original map nor any
+  nested map along the path is mutated in place; every other field the
+  caller put in the body carries forward unchanged on every subsequent
+  page.
+- `@Paginated` supports `pointerSource = ITEM_FIELD`: keyset pagination
+  (`since_id`/`max_id`-style APIs like Stripe and classic Twitter) that
+  derives the next-page pointer from the *last fetched item* rather than a
+  dedicated response field. `pointerField` accepts a comma-separated list
+  for a composite key (an `(id, timestamp)` pair for a stable sort under
+  concurrent writes) - resent via either N separate `@PaginationCursor`
+  parameters, positionally matched to the N entries, or one `@Body`
+  parameter whose comma-separated `bodyField` names the same N values
+  (composite keyset into one JSON body). Without a `hasMore`/`total`/
+  `totalPages` signal, a keyset API's own field is virtually always present
+  on a non-empty page, so termination falls to the unconditional
+  empty-items safety net rather than the usual pointer-presence fallback.
+- A `PointerKind.FULL_URL` pointer sourced from `RESPONSE_HEADER`
+  transparently parses an RFC 8288 (formerly RFC 5988) `Link` header
+  (GitHub REST, Shopify REST) and follows its `rel="next"` target, instead
+  of treating the whole multi-value header as a literal URL. A header
+  value that doesn't look like this format at all (no angle-bracketed URI)
+  is still used as the next URL verbatim, preserving the simpler case
+  already supported. A well-formed `Link` header with no `rel="next"`
+  segment (the genuinely last page, which may still carry `rel="prev"`/
+  `rel="first"`) correctly resolves to no next page.
+- `@Paginated(pointerSource = NONE, advance = ...)` covers APIs that give
+  back no next-page pointer at all and expect the client to compute the
+  next offset or page number itself: `INCREMENT_BY_PAGE_SIZE` advances the
+  offset by `pageSize` each fetch, and `INCREMENT_BY_ONE` advances the page
+  number by one, substituting the computed value into the method's single
+  `@PaginationCursor` parameter exactly as an extracted pointer would be. A
+  `hasMoreSource`/`totalSource`/`totalPagesSource` termination signal, if
+  set, still takes priority as usual; absent one, `INCREMENT_BY_PAGE_SIZE`
+  falls back to stopping on a short (fewer-than-`pageSize`) page and
+  `INCREMENT_BY_ONE` falls back to the unconditional empty-items safety
+  net. A computed value written into a `@Body` carrier is a real JSON
+  number, unlike an extracted pointer value's raw string, matching what a
+  numeric field such as Elasticsearch's `from`/`size` expects.
+- `PaginationStrategy<T>`, the fully programmatic pagination escape hatch
+  for whatever `@Paginated`'s closed attribute vocabulary can't express
+  (a cursor needing decoding before reuse, termination logic combining
+  several signals, a page count from a separate API call, and the other
+  cases the design doc catalogs) - a plain parameter recognized by its
+  declared type, mutually exclusive with `@Paginated` on the same method.
+  The lambda is consulted after every fetch with this page's decoded
+  items, parsed body, and headers, and answers what the next request
+  should look like via `PaginationRequest.toUrl`/`withQueryParam`/
+  `withPathParam`/`withHeader`/`withBodyField`, combinable with `.and(...)`.
+  Unlike the declarative path, the response body must itself be the JSON
+  items array - there's no `itemsField` equivalent. `withQueryParam`/
+  `withHeader` apply directly to the outgoing request; `withPathParam`/
+  `withBodyField` route through the method's own `@PathParam`/`@Body`
+  parameter, the same mechanism the declarative `@PaginationCursor`
+  carriers use. The unconditional empty-items safety net applies here too.
+- `MockRestServer.onPages(httpMethod, pathTemplate, responses...)` scripts
+  an ordered page-by-page response sequence for a `@Paginated`/
+  `PaginationStrategy<T>` fetch in one call - the Nth request gets
+  `responses[N-1]`, with the last response sticky for every request after
+  that, by request order rather than matching each page's differing
+  cursor/offset query param value. Sugar over the existing per-route
+  response queue `enqueueFor`/`onFlaky` already used for retry-recovery
+  scripting - no change to `MockResponse` was needed.
+
 ## [1.0.0.48] - 2026-09-20
 
 ### Added
