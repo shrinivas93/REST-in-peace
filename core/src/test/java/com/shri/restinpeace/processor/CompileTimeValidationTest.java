@@ -1519,6 +1519,25 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void paginatedValuePointerFieldEmpty_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ValuePointerFieldEmpty", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ValuePointerFieldEmpty {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "must set pointerField");
+	}
+
+	@Test
 	void paginatedVoidReturn_failsCompilation() throws IOException {
 		// void's TypeMirror.getKind() is VOID, not DECLARED - exercises the
 		// isDeclared == false branch of the raw-RipResponse/CompletableFuture and
@@ -1669,7 +1688,7 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void pointerSourceItemField_failsCompilation() throws IOException {
+	void pointerSourceItemField_compilesCleanAndFallsBackReflectively() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PointerSourceItemField", "" //
 				+ "import com.shri.restinpeace.Page;\n" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
@@ -1685,7 +1704,126 @@ class CompileTimeValidationTest {
 				+ "  Page<String> listOrders(@QueryParam(\"since\") @PaginationCursor String since);\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "pointerSource = ITEM_FIELD (keyset pagination), which is not implemented yet");
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PointerSourceItemField_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void compositeItemFieldTwoParams_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldTwoParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldTwoParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"lastId\") @PaginationCursor String lastId,\n" //
+				+ "      @QueryParam(\"lastTs\") @PaginationCursor String lastTimestamp);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void compositeItemFieldWrongParamCount_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldWrongParamCount", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldWrongParamCount {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"lastId\") @PaginationCursor String lastId);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"needs 2 @PaginationCursor parameter(s) (matching pointerField's 2 comma-separated entries) - "
+						+ "found 1");
+	}
+
+	@Test
+	void compositeItemFieldIntoBody_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldIntoBody", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldIntoBody {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"lastId,lastTimestamp\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void compositeItemFieldIntoBodyWrongCount_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CompositeItemFieldIntoBodyWrongCount", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CompositeItemFieldIntoBodyWrongCount {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt,tenantId\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"lastId,lastTimestamp\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"pointerField naming 3 value(s) but its @Body @PaginationCursor's bodyField names 2");
+	}
+
+	@Test
+	void bodyCursorAlongsideAnotherCursorParam_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("BodyCursorAlongsideAnotherCursorParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface BodyCursorAlongsideAnotherCursorParam {\n" //
+				+ "  @POST(\"http://localhost/orders/search\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerSource = PaginationSignalSource.ITEM_FIELD, "
+				+ "pointerField = \"id,createdAt\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"lastId\") @PaginationCursor String lastId,\n" //
+				+ "      @Body @PaginationCursor(bodyField = \"lastTimestamp\") Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "must be the method's only @PaginationCursor parameter");
 	}
 
 	@Test
@@ -1769,7 +1907,8 @@ class CompileTimeValidationTest {
 				+ "Map<String,Object> body);\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "composite keyset into one body field needs pointerSource = ITEM_FIELD");
+		assertErrorContains(diagnostics,
+				"pointerField naming 1 value(s) but its @Body @PaginationCursor's bodyField names 2");
 	}
 
 	@Test

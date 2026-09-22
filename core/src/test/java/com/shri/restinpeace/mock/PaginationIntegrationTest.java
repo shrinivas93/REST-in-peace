@@ -417,6 +417,92 @@ class PaginationIntegrationTest {
 		assertFalse(page2.hasNext());
 	}
 
+	@Test
+	void itemFieldCursor_extractsFromLastItemAndAdvances() {
+		// since_id-style keyset (Twitter v1.1, row 41): no hasMore/total signal, so
+		// the empty-items safety net (§6.5 step 5) is what actually terminates -
+		// the last fetched item's own field is (by construction) always present
+		// while items keep coming back, so pointer-presence alone never stops it.
+		server.on(HTTPMethod.GET, "/orders", queryParams("since", "3"), MockResponse.ok("{\"orders\":[]}"));
+		server.on(HTTPMethod.GET, "/orders", queryParams("since", "2"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}]}"));
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"},{\"id\":\"2\"}]}"));
+
+		Page<Order> page1 = api.listOrdersByItemFieldCursor(null);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("3", page2.items().get(0).id);
+		assertTrue(page2.hasNext());
+
+		Page<Order> page3 = page2.next();
+		assertTrue(page3.items().isEmpty());
+		assertFalse(page3.hasNext());
+		assertEquals(3, server.requestCount());
+	}
+
+	@Test
+	void itemFieldWithHasMore_missingFieldOnLastItem_throws() {
+		// Unlike the plain pointer-presence fallback above, hasMore = true makes a
+		// missing field a genuine contradiction - "another page exists" but nothing
+		// to extract - so this must throw rather than quietly stopping.
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"createdAt\":\"t1\"}],\"has_more\":true}"));
+
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> api.listOrdersByItemFieldWithHasMore(null));
+		assertTrue(exception.getMessage().contains("indicated another page exists"));
+	}
+
+	@Test
+	void itemFieldCursor_emptyFirstPage_stopsWithoutExtracting() {
+		// Nothing to extract from (no last item) - must stop cleanly, not throw.
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[]}"));
+
+		Page<Order> page1 = api.listOrdersByItemFieldCursor(null);
+		assertTrue(page1.items().isEmpty());
+		assertFalse(page1.hasNext());
+	}
+
+	@Test
+	void compositeItemFieldCursor_extractsBothFieldsAndAdvancesBothParams() {
+		Map<String, String> nextPageParams = new HashMap<>();
+		nextPageParams.put("lastId", "2");
+		nextPageParams.put("lastTs", "t2");
+		server.on(HTTPMethod.GET, "/orders", nextPageParams, MockResponse.ok("{\"orders\":[]}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\",\"createdAt\":\"t1\"},"
+						+ "{\"id\":\"2\",\"createdAt\":\"t2\"}]}"));
+
+		Page<Order> page1 = api.listOrdersByCompositeItemFieldCursor(null, null);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertTrue(page2.items().isEmpty());
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void compositeItemFieldIntoBody_setsBothExtractedFieldsIntoTheBody() {
+		server.on(HTTPMethod.POST, "/orders/search",
+				request -> request.getBody().contains("\"lastId\":\"2\"")
+						&& request.getBody().contains("\"lastTimestamp\":\"t2\""),
+				MockResponse.ok("{\"orders\":[]}"));
+		server.on(HTTPMethod.POST, "/orders/search",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\",\"createdAt\":\"t1\"},"
+						+ "{\"id\":\"2\",\"createdAt\":\"t2\"}]}"));
+
+		Page<Order> page1 = api.searchOrdersByCompositeItemFieldIntoBody(new LinkedHashMap<>());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertTrue(page2.items().isEmpty());
+		assertFalse(page2.hasNext());
+	}
+
 	private static Map<String, String> queryParams(String name, String value) {
 		Map<String, String> params = new HashMap<>();
 		params.put(name, value);

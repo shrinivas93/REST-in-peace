@@ -10,8 +10,7 @@ package com.shri.restinpeace.annotation.pagination;
  * {@link #ITEM_FIELD} is only meaningful for {@code pointerSource} - keyset
  * pagination derives the next pointer from the last fetched item itself
  * (§6.6), a concept that doesn't apply to a {@code hasMore}/total-count
- * signal. It is also not yet implemented for any attribute (planned rollout
- * chunk 5) - {@code RIP.getClient(...)} rejects it for now.
+ * signal - {@code RIP.getClient(...)} rejects it for any other attribute.
  */
 public enum PaginationSignalSource {
 
@@ -21,7 +20,7 @@ public enum PaginationSignalSource {
 	/** Read from a response header. */
 	RESPONSE_HEADER,
 
-	/** Derived from the last fetched item, for {@code pointerSource} only (not yet implemented). */
+	/** Derived from the last fetched item, for {@code pointerSource} only. */
 	ITEM_FIELD,
 
 	/** No such signal - this attribute isn't used. */

@@ -949,18 +949,41 @@ Every field the caller put in `body` on the first call — a filter, a page
 size — carries forward unchanged on every subsequent page; only `bodyField`
 gets overwritten, and the caller's own map is never mutated in place.
 
+For a `since_id`/keyset-style API whose cursor isn't in the response
+envelope at all but derived from the last item on the page (Stripe,
+classic Twitter), set `pointerSource = ITEM_FIELD`:
+
+```java
+@GET("/charges")
+@Paginated(itemsField = "data", pointerSource = ITEM_FIELD, pointerField = "id")
+Page<Charge> listCharges(@QueryParam("starting_after") @PaginationCursor String startingAfter);
+```
+
+`pointerField` accepts a comma-separated list for a composite key (an
+`(id, timestamp)` pair for a stable sort under concurrent writes) —
+resent via either N separate `@PaginationCursor` parameters, positionally
+matched to the N entries, or one `@Body` parameter whose comma-separated
+`bodyField` names the same N values:
+
+```java
+@GET("/events")
+@Paginated(itemsField = "events", pointerSource = ITEM_FIELD, pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
+        @QueryParam("lastTs") @PaginationCursor String lastTimestamp);
+```
+
 This is an incrementally-landing feature — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
 the full design, an exhaustive 46-row catalogue of real-world pagination
 shapes, the programmatic `PaginationStrategy<T>` escape hatch for whatever
 a closed annotation vocabulary can't express, and exactly which shapes are
 implemented so far. As of now: a `VALUE`/`FULL_URL` pointer sourced from the
-response body/headers, resent via `@QueryParam`/`@PathParam`/
+response body/headers/last item, resent via `@QueryParam`/`@PathParam`/
 `@HeaderParam`/`@Body`, and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>`
 return type — `RIP.getClient(...)` rejects an unsupported shape
-(keyset/`ITEM_FIELD` pagination, client-driven `advance`,
-`PaginationStrategy<T>`, an async first fetch) by name, naming the rollout
-chunk that adds it, rather than silently misbehaving.
+(client-driven `advance`, `PaginationStrategy<T>`, an async first fetch) by
+name, naming the rollout chunk that adds it, rather than silently
+misbehaving.
 
 ## Error handling
 

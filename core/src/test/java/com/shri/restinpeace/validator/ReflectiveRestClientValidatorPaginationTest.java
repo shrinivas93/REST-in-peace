@@ -1,6 +1,7 @@
 package com.shri.restinpeace.validator;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -193,6 +194,13 @@ class ReflectiveRestClientValidatorPaginationTest {
 	}
 
 	@RestClient
+	public interface ValuePointerFieldEmpty {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders")
+		Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
 	public interface ValuePointerWithTwoCursorParams {
 		@GET("http://example.com/orders")
 		@Paginated(itemsField = "orders", pointerField = "next_cursor")
@@ -212,6 +220,50 @@ class ReflectiveRestClientValidatorPaginationTest {
 		@GET("http://example.com/orders")
 		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = "id")
 		Page<Order> listOrders(@QueryParam("since") @PaginationCursor String since);
+	}
+
+	@RestClient
+	public interface CompositeItemFieldTwoParams {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+				pointerField = "id,createdAt")
+		Page<Order> listOrders(@QueryParam("lastId") @PaginationCursor String lastId,
+				@QueryParam("lastTs") @PaginationCursor String lastTimestamp);
+	}
+
+	@RestClient
+	public interface CompositeItemFieldWrongParamCount {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+				pointerField = "id,createdAt")
+		Page<Order> listOrders(@QueryParam("lastId") @PaginationCursor String lastId);
+	}
+
+	@RestClient
+	public interface CompositeItemFieldIntoBody {
+		@POST("http://example.com/orders/search")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+				pointerField = "id,createdAt")
+		Page<Order> listOrders(
+				@Body @PaginationCursor(bodyField = "lastId,lastTimestamp") java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface CompositeItemFieldIntoBodyWrongCount {
+		@POST("http://example.com/orders/search")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+				pointerField = "id,createdAt,tenantId")
+		Page<Order> listOrders(
+				@Body @PaginationCursor(bodyField = "lastId,lastTimestamp") java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface BodyCursorAlongsideAnotherCursorParam {
+		@POST("http://example.com/orders/search")
+		@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+				pointerField = "id,createdAt")
+		Page<Order> listOrders(@QueryParam("lastId") @PaginationCursor String lastId,
+				@Body @PaginationCursor(bodyField = "lastTimestamp") java.util.Map<String, Object> body);
 	}
 
 	@RestClient
@@ -476,6 +528,17 @@ class ReflectiveRestClientValidatorPaginationTest {
 	}
 
 	@Test
+	void validate_valuePointerFieldEmpty_throwsWithOnlyTheMissingFieldError() {
+		// An empty pointerField already gets its own "must set pointerField" error -
+		// must not cascade into the unrelated cursor-param-count check too.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(ValuePointerFieldEmpty.class));
+		String errors = exception.getValidationResult().getAllErrors();
+		assertTrue(errors.contains("must set pointerField"));
+		assertFalse(errors.contains("@PaginationCursor parameter(s)"));
+	}
+
+	@Test
 	void validate_valuePointerWithTwoCursorParams_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(ValuePointerWithTwoCursorParams.class));
@@ -491,11 +554,43 @@ class ReflectiveRestClientValidatorPaginationTest {
 	}
 
 	@Test
-	void validate_pointerSourceItemField_throwsWithError() {
+	void validate_pointerSourceItemField_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(PointerSourceItemField.class));
+	}
+
+	@Test
+	void validate_compositeItemFieldTwoParams_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(CompositeItemFieldTwoParams.class));
+	}
+
+	@Test
+	void validate_compositeItemFieldWrongParamCount_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> ReflectiveRestClientValidator.validate(PointerSourceItemField.class));
+				() -> ReflectiveRestClientValidator.validate(CompositeItemFieldWrongParamCount.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("pointerSource = ITEM_FIELD (keyset pagination), which is not implemented yet"));
+				.contains("needs 2 @PaginationCursor parameter(s) (matching pointerField's 2 comma-separated "
+						+ "entries) - found 1"));
+	}
+
+	@Test
+	void validate_compositeItemFieldIntoBody_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(CompositeItemFieldIntoBody.class));
+	}
+
+	@Test
+	void validate_compositeItemFieldIntoBodyWrongCount_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(CompositeItemFieldIntoBodyWrongCount.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("pointerField naming 3 value(s) but its @Body @PaginationCursor's bodyField names 2"));
+	}
+
+	@Test
+	void validate_bodyCursorAlongsideAnotherCursorParam_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(BodyCursorAlongsideAnotherCursorParam.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("must be the method's only @PaginationCursor parameter"));
 	}
 
 	@Test
@@ -526,10 +621,12 @@ class ReflectiveRestClientValidatorPaginationTest {
 
 	@Test
 	void validate_cursorOnBodyCompositeBodyField_throwsWithError() {
+		// pointerField has only 1 entry (default pointerSource, not ITEM_FIELD) but
+		// bodyField names 2 - a count mismatch, regardless of the ITEM_FIELD question.
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(CursorOnBodyCompositeBodyField.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("composite keyset into one body field needs pointerSource = ITEM_FIELD"));
+				.contains("pointerField naming 1 value(s) but its @Body @PaginationCursor's bodyField names 2"));
 	}
 
 	@Test

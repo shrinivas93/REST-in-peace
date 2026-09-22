@@ -399,15 +399,17 @@ public class ReflectiveRestClientValidator {
 	}
 
 	/**
-	 * Validates a {@code @Paginated} method - the chunk-2/3/4-supported subset of
+	 * Validates a {@code @Paginated} method - the chunk-2/3/4/5-supported subset of
 	 * {@code docs/design/pagination-helper.md} §7: {@link PointerKind#FULL_URL}/
 	 * {@link PointerKind#VALUE} pointers sourced from
-	 * {@link PaginationSignalSource#RESPONSE_BODY}/{@link PaginationSignalSource#RESPONSE_HEADER},
-	 * resent via a single {@code @QueryParam}/{@code @PathParam}/
-	 * {@code @HeaderParam}/{@code @Body} {@code @PaginationCursor}, and a
+	 * {@link PaginationSignalSource#RESPONSE_BODY}/{@link PaginationSignalSource#RESPONSE_HEADER}/
+	 * {@link PaginationSignalSource#ITEM_FIELD}, resent via {@code @QueryParam}/
+	 * {@code @PathParam}/{@code @HeaderParam}/{@code @Body} {@code @PaginationCursor}
+	 * parameter(s) - one per comma-separated {@code pointerField} entry for a
+	 * non-{@code @Body} composite keyset (§6.6), or one {@code @Body} parameter
+	 * whose comma-separated {@code bodyField} matches that count (§6.7) - and a
 	 * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} return type. Every
-	 * not-yet-implemented shape ({@code ITEM_FIELD}/keyset, client-driven
-	 * {@code advance}, composite pointers into non-body carriers,
+	 * not-yet-implemented shape (client-driven {@code advance},
 	 * {@code CompletableFuture<Page<T>>}) is rejected by name rather than
 	 * silently misbehaving at call time.
 	 */
@@ -530,26 +532,60 @@ public class ReflectiveRestClientValidator {
 					method.getDeclaringClass().getName(), method.getName()));
 			return;
 		}
-		if (source == PaginationSignalSource.ITEM_FIELD) {
+		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", validationResult);
+		if (paginated.pointerField().isEmpty()) {
+			return;
+		}
+		int fieldCount = paginated.pointerField().split(",", -1).length;
+		if (fieldCount > 1 && source != PaginationSignalSource.ITEM_FIELD) {
 			validationResult.addError(String.format(
-					"The method %s.%s's @Paginated has pointerSource = ITEM_FIELD (keyset pagination), which is "
-							+ "not implemented yet (rollout chunk 5).",
+					"The method %s.%s's @Paginated has a comma-separated pointerField - a composite pointer is "
+							+ "only supported for pointerSource = ITEM_FIELD.",
 					method.getDeclaringClass().getName(), method.getName()));
 			return;
 		}
-		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", validationResult);
-		if (paginated.pointerField().contains(",")) {
-			validationResult.addError(String.format(
-					"The method %s.%s's @Paginated has a comma-separated pointerField - a composite pointer is "
-							+ "only supported for pointerSource = ITEM_FIELD, which is not implemented yet "
-							+ "(rollout chunk 5).",
-					method.getDeclaringClass().getName(), method.getName()));
+		validateCursorParamCount(method, cursorParams, fieldCount, validationResult);
+	}
+
+	/**
+	 * A {@code VALUE} pointer needs either exactly {@code fieldCount} non-{@code @Body} cursor parameters,
+	 * positionally matched to {@code pointerField}'s comma-separated entries (§6.6 - N-way composite keyset via
+	 * N separate carriers), or exactly one {@code @Body} cursor parameter whose comma-separated
+	 * {@code bodyField} names the same {@code fieldCount} values (§6.7 - composite keyset into one JSON body).
+	 */
+	private static void validateCursorParamCount(Method method, List<Parameter> cursorParams, int fieldCount,
+			ValidationResult validationResult) {
+		List<Parameter> bodyParams = cursorParams.stream().filter(p -> p.getAnnotation(Body.class) != null)
+				.collect(Collectors.toList());
+		if (!bodyParams.isEmpty()) {
+			if (cursorParams.size() > 1) {
+				validationResult.addError(String.format(
+						"The method %s.%s has a @PaginationCursor stacked on @Body alongside other "
+								+ "@PaginationCursor parameters - a @Body carrier must be the method's only "
+								+ "@PaginationCursor parameter.",
+						method.getDeclaringClass().getName(), method.getName()));
+				return;
+			}
+			String bodyField = bodyParams.get(0).getAnnotation(PaginationCursor.class).bodyField();
+			if (bodyField.isEmpty()) {
+				return; // already flagged by validatePaginationCursorParam
+			}
+			int bodyFieldCount = bodyField.split(",", -1).length;
+			if (bodyFieldCount != fieldCount) {
+				validationResult.addError(String.format(
+						"The method %s.%s's @Paginated has a pointerField naming %d value(s) but its @Body "
+								+ "@PaginationCursor's bodyField names %d - they must match.",
+						method.getDeclaringClass().getName(), method.getName(), fieldCount, bodyFieldCount));
+			}
+			return;
 		}
-		if (cursorParams.size() != 1) {
+		if (cursorParams.size() != fieldCount) {
 			validationResult.addError(String.format(
 					"The method %s.%s's @Paginated has pointerKind = VALUE with pointerSource != NONE, which "
-							+ "needs exactly one @PaginationCursor parameter - found %d.",
-					method.getDeclaringClass().getName(), method.getName(), cursorParams.size()));
+							+ "needs %d @PaginationCursor parameter(s) (matching pointerField's %d "
+							+ "comma-separated entries) - found %d.",
+					method.getDeclaringClass().getName(), method.getName(), fieldCount, fieldCount,
+					cursorParams.size()));
 		}
 	}
 
@@ -603,12 +639,6 @@ public class ReflectiveRestClientValidator {
 						"The method %s.%s has a @PaginationCursor stacked on @Body but bodyField is empty - set it "
 								+ "to the JSON path inside the body to write the next-page value to.",
 						method.getDeclaringClass().getName(), method.getName()));
-			} else if (bodyField.contains(",")) {
-				validationResult.addError(String.format(
-						"The method %s.%s's @PaginationCursor has a comma-separated bodyField '%s' - composite "
-								+ "keyset into one body field needs pointerSource = ITEM_FIELD, which is not "
-								+ "implemented yet (rollout chunk 5).",
-						method.getDeclaringClass().getName(), method.getName(), bodyField));
 			}
 			if (!isMapOfStringToObject(cursorParam)) {
 				validationResult.addError(String.format(
