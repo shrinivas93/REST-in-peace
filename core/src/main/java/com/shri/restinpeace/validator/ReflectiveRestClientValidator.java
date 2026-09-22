@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -399,9 +400,9 @@ public class ReflectiveRestClientValidator {
 	}
 
 	/**
-	 * Validates a {@code @Paginated} method - the chunk-2/3/4/5/7-supported subset of
-	 * {@code docs/design/pagination-helper.md} §7: {@link PointerKind#FULL_URL}/
-	 * {@link PointerKind#VALUE} pointers sourced from
+	 * Validates a {@code @Paginated} method or a {@code PaginationStrategy<T>}-parameter method - the
+	 * chunk-2/3/4/5/7/8-supported subset of {@code docs/design/pagination-helper.md} §7:
+	 * {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE} pointers sourced from
 	 * {@link PaginationSignalSource#RESPONSE_BODY}/{@link PaginationSignalSource#RESPONSE_HEADER}/
 	 * {@link PaginationSignalSource#ITEM_FIELD}, resent via {@code @QueryParam}/
 	 * {@code @PathParam}/{@code @HeaderParam}/{@code @Body} {@code @PaginationCursor}
@@ -410,32 +411,44 @@ public class ReflectiveRestClientValidator {
 	 * whose comma-separated {@code bodyField} matches that count (§6.7) - or,
 	 * with {@code pointerSource = NONE}, client-driven {@code advance()}
 	 * (offset/page-number arithmetic, chunk 7) via exactly one
-	 * {@code @PaginationCursor} parameter. Requires a
+	 * {@code @PaginationCursor} parameter; or, as the fully programmatic
+	 * alternative (chunk 8, §6.8), a single {@code PaginationStrategy<T>}
+	 * parameter, mutually exclusive with {@code @Paginated}. Requires a
 	 * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} return type. Every
 	 * not-yet-implemented shape ({@code CompletableFuture<Page<T>>}) is
 	 * rejected by name rather than silently misbehaving at call time.
 	 */
 	private static void validatePaginated(Method method, String url, ValidationResult validationResult) {
 		Paginated paginated = method.getAnnotation(Paginated.class);
+		List<Parameter> strategyParams = Stream.of(method.getParameters())
+				.filter(parameter -> parameter.getType() == PaginationStrategy.class).collect(Collectors.toList());
 		Class<?> returnType = method.getReturnType();
 		boolean returnsPage = returnType == Page.class;
 		boolean returnsStream = returnType == Stream.class;
 		boolean returnsIterator = returnType == Iterator.class;
 		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator;
 
-		if (returnsSupportedType && paginated == null) {
+		if (paginated != null && !strategyParams.isEmpty()) {
 			validationResult.addError(String.format(
-					"The method %s.%s returns %s<T> but is not annotated with @Paginated.",
+					"The method %s.%s is annotated with @Paginated and also has a PaginationStrategy<T> "
+							+ "parameter - use one or the other.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		if (returnsSupportedType && paginated == null && strategyParams.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s<T> but is not annotated with @Paginated and has no "
+							+ "PaginationStrategy<T> parameter.",
 					method.getDeclaringClass().getName(), method.getName(), returnType.getSimpleName()));
 			return;
 		}
-		if (paginated == null) {
+		if (paginated == null && strategyParams.isEmpty()) {
 			return;
 		}
 		// A raw RipResponse/CompletableFuture (no type parameter at all) is already
-		// flagged by validateReturnType regardless of @Paginated - skip adding a
-		// second, overlapping message about the same underlying "raw generic
-		// return type" mistake on the same method.
+		// flagged by validateReturnType regardless of @Paginated/PaginationStrategy -
+		// skip adding a second, overlapping message about the same underlying "raw
+		// generic return type" mistake on the same method.
 		if ((returnType == RipResponse.class || returnType == CompletableFuture.class)
 				&& !(method.getGenericReturnType() instanceof ParameterizedType)) {
 			return;
@@ -451,8 +464,9 @@ public class ReflectiveRestClientValidator {
 		}
 		if (!returnsSupportedType) {
 			validationResult.addError(String.format(
-					"The method %s.%s is annotated with @Paginated but does not return Page<T>, Stream<T>, or "
-							+ "Iterator<T> - wrapping in CompletableFuture is not implemented yet.",
+					"The method %s.%s is annotated with @Paginated or has a PaginationStrategy<T> parameter but "
+							+ "does not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is "
+							+ "not implemented yet.",
 					method.getDeclaringClass().getName(), method.getName()));
 			return;
 		}
@@ -467,6 +481,12 @@ public class ReflectiveRestClientValidator {
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with both @Paginated and @Url - remove one or the other.",
 					method.getDeclaringClass().getName(), method.getName()));
+		}
+
+		if (paginated == null) {
+			validatePaginationStrategyParams(method, method.getGenericReturnType(), returnType, strategyParams,
+					validationResult);
+			return;
 		}
 
 		List<Parameter> cursorParams = Stream.of(method.getParameters())
@@ -509,6 +529,35 @@ public class ReflectiveRestClientValidator {
 
 		for (Parameter cursorParam : cursorParams) {
 			validatePaginationCursorParam(method, cursorParam, validationResult);
+		}
+	}
+
+	/**
+	 * Validates the {@code PaginationStrategy<T>}-parameter path (§6.8, chunk 8): exactly one such parameter is
+	 * allowed, and when both its {@code T} and the method's own {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>}
+	 * return type argument are reflectively known (i.e. neither is a raw, unparameterized use), they must match -
+	 * otherwise the items {@code PaginationContext<T>.items()} hands back at runtime silently wouldn't be the type
+	 * the consumer's strategy lambda declared.
+	 */
+	private static void validatePaginationStrategyParams(Method method, Type genericReturnType, Class<?> returnType,
+			List<Parameter> strategyParams, ValidationResult validationResult) {
+		if (strategyParams.size() > 1) {
+			validationResult.addError(String.format(
+					"The method %s.%s has more than one PaginationStrategy<T> parameter.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		Type itemType = genericReturnType instanceof ParameterizedType
+				? ((ParameterizedType) genericReturnType).getActualTypeArguments()[0] : null;
+		Type strategyGenericType = strategyParams.get(0).getParameterizedType();
+		Type strategyItemType = strategyGenericType instanceof ParameterizedType
+				? ((ParameterizedType) strategyGenericType).getActualTypeArguments()[0] : null;
+		if (itemType != null && strategyItemType != null && !itemType.equals(strategyItemType)) {
+			validationResult.addError(String.format(
+					"The method %s.%s's PaginationStrategy<%s> parameter doesn't match its %s<%s> return type - "
+							+ "they must share the same item type.",
+					method.getDeclaringClass().getName(), method.getName(), strategyItemType,
+					returnType.getSimpleName(), itemType));
 		}
 	}
 
@@ -645,12 +694,6 @@ public class ReflectiveRestClientValidator {
 
 	private static void validatePaginationCursorParam(Method method, Parameter cursorParam,
 			ValidationResult validationResult) {
-		if (method.getAnnotation(Paginated.class) == null) {
-			validationResult.addError(String.format(
-					"The method %s.%s has a @PaginationCursor parameter but is not annotated with @Paginated.",
-					method.getDeclaringClass().getName(), method.getName()));
-			return;
-		}
 		boolean onQuery = cursorParam.getAnnotation(QueryParam.class) != null;
 		boolean onPath = cursorParam.getAnnotation(PathParam.class) != null;
 		boolean onHeader = cursorParam.getAnnotation(HeaderParam.class) != null;

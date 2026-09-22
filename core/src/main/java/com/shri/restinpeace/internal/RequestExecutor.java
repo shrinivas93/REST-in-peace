@@ -24,6 +24,7 @@ import org.apache.http.impl.nio.client.HttpAsyncClients;
 import com.shri.restinpeace.BulkheadConfig;
 import com.shri.restinpeace.CircuitBreakerConfig;
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.request.Body;
@@ -299,6 +300,10 @@ public class RequestExecutor {
 		if (paginated != null) {
 			return processPaginatedRequest(method, httpMethod, args, paginated);
 		}
+		int strategyParamIndex = paginationCoordinator.findStrategyParamIndex(method);
+		if (strategyParamIndex >= 0) {
+			return processStrategyPaginatedRequest(method, httpMethod, args, strategyParamIndex);
+		}
 		String url = urlResolver.resolveUrl(method, httpMethod, args);
 		RequestContext context = new RequestContext(httpMethod, url);
 		if (method.getAnnotation(NoCache.class) != null) {
@@ -414,6 +419,70 @@ public class RequestExecutor {
 		applyFixedHeaders(request, method);
 		applyIdempotencyKeyIfNeeded(request, method);
 		request = applyParams(request, method, args, context);
+		request = interceptorDispatcher.applyInterceptors(request, context);
+		return retryExecutor.executeSyncWithRetry(method, String.class, context,
+				circuitBreakerCoordinator.wrapWithCircuitBreaker(bulkheadCoordinator.wrapWithBulkhead(
+						cacheCoordinator.wrapWithCache(request, context,
+								interceptorDispatcher.wrapWithShortCircuit(context, request::asString)))));
+	}
+
+	/**
+	 * Entry point for a {@code PaginationStrategy<T>}-parameter method (§6.8) - the programmatic counterpart of
+	 * {@link #processPaginatedRequest}, driven by the consumer's own {@link PaginationStrategy} instead of
+	 * {@code @Paginated}'s declarative attributes. {@code Page<T>} fetches the first page eagerly, exactly like the
+	 * declarative path; {@code Stream<T>}/{@code Iterator<T>} lazily flatten every page the same way too.
+	 * Reflective-only, for the same reasons as {@link #processPaginatedRequest} (§8.5).
+	 */
+	private Object processStrategyPaginatedRequest(Method method, HTTPMethod httpMethod, Object[] args,
+			int strategyParamIndex) {
+		@SuppressWarnings("unchecked")
+		PaginationStrategy<Object> strategy = (PaginationStrategy<Object>) args[strategyParamIndex];
+		if (strategy == null) {
+			throw new RestInPeaceException(
+					String.format("The method %s's PaginationStrategy<T> argument must not be null.", method));
+		}
+		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
+		Type itemType = paginationCoordinator.resolveItemType(method);
+		Object[] initialArgs = args == null ? new Object[method.getParameterCount()] : args.clone();
+		Supplier<Page<Object>> firstPageSupplier = () -> paginationCoordinator.fetchFirstStrategyPage(method,
+				strategy, itemType, errorType, initialArgs,
+				(fetchArgs, urlOverride, queryOverrides, headerOverrides) -> executeStrategyPageFetch(method,
+						httpMethod, fetchArgs, urlOverride, queryOverrides, headerOverrides));
+
+		Class<?> returnType = method.getReturnType();
+		if (returnType == Stream.class) {
+			return paginationCoordinator.flattenToStream(firstPageSupplier);
+		}
+		if (returnType == Iterator.class) {
+			return paginationCoordinator.flatten(firstPageSupplier);
+		}
+		return firstPageSupplier.get();
+	}
+
+	/**
+	 * Builds and executes one {@code PaginationStrategy<T>}-driven page's request - the same pipeline
+	 * {@link #executePageFetch} uses, plus the strategy's own query/header overrides layered directly onto the
+	 * built request (applied after {@link #applyParams} since they don't correspond to any of the method's own
+	 * declared parameters - a strategy can request a query param/header the method never declared at all). A
+	 * {@code withPathParam}/{@code withBodyField} override, by contrast, needs no such layering here: it's already
+	 * folded into {@code args} by {@link PaginationCoordinator} before this is called, so
+	 * {@link #urlResolver}/{@link #applyParams} resolve it exactly like an ordinary declared parameter.
+	 */
+	private HttpResponse<String> executeStrategyPageFetch(Method method, HTTPMethod httpMethod, Object[] args,
+			String urlOverride, Map<String, Object> queryOverrides, Map<String, Object> headerOverrides) {
+		String url = urlOverride != null ? urlOverride : urlResolver.resolveUrl(method, httpMethod, args);
+		RequestContext context = new RequestContext(httpMethod, url);
+		HttpRequest<?> request = createRequest(httpMethod, url);
+		applyTimeout(request, method);
+		applyFixedHeaders(request, method);
+		applyIdempotencyKeyIfNeeded(request, method);
+		request = applyParams(request, method, args, context);
+		for (Map.Entry<String, Object> entry : queryOverrides.entrySet()) {
+			request.queryString(entry.getKey(), entry.getValue());
+		}
+		for (Map.Entry<String, Object> entry : headerOverrides.entrySet()) {
+			request.header(entry.getKey(), String.valueOf(entry.getValue()));
+		}
 		request = interceptorDispatcher.applyInterceptors(request, context);
 		return retryExecutor.executeSyncWithRetry(method, String.class, context,
 				circuitBreakerCoordinator.wrapWithCircuitBreaker(bulkheadCoordinator.wrapWithBulkhead(

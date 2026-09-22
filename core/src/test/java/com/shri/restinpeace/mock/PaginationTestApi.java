@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.method.POST;
@@ -14,15 +15,16 @@ import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
 import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.pagination.PointerKind;
 import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.annotation.request.QueryParam;
 
 /**
- * A {@code @Paginated} test fixture against a real {@link MockRestServer} -
- * covers a {@code VALUE} query-param cursor, a {@code FULL_URL} pointer, the
- * {@code hasMore}/{@code total} termination signals (§6.5 of
- * {@code docs/design/pagination-helper.md}), and the {@code Page<T>}/
- * {@code Stream<T>}/{@code Iterator<T>} return-type-driven iteration styles
- * (§6.4).
+ * A {@code @Paginated}/{@code PaginationStrategy<T>} test fixture against a real {@link MockRestServer} - covers a
+ * {@code VALUE} query-param cursor, a {@code FULL_URL} pointer, the {@code hasMore}/{@code total} termination
+ * signals (§6.5 of {@code docs/design/pagination-helper.md}), the {@code Page<T>}/{@code Stream<T>}/
+ * {@code Iterator<T>} return-type-driven iteration styles (§6.4), and the fully programmatic
+ * {@code PaginationStrategy<T>} escape hatch (§6.8, chunk 8) via every {@link com.shri.restinpeace.PaginationRequest}
+ * override kind.
  */
 @RestClient
 public interface PaginationTestApi {
@@ -126,6 +128,40 @@ public interface PaginationTestApi {
 	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
 			advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 2)
 	Page<Order> searchOrdersByOffsetIntoBody(@Body @PaginationCursor(bodyField = "offset") Map<String, Object> body);
+
+	@GET("/orders")
+	Page<Order> listOrdersByStrategyQueryParam(@QueryParam("since") String since, PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Page<Order> listOrdersByStrategyFullUrl(PaginationStrategy<Order> strategy);
+
+	@GET("/orders/{page}")
+	Page<Order> listOrdersByStrategyPathParam(@PathParam("page") int page, PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Page<Order> listOrdersByStrategyHeader(PaginationStrategy<Order> strategy);
+
+	@POST("/orders/search")
+	Page<Order> searchOrdersByStrategyBodyField(@Body Map<String, Object> body, PaginationStrategy<Order> strategy);
+
+	@POST("/orders/search")
+	Page<Order> searchOrdersByStrategyCompositeBodyField(@Body Map<String, Object> body,
+			PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Page<Order> listOrdersByStrategyMissingBodyParam(PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Page<Order> listOrdersByStrategyMissingPathParam(PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Page<Order> listOrdersByStrategyAlwaysContinues(PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Stream<Order> streamOrdersByStrategy(PaginationStrategy<Order> strategy);
+
+	@GET("/orders")
+	Iterator<Order> iterateOrdersByStrategy(PaginationStrategy<Order> strategy);
 
 	final class Order {
 		public String id;

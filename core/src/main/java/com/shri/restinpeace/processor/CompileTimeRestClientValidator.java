@@ -435,13 +435,20 @@ final class CompileTimeRestClientValidator {
 	/**
 	 * The compile-time counterpart of
 	 * {@code ReflectiveRestClientValidator#validatePaginated} - see its own
-	 * javadoc for the chunk-2/3/4/5/7-supported subset of
+	 * javadoc for the chunk-2/3/4/5/7/8-supported subset of
 	 * {@code docs/design/pagination-helper.md} §7 this implements.
 	 */
 	private static void validatePaginated(ExecutableElement method, String url, ProcessingEnvironment env,
 			Reporter reporter) {
 		Types types = env.getTypeUtils();
 		Paginated paginated = method.getAnnotation(Paginated.class);
+		List<VariableElement> strategyParams = new ArrayList<>();
+		for (VariableElement parameter : method.getParameters()) {
+			if (parameter.asType().getKind() == TypeKind.DECLARED
+					&& "com.shri.restinpeace.PaginationStrategy".equals(types.erasure(parameter.asType()).toString())) {
+				strategyParams.add(parameter);
+			}
+		}
 		TypeMirror returnType = method.getReturnType();
 		boolean isDeclared = returnType.getKind() == TypeKind.DECLARED;
 		String rawReturnTypeName = isDeclared ? types.erasure(returnType).toString() : "";
@@ -450,18 +457,27 @@ final class CompileTimeRestClientValidator {
 		boolean returnsIterator = isDeclared && "java.util.Iterator".equals(rawReturnTypeName);
 		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator;
 
-		if (returnsSupportedType && paginated == null) {
-			reporter.error(String.format("The method %s returns %s<T> but is not annotated with @Paginated.",
+		if (paginated != null && !strategyParams.isEmpty()) {
+			reporter.error(String.format(
+					"The method %s is annotated with @Paginated and also has a PaginationStrategy<T> parameter - "
+							+ "use one or the other.",
+					qualifiedName(method)), method);
+			return;
+		}
+		if (returnsSupportedType && paginated == null && strategyParams.isEmpty()) {
+			reporter.error(String.format(
+					"The method %s returns %s<T> but is not annotated with @Paginated and has no "
+							+ "PaginationStrategy<T> parameter.",
 					qualifiedName(method), simpleTypeName(rawReturnTypeName)), method);
 			return;
 		}
-		if (paginated == null) {
+		if (paginated == null && strategyParams.isEmpty()) {
 			return;
 		}
 		// A raw RipResponse/CompletableFuture (no type parameter at all) is already
-		// flagged by validateReturnType regardless of @Paginated - skip adding a
-		// second, overlapping message about the same underlying "raw generic
-		// return type" mistake on the same method.
+		// flagged by validateReturnType regardless of @Paginated/PaginationStrategy -
+		// skip adding a second, overlapping message about the same underlying "raw
+		// generic return type" mistake on the same method.
 		if (isDeclared
 				&& ("com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
 						|| "java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))
@@ -479,8 +495,9 @@ final class CompileTimeRestClientValidator {
 		}
 		if (!returnsSupportedType) {
 			reporter.error(String.format(
-					"The method %s is annotated with @Paginated but does not return Page<T>, Stream<T>, or "
-							+ "Iterator<T> - wrapping in CompletableFuture is not implemented yet.",
+					"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
+							+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
+							+ "implemented yet.",
 					qualifiedName(method)), method);
 			return;
 		}
@@ -494,6 +511,11 @@ final class CompileTimeRestClientValidator {
 		if (hasUrlParam(method) && com.shri.restinpeace.constant.RIPConstants.DEFAULT.equals(url)) {
 			reporter.error(String.format("The method %s is annotated with both @Paginated and @Url - remove one "
 					+ "or the other.", qualifiedName(method)), method);
+		}
+
+		if (paginated == null) {
+			validatePaginationStrategyParams(method, returnType, strategyParams, types, reporter);
+			return;
 		}
 
 		List<VariableElement> cursorParams = new ArrayList<>();
@@ -539,6 +561,38 @@ final class CompileTimeRestClientValidator {
 
 		for (VariableElement cursorParam : cursorParams) {
 			validatePaginationCursorParam(method, cursorParam, env, reporter);
+		}
+	}
+
+	/**
+	 * Validates the {@code PaginationStrategy<T>}-parameter path (§6.8, chunk 8): exactly one such parameter is
+	 * allowed, and when both its {@code T} and the method's own {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>}
+	 * return type argument are known (i.e. neither is a raw, unparameterized use), they must be the same type -
+	 * otherwise the items {@code PaginationContext<T>.items()} hands back at runtime silently wouldn't be the type
+	 * the consumer's strategy lambda declared.
+	 */
+	private static void validatePaginationStrategyParams(ExecutableElement method, TypeMirror returnType,
+			List<VariableElement> strategyParams, Types types, Reporter reporter) {
+		if (strategyParams.size() > 1) {
+			reporter.error(String.format("The method %s has more than one PaginationStrategy<T> parameter.",
+					qualifiedName(method)), method);
+			return;
+		}
+		List<? extends TypeMirror> returnTypeArguments = ((DeclaredType) returnType).getTypeArguments();
+		TypeMirror itemType = returnTypeArguments.isEmpty() ? null : returnTypeArguments.get(0);
+		// Always a DeclaredType - strategyParams is already filtered to erasure-match
+		// com.shri.restinpeace.PaginationStrategy - getTypeArguments() is empty for a
+		// raw (unparameterized) PaginationStrategy parameter, same as the return type
+		// case above.
+		List<? extends TypeMirror> strategyTypeArguments = ((DeclaredType) strategyParams.get(0).asType())
+				.getTypeArguments();
+		TypeMirror strategyItemType = strategyTypeArguments.isEmpty() ? null : strategyTypeArguments.get(0);
+		if (itemType != null && strategyItemType != null && !types.isSameType(itemType, strategyItemType)) {
+			reporter.error(String.format(
+					"The method %s's PaginationStrategy<%s> parameter doesn't match its %s<%s> return type - they "
+							+ "must share the same item type.",
+					qualifiedName(method), strategyItemType, simpleTypeName(types.erasure(returnType).toString()),
+					itemType), method);
 		}
 	}
 

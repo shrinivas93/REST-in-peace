@@ -83,6 +83,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   net. A computed value written into a `@Body` carrier is a real JSON
   number, unlike an extracted pointer value's raw string, matching what a
   numeric field such as Elasticsearch's `from`/`size` expects.
+- `PaginationStrategy<T>`, the fully programmatic pagination escape hatch
+  for whatever `@Paginated`'s closed attribute vocabulary can't express
+  (a cursor needing decoding before reuse, termination logic combining
+  several signals, a page count from a separate API call, and the other
+  cases the design doc catalogs) - a plain parameter recognized by its
+  declared type, mutually exclusive with `@Paginated` on the same method.
+  The lambda is consulted after every fetch with this page's decoded
+  items, parsed body, and headers, and answers what the next request
+  should look like via `PaginationRequest.toUrl`/`withQueryParam`/
+  `withPathParam`/`withHeader`/`withBodyField`, combinable with `.and(...)`.
+  Unlike the declarative path, the response body must itself be the JSON
+  items array - there's no `itemsField` equivalent. `withQueryParam`/
+  `withHeader` apply directly to the outgoing request; `withPathParam`/
+  `withBodyField` route through the method's own `@PathParam`/`@Body`
+  parameter, the same mechanism the declarative `@PaginationCursor`
+  carriers use. The unconditional empty-items safety net applies here too.
 
 ## [1.0.0.48] - 2026-09-20
 

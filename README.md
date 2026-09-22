@@ -1001,18 +1001,47 @@ to check instead), and `INCREMENT_BY_ONE` advances the page number by one
 Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
 ```
 
+Whatever the closed `@Paginated` attribute vocabulary can't reach — a
+cursor needing decoding before reuse, termination logic combining several
+signals with OR instead of the fixed precedence above, a page count that
+needs a separate API call, and the other cases in the design doc's §10 —
+drop down to `PaginationStrategy<T>`, a plain parameter (no annotation)
+recognized by its declared type, the same idiom RIP already uses for
+`CompletableFuture<T>`/`RipResponse<T>` return types:
+
+```java
+@GET("/orders")
+Page<Order> listOrders(@QueryParam("status") String status, PaginationStrategy<Order> strategy);
+```
+
+```java
+PaginationStrategy<Order> strategy = ctx -> ctx.items().isEmpty() ? Optional.empty()
+        : Optional.of(PaginationRequest.withQueryParam("since",
+                ctx.items().get(ctx.items().size() - 1).getId()));
+
+Page<Order> page = api.listOrders("active", strategy);
+```
+
+The lambda is consulted after every fetch (including the first) with this
+page's decoded `items()`, its parsed body, and its headers, and answers
+just one question — what should the next request look like, or nothing if
+this was the last page — via `PaginationRequest.toUrl`/`withQueryParam`/
+`withPathParam`/`withHeader`/`withBodyField`, combinable with `.and(...)`
+for more than one override at once. Unlike `@Paginated`, there's no
+`itemsField` — the response body must itself be the JSON items array.
+`@Paginated` and a `PaginationStrategy<T>` parameter are mutually
+exclusive on one method - pick declarative or programmatic, not both.
+
 This is an incrementally-landing feature — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
 the full design, an exhaustive 46-row catalogue of real-world pagination
-shapes, the programmatic `PaginationStrategy<T>` escape hatch for whatever
-a closed annotation vocabulary can't express, and exactly which shapes are
-implemented so far. As of now: a `VALUE`/`FULL_URL` pointer sourced from the
-response body/headers/last item, or client-driven `advance` when there's no
-pointer at all, resent via `@QueryParam`/`@PathParam`/`@HeaderParam`/`@Body`,
-and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>` return type —
-`RIP.getClient(...)` rejects an unsupported shape (`PaginationStrategy<T>`,
-an async first fetch) by name, naming the rollout chunk that adds it,
-rather than silently misbehaving.
+shapes, and exactly which shapes are implemented so far. As of now: a
+`VALUE`/`FULL_URL` pointer sourced from the response body/headers/last
+item, client-driven `advance` when there's no pointer at all, or the fully
+programmatic `PaginationStrategy<T>` escape hatch, and a synchronous
+`Page<T>`/`Stream<T>`/`Iterator<T>` return type — `RIP.getClient(...)`
+rejects an unsupported shape (an async first fetch) by name, naming the
+rollout chunk that adds it, rather than silently misbehaving.
 
 ## Error handling
 

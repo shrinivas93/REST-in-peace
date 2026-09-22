@@ -777,12 +777,33 @@ chunk its own PR, verified and merged before the next starts.
    value, always resent as the raw extracted string) - matching what a
    numeric field like Elasticsearch's `from`/`size` actually expects.
    Covers rows 6, 8, 27-40.
-8. **`PaginationStrategy<T>`** - the programmatic escape hatch (§6.8),
-   including its mutual-exclusion validation against `@Paginated`.
+8. **`PaginationStrategy<T>`** - the programmatic escape hatch (§6.8).
+   Landed. Recognized by declared parameter type, mutually exclusive with
+   `@Paginated` (validated identically in both
+   `ReflectiveRestClientValidator`/`CompileTimeRestClientValidator`), with
+   an item-type-mismatch check between the strategy's `T` and the method's
+   own `Page<T>`/`Stream<T>`/`Iterator<T>` return type argument when both
+   are reflectively known. Unlike the declarative path, there's no
+   `itemsField` equivalent - the response body must itself be the JSON
+   items array; a wrapped envelope's other fields are still reachable via
+   `PaginationContext.rawBody()` for the strategy's own termination logic,
+   just not as the page's `items()`. `PaginationRequest.withQueryParam`/
+   `withHeader` are applied directly onto the built request (no
+   corresponding method parameter needed - the escape hatch can name a
+   query param/header the method never declared at all).
+   `withPathParam`/`withBodyField`, by contrast, route through the
+   method's own `@PathParam`/`@Body` parameter (every URL template
+   placeholder is already required, for every method, to have a matching
+   `@PathParam`, so there's always one to route through) rather than
+   patching the resolved URL/body directly - the same mechanism the
+   declarative `@PaginationCursor` carriers use, just driven by the
+   strategy's return value instead of an extracted pointer or `advance`
+   arithmetic. The unconditional empty-items safety net (§6.5 step 5)
+   applies here too, regardless of what the strategy itself returns.
 9. **`MockRestServer` multi-page test fixtures**, addressing the first
    open question in §11.
 
-Chunk 8 and later can reorder freely based on which real consumer need
+Chunk 9 and later can reorder freely based on which real consumer need
 surfaces first, per the same "park until real usage narrows which
 shape(s) actually matter" instinct that correctly parked this feature the
 first time - chunks 2-6 alone already cover the majority of real APIs

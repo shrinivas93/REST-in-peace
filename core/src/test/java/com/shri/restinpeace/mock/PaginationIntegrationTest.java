@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import kong.unirest.JsonObjectMapper;
 
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginationRequest;
+import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
@@ -667,6 +670,224 @@ class PaginationIntegrationTest {
 		assertEquals(1, page2.items().size());
 		assertEquals("3", page2.items().get(0).id);
 		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyQueryParam_advancesViaTheLastItemsIdUntilAShortPage() {
+		server.on(HTTPMethod.GET, "/orders", queryParams("since", "2"), MockResponse.ok("[{\"id\":\"3\"}]"));
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"},{\"id\":\"2\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.items().size() < 2 ? Optional.empty()
+				: Optional.of(PaginationRequest.withQueryParam("since", ctx.items().get(ctx.items().size() - 1).id));
+
+		Page<Order> page1 = api.listOrdersByStrategyQueryParam(null, strategy);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("3", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyRawBody_readsTheParsedResponseBodyDirectly() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"},{\"id\":\"2\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> {
+			assertEquals(2, ctx.rawBody().getAsJsonArray().size());
+			return Optional.empty();
+		};
+
+		Page<Order> page1 = api.listOrdersByStrategyAlwaysContinues(strategy);
+		assertEquals(2, page1.items().size());
+		assertFalse(page1.hasNext());
+	}
+
+	@Test
+	void strategyAnd_combinesAQueryParamAndAHeaderOverride() {
+		server.on(HTTPMethod.GET, "/orders",
+				request -> "2".equals(request.getQueryParam("since")) && "x".equals(request.getHeader("X-Extra")),
+				MockResponse.ok("[]"));
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"},{\"id\":\"2\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.items().isEmpty() ? Optional.empty()
+				: Optional.of(PaginationRequest.withQueryParam("since", ctx.items().get(ctx.items().size() - 1).id)
+						.and(PaginationRequest.withHeader("X-Extra", "x")));
+
+		Page<Order> page1 = api.listOrdersByStrategyQueryParam(null, strategy);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertTrue(page2.items().isEmpty());
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyToUrl_followsAHeaderDerivedNextUrl() {
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"), MockResponse.ok("[{\"id\":\"2\"}]"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("[{\"id\":\"1\"}]").header("X-Next", server.baseUrl() + "/orders?page=2"));
+
+		PaginationStrategy<Order> strategy = ctx -> Optional.ofNullable(ctx.header("X-Next"))
+				.map(PaginationRequest::toUrl);
+
+		Page<Order> page1 = api.listOrdersByStrategyFullUrl(strategy);
+		assertEquals(1, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("2", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyWithPathParam_advancesThePageNumberInTheUrlTemplate() {
+		// Every URL template placeholder must have a matching @PathParam (checked at
+		// validation time for every method, pagination or not), so withPathParam
+		// routes through the method's own @PathParam("page") argument rather than
+		// patching the resolved URL string directly.
+		server.on(HTTPMethod.GET, "/orders/2", MockResponse.ok("[{\"id\":\"2\"}]"));
+		server.on(HTTPMethod.GET, "/orders/1", MockResponse.ok("[{\"id\":\"1\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.pagesFetchedSoFar() < 2
+				? Optional.of(PaginationRequest.withPathParam("page", ctx.pagesFetchedSoFar() + 1))
+				: Optional.empty();
+
+		Page<Order> page1 = api.listOrdersByStrategyPathParam(1, strategy);
+		assertEquals("1", page1.items().get(0).id);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals("2", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyWithHeader_addsAnOffsetHeaderToTheNextRequest() {
+		server.on(HTTPMethod.GET, "/orders", request -> "1".equals(request.getHeader("X-Offset")),
+				MockResponse.ok("[{\"id\":\"2\"}]"));
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.pagesFetchedSoFar() < 2
+				? Optional.of(PaginationRequest.withHeader("X-Offset", String.valueOf(ctx.itemsFetchedSoFar())))
+				: Optional.empty();
+
+		Page<Order> page1 = api.listOrdersByStrategyHeader(strategy);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals("2", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyWithBodyField_setsTheOffsetFieldAndPreservesOtherFields() {
+		server.on(HTTPMethod.POST, "/orders/search",
+				request -> request.getBody().contains("\"offset\":2") && request.getBody().contains("\"query\""),
+				MockResponse.ok("[{\"id\":\"3\"}]"));
+		server.on(HTTPMethod.POST, "/orders/search", MockResponse.ok("[{\"id\":\"1\"},{\"id\":\"2\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.items().size() < 2 ? Optional.empty()
+				: Optional.of(PaginationRequest.withBodyField("offset", ctx.itemsFetchedSoFar()));
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("query", "active");
+		Page<Order> page1 = api.searchOrdersByStrategyBodyField(body, strategy);
+		assertEquals(2, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("3", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyAnd_combinesTwoBodyFieldOverridesIntoOneRequest() {
+		server.on(HTTPMethod.POST, "/orders/search",
+				request -> request.getBody().contains("\"offset\":2") && request.getBody().contains("\"limit\":10"),
+				MockResponse.ok("[{\"id\":\"3\"}]"));
+		server.on(HTTPMethod.POST, "/orders/search", MockResponse.ok("[{\"id\":\"1\"},{\"id\":\"2\"}]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.items().size() < 2 ? Optional.empty()
+				: Optional.of(PaginationRequest.withBodyField("offset", ctx.itemsFetchedSoFar())
+						.and(PaginationRequest.withBodyField("limit", 10)));
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		Page<Order> page1 = api.searchOrdersByStrategyCompositeBodyField(body, strategy);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals("3", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+	}
+
+	@Test
+	void strategyBodyFieldWithNoBodyParam_throwsOnNext() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"}]"));
+		PaginationStrategy<Order> strategy = ctx -> Optional.of(PaginationRequest.withBodyField("offset", 1));
+
+		Page<Order> page1 = api.listOrdersByStrategyMissingBodyParam(strategy);
+		assertTrue(page1.hasNext());
+		assertThrows(RestInPeaceException.class, page1::next);
+	}
+
+	@Test
+	void strategyPathParamWithNoMatchingParam_throwsOnNext() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"}]"));
+		PaginationStrategy<Order> strategy = ctx -> Optional.of(PaginationRequest.withPathParam("page", 2));
+
+		Page<Order> page1 = api.listOrdersByStrategyMissingPathParam(strategy);
+		assertTrue(page1.hasNext());
+		assertThrows(RestInPeaceException.class, page1::next);
+	}
+
+	@Test
+	void strategyAlwaysContinuing_stopsOnAnEmptyPageRegardless() {
+		// The unconditional safety net (§6.5 step 5) applies to the strategy path too -
+		// even a (buggy) strategy that keeps returning a next request must not spin
+		// forever once the server hands back nothing.
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[]"));
+		PaginationStrategy<Order> strategy = ctx -> Optional.of(PaginationRequest.withQueryParam("x", 1));
+
+		Page<Order> page1 = api.listOrdersByStrategyAlwaysContinues(strategy);
+		assertTrue(page1.items().isEmpty());
+		assertFalse(page1.hasNext());
+	}
+
+	@Test
+	void strategyNonArrayResponseBody_throws() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[]}"));
+		PaginationStrategy<Order> strategy = ctx -> Optional.empty();
+
+		assertThrows(RestInPeaceException.class, () -> api.listOrdersByStrategyAlwaysContinues(strategy));
+	}
+
+	@Test
+	void strategyNullArgument_throws() {
+		assertThrows(RestInPeaceException.class, () -> api.listOrdersByStrategyAlwaysContinues(null));
+	}
+
+	@Test
+	void strategyStream_lazilyFlattensEveryPage() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"},{\"id\":\"2\"},{\"id\":\"3\"}]"));
+		PaginationStrategy<Order> strategy = ctx -> Optional.empty();
+
+		long count = api.streamOrdersByStrategy(strategy).count();
+		assertEquals(3, count);
+	}
+
+	@Test
+	void strategyIterator_flattensEveryPage() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"}]"));
+		PaginationStrategy<Order> strategy = ctx -> Optional.empty();
+
+		Iterator<Order> iterator = api.iterateOrdersByStrategy(strategy);
+		assertTrue(iterator.hasNext());
+		assertEquals("1", iterator.next().id);
+		assertFalse(iterator.hasNext());
 	}
 
 	private static Map<String, String> queryParams(String name, String value) {

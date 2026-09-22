@@ -1515,7 +1515,7 @@ class CompileTimeValidationTest {
 				+ "  String listOrders();\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "is annotated with @Paginated but does not return Page<T>");
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
 	}
 
 	@Test
@@ -1554,7 +1554,7 @@ class CompileTimeValidationTest {
 				+ "  void listOrders();\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "is annotated with @Paginated but does not return Page<T>");
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
 	}
 
 	@Test
@@ -1961,6 +1961,136 @@ class CompileTimeValidationTest {
 		assertErrorContains(diagnostics,
 				"needs exactly one @PaginationCursor parameter to carry the client-computed offset/page value - "
 						+ "found 2");
+	}
+
+	@Test
+	void strategyPage_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyPage", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyPage {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"status\") String status, "
+				+ "PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("StrategyPage_RipImpl.class")),
+				"Expected no _RipImpl to be generated for a PaginationStrategy method, found: " + list(outputDir));
+	}
+
+	@Test
+	void strategyAndPaginatedTogether_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyAndPaginatedTogether", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyAndPaginatedTogether {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor,\n" //
+				+ "      PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics,
+				"is annotated with @Paginated and also has a PaginationStrategy<T> parameter");
+	}
+
+	@Test
+	void twoStrategyParams_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("TwoStrategyParams", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface TwoStrategyParams {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy<String> first, PaginationStrategy<String> second);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "has more than one PaginationStrategy<T> parameter");
+	}
+
+	@Test
+	void strategyItemTypeMismatch_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyItemTypeMismatch", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyItemTypeMismatch {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy<Integer> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "parameter doesn't match its Page<java.lang.String> return type");
+	}
+
+	@Test
+	void strategyNotReturningPage_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("StrategyNotReturningPage", "" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import java.util.List;\n" //
+				+ "@RestClient\n" //
+				+ "public interface StrategyNotReturningPage {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  List<String> listOrders(PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void rawPageWithStrategy_failsCompilationWithRawTypeErrorOnly() throws IOException {
+		// A raw Page return type is already flagged generically - the item-type-match
+		// check must not also crash (or add a second error) when there's no return
+		// type argument to compare the strategy's own type argument against.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawPageWithStrategy", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawPageWithStrategy {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page listOrders(PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw Page with no type parameter");
+		assertFalse(errorMessages(diagnostics).stream().anyMatch(message -> message.contains("doesn't match")));
+	}
+
+	@Test
+	void rawStrategyParam_compilesCleanAndFallsBackReflectively() throws IOException {
+		// A raw PaginationStrategy parameter (no type argument) has nothing to compare
+		// against the method's own Page<String> return type - skipped, not an error.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawStrategyParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawStrategyParam {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy strategy);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
 	}
 
 	@Test
