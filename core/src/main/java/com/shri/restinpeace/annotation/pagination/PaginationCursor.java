@@ -21,11 +21,13 @@ import java.lang.annotation.Target;
  * </pre>
  *
  * <p>
- * As of this chunk, only stacking on {@code @QueryParam}/{@code @PathParam}/
- * {@code @HeaderParam} is supported, with a {@code String}, {@code int}, or
- * {@code long} parameter type. Stacking on {@code @Body} (and this
- * annotation's own {@link #bodyField()}) lands in a later rollout chunk
- * (§12) - {@code RIP.getClient(...)} rejects it for now.
+ * Stacks on {@code @QueryParam}/{@code @PathParam}/{@code @HeaderParam}
+ * (a {@code String}, {@code int}, or {@code long} parameter) or on a
+ * {@code @Body Map<String,Object>} parameter, in which case {@link #bodyField()}
+ * names the dotted path inside that map to write the extracted pointer value
+ * into - see §6.7 for why the carrier is a plain map rather than
+ * {@code @Field}. Every other field the caller put in the map on the first
+ * call carries forward unchanged on every subsequent page.
  */
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
@@ -34,7 +36,7 @@ public @interface PaginationCursor {
 	/**
 	 * Dotted path inside a {@code @Body Map<String,Object>} to set the
 	 * extracted pointer value into - only meaningful when stacked on
-	 * {@code @Body}, not yet implemented.
+	 * {@code @Body}; ignored otherwise.
 	 *
 	 * @return the dotted path to set within the request body map
 	 */
