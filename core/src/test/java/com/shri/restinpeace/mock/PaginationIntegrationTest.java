@@ -503,6 +503,78 @@ class PaginationIntegrationTest {
 		assertFalse(page2.hasNext());
 	}
 
+	@Test
+	void linkHeaderPointer_parsesRelNextAndFollowsItUntilTheLastPage() {
+		// GitHub/Shopify-shaped RFC 8288 Link header - rel="next" drives the next
+		// fetch, and the genuinely last page (only rel="prev", no rel="next") stops.
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "3"),
+				MockResponse.ok("[{\"id\":\"3\"}]")
+						.header("Link", "<" + server.baseUrl() + "/orders?page=2>; rel=\"prev\""));
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"),
+				MockResponse.ok("[{\"id\":\"2\"}]")
+						.header("Link",
+								"<" + server.baseUrl() + "/orders?page=3>; rel=\"next\", <" + server.baseUrl()
+										+ "/orders?page=1>; rel=\"prev\""));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("[{\"id\":\"1\"}]")
+						.header("Link", "<" + server.baseUrl() + "/orders?page=2>; rel=\"next\""));
+
+		Page<Order> page1 = api.listOrdersByLinkHeader();
+		assertEquals("1", page1.items().get(0).id);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals("2", page2.items().get(0).id);
+		assertTrue(page2.hasNext());
+
+		Page<Order> page3 = page2.next();
+		assertEquals("3", page3.items().get(0).id);
+		assertFalse(page3.hasNext());
+	}
+
+	@Test
+	void linkHeaderPointer_multipleRelValuesOnOneLink_matchesNext() {
+		// RFC 8288 allows space-separated multiple rel values on one link.
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"), MockResponse.ok("[{\"id\":\"2\"}]"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("[{\"id\":\"1\"}]")
+						.header("Link", "<" + server.baseUrl() + "/orders?page=2>; rel=\"next last\""));
+
+		Page<Order> page1 = api.listOrdersByLinkHeader();
+		assertTrue(page1.hasNext());
+		assertEquals("2", page1.next().items().get(0).id);
+	}
+
+	@Test
+	void linkHeaderPointer_skipsMalformedSegmentsAndFindsTheValidOne() {
+		// One comma-separated segment with no "<" at all, and one with "<" but no
+		// closing ">", must not break parsing of a later, well-formed segment.
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"), MockResponse.ok("[{\"id\":\"2\"}]"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("[{\"id\":\"1\"}]").header("Link",
+						"not-a-link-segment, <missing-close-bracket, <" + server.baseUrl()
+								+ "/orders?page=2>; rel=\"next\""));
+
+		Page<Order> page1 = api.listOrdersByLinkHeader();
+		assertTrue(page1.hasNext());
+		assertEquals("2", page1.next().items().get(0).id);
+	}
+
+	@Test
+	void linkHeaderPointer_rawUrlWithoutRfc8288Formatting_isUsedVerbatim() {
+		// A header that doesn't look like an RFC 8288 Link header at all (no
+		// angle-bracketed URI) is used as the next URL as-is - the simpler
+		// "the header's raw value already IS the next URL" case still works for a
+		// non-standard header.
+		server.on(HTTPMethod.GET, "/orders", queryParams("page", "2"), MockResponse.ok("[{\"id\":\"2\"}]"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("[{\"id\":\"1\"}]").header("Link", server.baseUrl() + "/orders?page=2"));
+
+		Page<Order> page1 = api.listOrdersByLinkHeader();
+		assertTrue(page1.hasNext());
+		assertEquals("2", page1.next().items().get(0).id);
+	}
+
 	private static Map<String, String> queryParams(String name, String value) {
 		Map<String, String> params = new HashMap<>();
 		params.put(name, value);

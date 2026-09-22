@@ -1,6 +1,6 @@
 # Design: Pagination helper
 
-Status: **chunks 2-5 of the rollout plan (§12) have landed.** `@Paginated`,
+Status: **chunks 2-6 of the rollout plan (§12) have landed.** `@Paginated`,
 `@PaginationCursor`, `Page<T>`, `Stream<T>`/`Iterator<T>` auto-flattening,
 and the three enums in §6.1 are real code - a `PointerKind.FULL_URL` or
 `VALUE` pointer sourced from `PaginationSignalSource.RESPONSE_BODY`/
@@ -8,18 +8,22 @@ and the three enums in §6.1 are real code - a `PointerKind.FULL_URL` or
 composite key resent via N separate carriers or one `@Body` carrier's
 comma-separated `bodyField`, §6.7), resent via `@QueryParam`/`@PathParam`/
 `@HeaderParam`/`@Body`, with `hasMoreSource`/`totalSource`/
-`totalPagesSource` termination signals, synchronous only. A `Stream<T>`/
-`Iterator<T>` return type is lazy - the first page (and every page after
-it) is only fetched on first use, matching ordinary lazy-iterator/
-lazy-stream semantics; `Page<T>` still fetches its first page eagerly, like
-any other RIP call. Everything else in this doc - `PaginationAdvance`
-client-driven advancement, `PaginationStrategy<T>`, an async first fetch,
-`LINK_HEADER` RFC 5988 parsing, and `MockRestServer` multi-page fixtures -
-is still design only, chunked per §12; `RIP.getClient(...)` rejects a
-method using one of those not-yet-supported shapes by name rather than
-silently misbehaving. The feature was previously parked (see `ROADMAP.md`)
-after a first sketch (a fixed `Page<T>` interface with `getItems()`/
-`getNextUrl()`) turned out not to be generic enough for how differently
+`totalPagesSource` termination signals, synchronous only. A `FULL_URL`
+pointer sourced from `RESPONSE_HEADER` transparently parses an RFC 8288
+`Link` header and follows its `rel="next"` target (GitHub/Shopify REST,
+row 1) - a header value that doesn't look like that format at all falls
+back to being used as the next URL verbatim. A `Stream<T>`/`Iterator<T>`
+return type is lazy - the first page (and every page after it) is only
+fetched on first use, matching ordinary lazy-iterator/lazy-stream
+semantics; `Page<T>` still fetches its first page eagerly, like any other
+RIP call. Everything else in this doc - `PaginationAdvance` client-driven
+advancement, `PaginationStrategy<T>`, an async first fetch, and
+`MockRestServer` multi-page fixtures - is still design only, chunked per
+§12; `RIP.getClient(...)` rejects a method using one of those not-yet-
+supported shapes by name rather than silently misbehaving. The feature was
+previously parked (see `ROADMAP.md`) after a first sketch (a fixed
+`Page<T>` interface with `getItems()`/`getNextUrl()`) turned out not to be
+generic enough for how differently
 real APIs shape pagination. This doc replaces that sketch with a design
 built from a deliberately exhaustive survey of real-world pagination
 conventions (§5, 46 cataloged variants) plus a programmatic escape hatch
@@ -714,9 +718,9 @@ chunk its own PR, verified and merged before the next starts.
    `totalPagesSource` included - they're cheap scalar reads off the same
    parsed tree the two-phase decode already builds, no reason to defer
    them). Covers §9 rows 9-10, 20-22 fully; row 1 (GitHub's `Link` header)
-   only partially - a header whose raw value *is* the next URL works today,
-   but RFC 5988 `rel="next"` parsing of a real `Link` header is chunk 6's
-   job, not this one's.
+   only partially at this point - a header whose raw value *is* the next
+   URL worked from this chunk, but RFC 8288 `rel="next"` parsing of a real
+   `Link` header was chunk 6's job, which has since landed too (§12 item 6).
 3. **`Stream<T>`/`Iterator<T>` auto-flatten** on top of chunk 2. Landed.
    A pure wrapper over the existing `Page<T>` chain, no new fetch logic -
    both return types are lazy (no page fetched until the first
@@ -742,8 +746,19 @@ chunk its own PR, verified and merged before the next starts.
    construction) always present on a non-empty page, so termination in
    practice falls to the unconditional empty-items safety net (§6.5 step 5)
    rather than the pointer-presence fallback. Covers rows 14, 41-44.
-6. **`LINK_HEADER` pointer source** (RFC 5988 parsing, `rel="next"`).
-   Covers row 1.
+6. **RFC 8288 (formerly RFC 5988) `Link` header parsing, `rel="next"`.**
+   Landed. No new enum value - row 1's own `@Paginated` expression
+   (`pointerKind=FULL_URL`, `pointerSource=RESPONSE_HEADER`,
+   `pointerField="Link"`) already names this shape; `PaginationCoordinator`
+   just parses the extracted header's value as one or more
+   comma-separated `<uri>; rel="name"; ...` segments and returns the
+   `rel="next"` target, falling back to using the raw header value as the
+   URL verbatim when it doesn't look like that format at all (no
+   angle-bracketed URI) - the simpler case already covered by chunk 2 for
+   a non-standard header. A well-formed `Link` header with no `rel="next"`
+   segment (the genuinely last page, which may still carry `rel="prev"`/
+   `rel="first"`) resolves to no pointer, same as any other exhausted
+   `FULL_URL` pointer. Covers row 1.
 7. **`OFFSET_LIMIT`/`advance` (client-driven, no server pointer) +
    `totalPagesSource`.** Covers rows 6, 8, 27-40.
 8. **`PaginationStrategy<T>`** - the programmatic escape hatch (§6.8),
@@ -751,7 +766,8 @@ chunk its own PR, verified and merged before the next starts.
 9. **`MockRestServer` multi-page test fixtures**, addressing the first
    open question in §11.
 
-Chunks 6-7 can reorder freely based on which real consumer need surfaces
-first, per the same "park until real usage narrows which shape(s) actually
-matter" instinct that correctly parked this feature the first time -
-chunks 2-5 alone already cover the majority of real APIs surveyed in §9.
+Chunk 7 and later can reorder freely based on which real consumer need
+surfaces first, per the same "park until real usage narrows which
+shape(s) actually matter" instinct that correctly parked this feature the
+first time - chunks 2-6 alone already cover the majority of real APIs
+surveyed in §9.

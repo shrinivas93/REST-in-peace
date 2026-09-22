@@ -61,6 +61,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `totalPages` signal, a keyset API's own field is virtually always present
   on a non-empty page, so termination falls to the unconditional
   empty-items safety net rather than the usual pointer-presence fallback.
+- A `PointerKind.FULL_URL` pointer sourced from `RESPONSE_HEADER`
+  transparently parses an RFC 8288 (formerly RFC 5988) `Link` header
+  (GitHub REST, Shopify REST) and follows its `rel="next"` target, instead
+  of treating the whole multi-value header as a literal URL. A header
+  value that doesn't look like this format at all (no angle-bracketed URI)
+  is still used as the next URL verbatim, preserving the simpler case
+  already supported. A well-formed `Link` header with no `rel="next"`
+  segment (the genuinely last page, which may still carry `rel="prev"`/
+  `rel="first"`) correctly resolves to no next page.
 
 ## [1.0.0.48] - 2026-09-20
 

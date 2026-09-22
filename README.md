@@ -972,6 +972,19 @@ Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
         @QueryParam("lastTs") @PaginationCursor String lastTimestamp);
 ```
 
+An API that follows GitHub/Shopify's convention of an RFC 8288 `Link`
+response header (`<url>; rel="next", <url>; rel="last"`) needs no special
+handling — a `FULL_URL` pointer sourced from that header is parsed
+automatically, following the `rel="next"` target until a page's `Link`
+header no longer has one:
+
+```java
+@GET("/repos")
+@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+        pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+Page<Repo> listRepos();
+```
+
 This is an incrementally-landing feature — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
 the full design, an exhaustive 46-row catalogue of real-world pagination

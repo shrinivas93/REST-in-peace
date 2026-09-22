@@ -94,6 +94,11 @@ public interface PaginationTestApi {
 			hasMoreField = "has_more", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = "id")
 	Page<Order> listOrdersByItemFieldWithHasMore(@QueryParam("since") @PaginationCursor String since);
 
+	@GET("/orders")
+	@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+			pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+	Page<Order> listOrdersByLinkHeader();
+
 	final class Order {
 		public String id;
 		public String createdAt;
