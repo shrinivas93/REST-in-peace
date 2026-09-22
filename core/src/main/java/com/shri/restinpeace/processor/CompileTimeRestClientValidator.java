@@ -131,7 +131,7 @@ final class CompileTimeRestClientValidator {
 				}
 				validateBody(method, httpMethodAndUrl.httpMethod, reporter);
 				validateReturnType(method, env.getTypeUtils(), reporter);
-				validatePaginated(method, httpMethodAndUrl.urlTemplate, env.getTypeUtils(), reporter);
+				validatePaginated(method, httpMethodAndUrl.urlTemplate, env, reporter);
 				validateRetry(method, reporter);
 				validateMapParam(method, QueryMap.class, "@QueryMap", env, reporter);
 				validateMapParam(method, HeaderMap.class, "@HeaderMap", env, reporter);
@@ -438,7 +438,9 @@ final class CompileTimeRestClientValidator {
 	 * javadoc for the chunk-2-supported subset of
 	 * {@code docs/design/pagination-helper.md} §7 this implements.
 	 */
-	private static void validatePaginated(ExecutableElement method, String url, Types types, Reporter reporter) {
+	private static void validatePaginated(ExecutableElement method, String url, ProcessingEnvironment env,
+			Reporter reporter) {
+		Types types = env.getTypeUtils();
 		Paginated paginated = method.getAnnotation(Paginated.class);
 		TypeMirror returnType = method.getReturnType();
 		boolean isDeclared = returnType.getKind() == TypeKind.DECLARED;
@@ -528,7 +530,7 @@ final class CompileTimeRestClientValidator {
 				"totalPagesSource", "totalPagesField", reporter);
 
 		for (VariableElement cursorParam : cursorParams) {
-			validatePaginationCursorParam(method, cursorParam, reporter);
+			validatePaginationCursorParam(method, cursorParam, env, reporter);
 		}
 	}
 
@@ -615,21 +617,45 @@ final class CompileTimeRestClientValidator {
 	}
 
 	private static void validatePaginationCursorParam(ExecutableElement method, VariableElement cursorParam,
-			Reporter reporter) {
+			ProcessingEnvironment env, Reporter reporter) {
 		boolean onQuery = cursorParam.getAnnotation(QueryParam.class) != null;
 		boolean onPath = cursorParam.getAnnotation(PathParam.class) != null;
 		boolean onHeader = cursorParam.getAnnotation(HeaderParam.class) != null;
 		boolean onBody = cursorParam.getAnnotation(Body.class) != null;
 		int carrierCount = (onQuery ? 1 : 0) + (onPath ? 1 : 0) + (onHeader ? 1 : 0) + (onBody ? 1 : 0);
-		if (onBody) {
-			reporter.error(String.format(
-					"The method %s has a @PaginationCursor stacked on @Body, which is not implemented yet "
-							+ "(rollout chunk 4) - use @QueryParam/@PathParam/@HeaderParam instead.",
-					qualifiedName(method)), cursorParam);
-		} else if (carrierCount != 1) {
+		if (carrierCount != 1) {
 			reporter.error(String.format(
 					"The method %s has a @PaginationCursor parameter that must be stacked on exactly one of "
-							+ "@QueryParam/@PathParam/@HeaderParam.",
+							+ "@QueryParam/@PathParam/@HeaderParam/@Body.",
+					qualifiedName(method)), cursorParam);
+			return;
+		}
+		String bodyField = cursorParam.getAnnotation(PaginationCursor.class).bodyField();
+		if (onBody) {
+			if (bodyField.isEmpty()) {
+				reporter.error(String.format(
+						"The method %s has a @PaginationCursor stacked on @Body but bodyField is empty - set it to "
+								+ "the JSON path inside the body to write the next-page value to.",
+						qualifiedName(method)), cursorParam);
+			} else if (bodyField.contains(",")) {
+				reporter.error(String.format(
+						"The method %s's @PaginationCursor has a comma-separated bodyField '%s' - composite "
+								+ "keyset into one body field needs pointerSource = ITEM_FIELD, which is not "
+								+ "implemented yet (rollout chunk 5).",
+						qualifiedName(method), bodyField), cursorParam);
+			}
+			if (!isMapOfStringToObject(cursorParam.asType(), env)) {
+				reporter.error(String.format(
+						"The method %s has a @PaginationCursor stacked on @Body but the parameter's declared type "
+								+ "is not Map<String,Object>.",
+						qualifiedName(method)), cursorParam);
+			}
+			return;
+		}
+		if (!bodyField.isEmpty()) {
+			reporter.error(String.format(
+					"The method %s has a @PaginationCursor with a non-empty bodyField but is not stacked on @Body "
+							+ "- bodyField is only meaningful there.",
 					qualifiedName(method)), cursorParam);
 		}
 		String typeName = cursorParam.asType().toString();
@@ -807,6 +833,21 @@ final class CompileTimeRestClientValidator {
 		TypeMirror mapErasure = types.erasure(env.getElementUtils().getTypeElement("java.util.Map").asType());
 		TypeMirror paramErasure = types.erasure(type);
 		return types.isSubtype(paramErasure, mapErasure);
+	}
+
+	/** Whether {@code type} is exactly {@code Map<String,Object>} - the required shape for a {@code @Body @PaginationCursor} carrier (§6.7). */
+	private static boolean isMapOfStringToObject(TypeMirror type, ProcessingEnvironment env) {
+		if (!isMapType(type, env)) {
+			return false;
+		}
+		List<? extends TypeMirror> typeArguments = ((DeclaredType) type).getTypeArguments();
+		if (typeArguments.size() != 2) {
+			return false;
+		}
+		Types types = env.getTypeUtils();
+		TypeMirror stringType = env.getElementUtils().getTypeElement("java.lang.String").asType();
+		TypeMirror objectType = env.getElementUtils().getTypeElement("java.lang.Object").asType();
+		return types.isSameType(typeArguments.get(0), stringType) && types.isSameType(typeArguments.get(1), objectType);
 	}
 
 	private static boolean isURLValid(String url) {

@@ -1709,7 +1709,7 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void paginationCursorOnBody_failsCompilation() throws IOException {
+	void paginationCursorOnBody_compilesCleanAndFallsBackReflectively() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBody", "" //
 				+ "import com.shri.restinpeace.Page;\n" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
@@ -1725,7 +1725,131 @@ class CompileTimeValidationTest {
 				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") Map<String,Object> body);\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "@PaginationCursor stacked on @Body, which is not implemented yet");
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("CursorOnBody_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginationCursorOnBodyMissingBodyField_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyMissingBodyField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyMissingBodyField {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "stacked on @Body but bodyField is empty");
+	}
+
+	@Test
+	void paginationCursorOnBodyCompositeBodyField_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyCompositeBodyField", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyCompositeBodyField {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"lastId,lastTimestamp\") "
+				+ "Map<String,Object> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "composite keyset into one body field needs pointerSource = ITEM_FIELD");
+	}
+
+	@Test
+	void paginationCursorOnBodyWrongMapType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyWrongMapType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyWrongMapType {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") Map<String,String> body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "declared type is not Map<String,Object>");
+	}
+
+	@Test
+	void paginationCursorOnBodyRawMapType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyRawMapType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "import java.util.Map;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyRawMapType {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") Map body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "declared type is not Map<String,Object>");
+	}
+
+	@Test
+	void paginationCursorOnBodyNonMapType_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBodyNonMapType", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.POST;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Body;\n" //
+				+ "@RestClient\n" //
+				+ "public interface CursorOnBodyNonMapType {\n" //
+				+ "  @POST(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@Body @PaginationCursor(bodyField = \"cursor\") String body);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "declared type is not Map<String,Object>");
+	}
+
+	@Test
+	void paginationCursorBodyFieldWithoutBodyCarrier_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("BodyFieldWithoutBodyCarrier", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface BodyFieldWithoutBodyCarrier {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next_cursor\")\n" //
+				+ "  Page<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor(bodyField = \"cursor\") "
+				+ "String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "non-empty bodyField but is not stacked on @Body");
 	}
 
 	@Test
@@ -1743,7 +1867,7 @@ class CompileTimeValidationTest {
 				+ "  Page<String> listOrders(@PaginationCursor String cursor);\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "must be stacked on exactly one of @QueryParam/@PathParam/@HeaderParam");
+		assertErrorContains(diagnostics, "must be stacked on exactly one of @QueryParam/@PathParam/@HeaderParam/@Body");
 	}
 
 	@Test

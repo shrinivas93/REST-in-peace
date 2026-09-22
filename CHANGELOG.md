@@ -25,10 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a raw `List<User>` return type already does, falling back to the
   reflective proxy. See `docs/design/pagination-helper.md` for the full
   design, every default, and exactly which of its 46 cataloged real-world
-  pagination shapes this chunk covers - an `@Body` cursor carrier, keyset
-  pagination, client-driven advancement, a programmatic
-  `PaginationStrategy<T>` escape hatch, and an async first fetch land in
-  later chunks.
+  pagination shapes this chunk covers - keyset pagination, client-driven
+  advancement, a programmatic `PaginationStrategy<T>` escape hatch, and an
+  async first fetch land in later chunks.
 - `@Paginated` also supports `Stream<T>`/`Iterator<T>` return types, lazily
   auto-flattening every page into one sequence instead of managing pages by
   hand via `Page<T>` - a pure wrapper over the same `Page<T>` chain, with no
@@ -40,6 +39,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   iteration spans an unknown number of underlying calls, so there is no
   single response left to wrap; use `Page<T>` and its `rawResponse()`
   instead.
+- `@PaginationCursor` now also stacks on a `@Body Map<String,Object>`
+  parameter, for a POST-based API whose cursor is resent as a JSON request
+  body field (Elasticsearch's `search_after`, DynamoDB's
+  `ExclusiveStartKey`) rather than a query/path/header value. `bodyField`
+  names the (dotted-path) field inside that body to write the next-page
+  value into - a copy-on-write `set`, symmetric with the response side's
+  existing dotted-path `get`, so neither the caller's original map nor any
+  nested map along the path is mutated in place; every other field the
+  caller put in the body carries forward unchanged on every subsequent
+  page. A comma-separated `bodyField` (composite keyset into one body
+  field) is rejected for now - it needs `pointerSource = ITEM_FIELD` to
+  actually produce more than one extracted value, which is a later chunk.
 
 ## [1.0.0.48] - 2026-09-20
 

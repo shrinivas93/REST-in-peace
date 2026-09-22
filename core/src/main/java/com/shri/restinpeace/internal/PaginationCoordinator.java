@@ -5,7 +5,9 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Spliterator;
 import java.util.Spliterators;
@@ -255,14 +257,22 @@ final class PaginationCoordinator {
 			nextPageSupplier = () -> fetchPage(method, paginated, itemType, cursorParamIndex, errorType, args,
 					pointerValue, itemsFetchedTotal, pagesFetchedTotal, pageFetch);
 		} else {
-			// Coercing the extracted value into the cursor parameter's declared type is
+			// Coercing/substituting the extracted value into the cursor parameter is
 			// deferred into the supplier (evaluated only when next() is actually called)
 			// rather than done eagerly here - a malformed value is a problem with
 			// fetching the NEXT page, not with the page already successfully returned.
+			String bodyField = method.getParameters()[cursorParamIndex].getAnnotation(PaginationCursor.class)
+					.bodyField();
 			nextPageSupplier = () -> {
 				Object[] nextArgs = args.clone();
-				nextArgs[cursorParamIndex] = coerceCursorValue(pointerValue,
-						method.getParameters()[cursorParamIndex].getType(), method);
+				if (bodyField.isEmpty()) {
+					nextArgs[cursorParamIndex] = coerceCursorValue(pointerValue,
+							method.getParameters()[cursorParamIndex].getType(), method);
+				} else {
+					@SuppressWarnings("unchecked")
+					Map<String, Object> currentBody = (Map<String, Object>) args[cursorParamIndex];
+					nextArgs[cursorParamIndex] = withFieldSet(currentBody, bodyField, pointerValue);
+				}
 				return fetchPage(method, paginated, itemType, cursorParamIndex, errorType, nextArgs, null,
 						itemsFetchedTotal, pagesFetchedTotal, pageFetch);
 			};
@@ -284,7 +294,7 @@ final class PaginationCoordinator {
 		}
 	}
 
-	/** Dotted-path {@code get} against a parsed body tree - the response-side counterpart of a request-side {@code set} (§6.7, a later chunk). */
+	/** Dotted-path {@code get} against a parsed body tree - the response-side counterpart of {@link #withFieldSet}'s request-side {@code set} (§6.7). */
 	private JsonElement getPath(JsonElement root, String dottedPath) {
 		JsonElement current = root;
 		for (String segment : dottedPath.split("\\.")) {
@@ -294,6 +304,29 @@ final class PaginationCoordinator {
 			current = current.getAsJsonObject().get(segment);
 		}
 		return current;
+	}
+
+	/**
+	 * Dotted-path {@code set} against a {@code @Body @PaginationCursor Map<String,Object>} carrier (§6.7) - the
+	 * request-side counterpart of {@link #getPath}'s response-side {@code get}. Copy-on-write at every level the
+	 * path touches (the original map, and any nested map along the way, is left untouched) since {@code body} is
+	 * the caller's own argument value, potentially reused across pages by the caller for anything other than the
+	 * cursor field itself.
+	 */
+	@SuppressWarnings("unchecked")
+	private static Map<String, Object> withFieldSet(Map<String, Object> body, String dottedPath, Object value) {
+		Map<String, Object> root = body == null ? new LinkedHashMap<>() : new LinkedHashMap<>(body);
+		String[] segments = dottedPath.split("\\.");
+		Map<String, Object> current = root;
+		for (int i = 0; i < segments.length - 1; i++) {
+			Object existing = current.get(segments[i]);
+			Map<String, Object> nested = existing instanceof Map ? new LinkedHashMap<>((Map<String, Object>) existing)
+					: new LinkedHashMap<>();
+			current.put(segments[i], nested);
+			current = nested;
+		}
+		current.put(segments[segments.length - 1], value);
+		return root;
 	}
 
 	/**

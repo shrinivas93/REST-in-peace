@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -356,6 +357,64 @@ class PaginationIntegrationTest {
 
 		long count = api.streamOrders(null).count();
 		assertEquals(0, count);
+	}
+
+	@Test
+	void bodyFieldCursor_setsTheExtractedValueIntoTheRequestBodyAndPreservesOtherFields() {
+		server.on(HTTPMethod.POST, "/orders/search",
+				request -> request.getBody().contains("\"cursor\":\"tok\"") && request.getBody().contains("\"query\""),
+				MockResponse.ok("{\"orders\":[{\"id\":\"2\"}]}"));
+		server.on(HTTPMethod.POST, "/orders/search",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next_cursor\":\"tok\"}"));
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("query", "active");
+		Page<Order> page1 = api.searchOrders(body);
+		assertEquals(1, page1.items().size());
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertEquals("2", page2.items().get(0).id);
+		assertFalse(page2.hasNext());
+		assertEquals(2, server.requestCount());
+	}
+
+	@Test
+	void bodyFieldCursor_doesNotMutateTheCallersOriginalBodyMap() {
+		server.on(HTTPMethod.POST, "/orders/search", request -> request.getBody().contains("\"cursor\":\"tok\""),
+				MockResponse.ok("{\"orders\":[{\"id\":\"2\"}]}"));
+		server.on(HTTPMethod.POST, "/orders/search",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next_cursor\":\"tok\"}"));
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("query", "active");
+		api.searchOrders(body).next();
+
+		assertFalse(body.containsKey("cursor"), "the caller's own map must not be mutated by pagination");
+		assertEquals(1, body.size());
+	}
+
+	@Test
+	void bodyFieldCursor_nestedField_setsIntoTheNestedPathAndPreservesSiblingKeys() {
+		server.on(HTTPMethod.POST, "/orders/search",
+				request -> request.getBody().contains("\"cursor\":\"tok\"")
+						&& request.getBody().contains("\"other\":\"value\""),
+				MockResponse.ok("{\"orders\":[{\"id\":\"2\"}]}"));
+		server.on(HTTPMethod.POST, "/orders/search",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next_cursor\":\"tok\"}"));
+
+		Map<String, Object> meta = new LinkedHashMap<>();
+		meta.put("other", "value");
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("meta", meta);
+
+		Page<Order> page1 = api.searchOrdersByNestedBodyField(body);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals(1, page2.items().size());
+		assertFalse(page2.hasNext());
 	}
 
 	private static Map<String, String> queryParams(String name, String value) {
