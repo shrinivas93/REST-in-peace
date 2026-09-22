@@ -5,11 +5,13 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.BiFunction;
@@ -23,12 +25,17 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginationContext;
+import com.shri.restinpeace.PaginationRequest;
+import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
 import com.shri.restinpeace.annotation.pagination.PaginationCursor;
 import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
 import com.shri.restinpeace.annotation.pagination.PointerKind;
+import com.shri.restinpeace.annotation.request.Body;
+import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.exception.RestInPeaceException;
 
 import kong.unirest.HttpResponse;
@@ -101,6 +108,22 @@ final class PaginationCoordinator {
 			result[i] = indices.get(i);
 		}
 		return result;
+	}
+
+	/**
+	 * Returns the index of the method's {@code PaginationStrategy<T>} parameter, or {@code -1} if it has none -
+	 * recognized by declared parameter type (§6.8), the same idiom RIP already uses for
+	 * {@code CompletableFuture<T>}/{@code RipResponse<T>} return types. Validation guarantees at most one such
+	 * parameter exists on any given method.
+	 */
+	int findStrategyParamIndex(Method method) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			if (parameters[i].getType() == PaginationStrategy.class) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/**
@@ -330,6 +353,162 @@ final class PaginationCoordinator {
 			};
 		}
 		return new PageImpl(items, true, rawResponse, nextPageSupplier);
+	}
+
+	/**
+	 * Executes one {@code PaginationStrategy<T>}-driven page's HTTP call, given the resolved next-request
+	 * query/header overrides - the strategy-path counterpart of
+	 * {@code BiFunction<Object[], String, HttpResponse<String>>} above. A {@code withPathParam}/{@code withBodyField}
+	 * override, by contrast, needs no override map here at all - RIP requires every URL template placeholder to
+	 * have a matching {@code @PathParam} parameter (checked at validation time for every method, pagination or not),
+	 * so both are instead applied directly onto {@code args} before this is called, exactly like an ordinary
+	 * {@code @PathParam}/{@code @Body} argument.
+	 */
+	@FunctionalInterface
+	interface StrategyPageFetch {
+		HttpResponse<String> fetch(Object[] args, String urlOverride, Map<String, Object> queryOverrides,
+				Map<String, Object> headerOverrides);
+	}
+
+	/**
+	 * Fetches the first page for a {@code PaginationStrategy<T>}-driven method (§6.8) and returns it. Unlike the
+	 * declarative {@code @Paginated} path, there's no {@code itemsField} equivalent - the response body must itself
+	 * be the JSON items array; a wrapped envelope's metadata is still reachable via
+	 * {@link PaginationContext#rawBody()} for the strategy's own termination logic, just not as this page's
+	 * {@code items()}.
+	 *
+	 * @param method      the method, for exception messages
+	 * @param strategy    the consumer's {@code PaginationStrategy<T>}, read from its declared parameter
+	 * @param itemType    {@code T}, resolved via {@link #resolveItemType}
+	 * @param errorType   the class to decode a non-2xx response's body into, or {@code null} for none
+	 * @param initialArgs the original call's argument values
+	 * @param pageFetch   executes one page's HTTP call given the resolved next-request query/header overrides
+	 * @return the first page
+	 */
+	Page<Object> fetchFirstStrategyPage(Method method, PaginationStrategy<Object> strategy, Type itemType,
+			Class<?> errorType, Object[] initialArgs, StrategyPageFetch pageFetch) {
+		return fetchStrategyPage(method, strategy, itemType, errorType, initialArgs, null, Collections.emptyMap(),
+				Collections.emptyMap(), 0, 0, pageFetch);
+	}
+
+	private Page<Object> fetchStrategyPage(Method method, PaginationStrategy<Object> strategy, Type itemType,
+			Class<?> errorType, Object[] args, String urlOverride, Map<String, Object> queryOverrides,
+			Map<String, Object> headerOverrides, int itemsFetchedSoFar, int pagesFetchedSoFar,
+			StrategyPageFetch pageFetch) {
+		HttpResponse<String> response = pageFetch.fetch(args, urlOverride, queryOverrides, headerOverrides);
+		String rawBody = (String) responseDecoder.decodeOrThrow(response, errorType, String.class);
+		JsonElement bodyTree = parseBody(rawBody, method);
+		if (!bodyTree.isJsonArray()) {
+			throw new RestInPeaceException(String.format(
+					"The PaginationStrategy method %s expected the response body to itself be a JSON array of "
+							+ "items (there's no itemsField equivalent for PaginationStrategy) but found %s.",
+					method, bodyTree));
+		}
+		List<Object> items = decodeItems(bodyTree.getAsJsonArray(), itemType);
+
+		int itemsFetchedTotal = itemsFetchedSoFar + items.size();
+		int pagesFetchedTotal = pagesFetchedSoFar + 1;
+
+		PaginationContext<Object> context = new PaginationContextImpl<>(items, bodyTree, response, pagesFetchedTotal,
+				itemsFetchedTotal);
+		Optional<PaginationRequest> next = strategy.nextRequest(context);
+
+		boolean hasNext = next.isPresent();
+		if (items.isEmpty()) {
+			// Unconditional safety net, matching the declarative path's own guard (§6.5 step
+			// 5) - even a strategy that (by a bug) keeps returning a next request must not
+			// spin forever once the server hands back nothing.
+			hasNext = false;
+		}
+
+		RipResponse<Void> rawResponse = new RipResponse<>(response.getStatus(),
+				ResponseDecoder.toHeaderMap(response.getHeaders()), null);
+
+		if (!hasNext) {
+			return new PageImpl(items, false, rawResponse, null);
+		}
+
+		PaginationRequestImpl nextRequest = (PaginationRequestImpl) next.get();
+		Supplier<Page<Object>> nextPageSupplier = () -> {
+			Object[] nextArgs = applyBodyFieldOverrides(method, args, nextRequest.bodyFields());
+			nextArgs = applyPathParamOverrides(method, nextArgs, nextRequest.pathParams());
+			return fetchStrategyPage(method, strategy, itemType, errorType, nextArgs, nextRequest.url(),
+					nextRequest.queryParams(), nextRequest.headers(), itemsFetchedTotal, pagesFetchedTotal,
+					pageFetch);
+		};
+		return new PageImpl(items, true, rawResponse, nextPageSupplier);
+	}
+
+	/**
+	 * Applies a {@code PaginationStrategy}'s {@code withBodyField} overrides onto the method's {@code @Body}
+	 * parameter, if any were requested - copy-on-write, via the same {@link #withFieldSet} the declarative
+	 * {@code @Body} carrier (§6.7) uses.
+	 */
+	@SuppressWarnings("unchecked")
+	private static Object[] applyBodyFieldOverrides(Method method, Object[] args, Map<String, Object> bodyFields) {
+		if (bodyFields.isEmpty()) {
+			return args;
+		}
+		int bodyParamIndex = findBodyParamIndex(method);
+		if (bodyParamIndex < 0) {
+			throw new RestInPeaceException(String.format(
+					"The PaginationStrategy method %s's next request set a body field but the method has no @Body "
+							+ "Map<String,Object> parameter to apply it to.",
+					method));
+		}
+		Object[] nextArgs = args.clone();
+		Map<String, Object> body = (Map<String, Object>) args[bodyParamIndex];
+		for (Map.Entry<String, Object> entry : bodyFields.entrySet()) {
+			body = withFieldSet(body, entry.getKey(), entry.getValue());
+		}
+		nextArgs[bodyParamIndex] = body;
+		return nextArgs;
+	}
+
+	/**
+	 * Applies a {@code PaginationStrategy}'s {@code withPathParam} overrides by setting the matching
+	 * {@code @PathParam}-annotated parameter's argument value - not a raw string substitution on the resolved URL,
+	 * since every URL template placeholder is already required (validated for every method, pagination or not) to
+	 * have a bound {@code @PathParam} parameter; routing through it lets the existing {@code UrlResolver} machinery
+	 * handle the substitution exactly as it would for a hand-written call.
+	 */
+	private static Object[] applyPathParamOverrides(Method method, Object[] args, Map<String, Object> pathParams) {
+		if (pathParams.isEmpty()) {
+			return args;
+		}
+		Object[] nextArgs = args.clone();
+		for (Map.Entry<String, Object> entry : pathParams.entrySet()) {
+			int pathParamIndex = findPathParamIndex(method, entry.getKey());
+			if (pathParamIndex < 0) {
+				throw new RestInPeaceException(String.format(
+						"The PaginationStrategy method %s's next request set path param '%s' but the method has "
+								+ "no @PathParam(\"%s\") parameter to apply it to.",
+						method, entry.getKey(), entry.getKey()));
+			}
+			nextArgs[pathParamIndex] = entry.getValue();
+		}
+		return nextArgs;
+	}
+
+	private static int findBodyParamIndex(Method method) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			if (parameters[i].getAnnotation(Body.class) != null) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private static int findPathParamIndex(Method method, String name) {
+		Parameter[] parameters = method.getParameters();
+		for (int i = 0; i < parameters.length; i++) {
+			PathParam pathParam = parameters[i].getAnnotation(PathParam.class);
+			if (pathParam != null && pathParam.value().equals(name)) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	private JsonElement parseBody(String rawBody, Method method) {

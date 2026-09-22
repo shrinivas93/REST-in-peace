@@ -13,6 +13,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
@@ -419,6 +420,44 @@ class ReflectiveRestClientValidatorPaginationTest {
 		Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
 	}
 
+	@RestClient
+	public interface ValidStrategyPage {
+		@GET("http://example.com/orders")
+		Page<Order> listOrders(@QueryParam("status") String status, PaginationStrategy<Order> strategy);
+	}
+
+	@RestClient
+	public interface ValidStrategyStream {
+		@GET("http://example.com/orders")
+		Stream<Order> streamOrders(PaginationStrategy<Order> strategy);
+	}
+
+	@RestClient
+	public interface StrategyAndPaginatedTogether {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor,
+				PaginationStrategy<Order> strategy);
+	}
+
+	@RestClient
+	public interface TwoStrategyParams {
+		@GET("http://example.com/orders")
+		Page<Order> listOrders(PaginationStrategy<Order> first, PaginationStrategy<Order> second);
+	}
+
+	@RestClient
+	public interface StrategyItemTypeMismatch {
+		@GET("http://example.com/orders")
+		Page<Order> listOrders(PaginationStrategy<String> strategy);
+	}
+
+	@RestClient
+	public interface StrategyNotReturningPage {
+		@GET("http://example.com/orders")
+		List<Order> listOrders(PaginationStrategy<Order> strategy);
+	}
+
 	@Test
 	void validate_fullUrlPointer_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidFullUrlPointer.class));
@@ -457,7 +496,7 @@ class ReflectiveRestClientValidatorPaginationTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(AnnotatedButNotReturningPage.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("is annotated with @Paginated but does not return Page<T>"));
+				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
 	}
 
 	@Test
@@ -788,6 +827,50 @@ class ReflectiveRestClientValidatorPaginationTest {
 				() -> ReflectiveRestClientValidator.validate(CompositePointerField.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("composite pointer is only supported for pointerSource = ITEM_FIELD"));
+	}
+
+	@Test
+	void validate_strategyPage_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidStrategyPage.class));
+	}
+
+	@Test
+	void validate_strategyStream_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidStrategyStream.class));
+	}
+
+	@Test
+	void validate_strategyAndPaginatedTogether_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(StrategyAndPaginatedTogether.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("is annotated with @Paginated and also has a PaginationStrategy<T> parameter"));
+	}
+
+	@Test
+	void validate_twoStrategyParams_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(TwoStrategyParams.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("has more than one PaginationStrategy<T> parameter"));
+	}
+
+	@Test
+	void validate_strategyItemTypeMismatch_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(StrategyItemTypeMismatch.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("PaginationStrategy<class java.lang.String> parameter doesn't match its Page<class "
+						+ "com.shri.restinpeace.validator.ReflectiveRestClientValidatorPaginationTest$Order> "
+						+ "return type"));
+	}
+
+	@Test
+	void validate_strategyNotReturningPage_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(StrategyNotReturningPage.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
 	}
 
 }
