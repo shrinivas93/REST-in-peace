@@ -70,6 +70,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   already supported. A well-formed `Link` header with no `rel="next"`
   segment (the genuinely last page, which may still carry `rel="prev"`/
   `rel="first"`) correctly resolves to no next page.
+- `@Paginated(pointerSource = NONE, advance = ...)` covers APIs that give
+  back no next-page pointer at all and expect the client to compute the
+  next offset or page number itself: `INCREMENT_BY_PAGE_SIZE` advances the
+  offset by `pageSize` each fetch, and `INCREMENT_BY_ONE` advances the page
+  number by one, substituting the computed value into the method's single
+  `@PaginationCursor` parameter exactly as an extracted pointer would be. A
+  `hasMoreSource`/`totalSource`/`totalPagesSource` termination signal, if
+  set, still takes priority as usual; absent one, `INCREMENT_BY_PAGE_SIZE`
+  falls back to stopping on a short (fewer-than-`pageSize`) page and
+  `INCREMENT_BY_ONE` falls back to the unconditional empty-items safety
+  net. A computed value written into a `@Body` carrier is a real JSON
+  number, unlike an extracted pointer value's raw string, matching what a
+  numeric field such as Elasticsearch's `from`/`size` expects.
 
 ## [1.0.0.48] - 2026-09-20
 

@@ -435,7 +435,7 @@ final class CompileTimeRestClientValidator {
 	/**
 	 * The compile-time counterpart of
 	 * {@code ReflectiveRestClientValidator#validatePaginated} - see its own
-	 * javadoc for the chunk-2-supported subset of
+	 * javadoc for the chunk-2/3/4/5/7-supported subset of
 	 * {@code docs/design/pagination-helper.md} §7 this implements.
 	 */
 	private static void validatePaginated(ExecutableElement method, String url, ProcessingEnvironment env,
@@ -503,10 +503,18 @@ final class CompileTimeRestClientValidator {
 			}
 		}
 
-		if (paginated.advance() != PaginationAdvance.NONE) {
+		if (paginated.advance() != PaginationAdvance.NONE && paginated.pointerSource() != PaginationSignalSource.NONE) {
 			reporter.error(String.format(
-					"The method %s's @Paginated sets advance() but client-driven advancement is not implemented "
-							+ "yet (rollout chunk 7).",
+					"The method %s's @Paginated sets advance() but pointerSource is not NONE - advance() is only "
+							+ "meaningful for client-driven pagination with no server-given pointer (pointerSource "
+							+ "= NONE).",
+					qualifiedName(method)), method);
+		}
+
+		if (paginated.advance() == PaginationAdvance.INCREMENT_BY_PAGE_SIZE && paginated.pageSize() <= 0) {
+			reporter.error(String.format(
+					"The method %s's @Paginated sets advance = INCREMENT_BY_PAGE_SIZE, which needs pageSize() to "
+							+ "be a positive number.",
 					qualifiedName(method)), method);
 		}
 
@@ -565,10 +573,14 @@ final class CompileTimeRestClientValidator {
 			List<VariableElement> cursorParams, Reporter reporter) {
 		PaginationSignalSource source = paginated.pointerSource();
 		if (source == PaginationSignalSource.NONE) {
-			reporter.error(String.format(
-					"The method %s's @Paginated has pointerSource = NONE, which needs advance() to be set - "
-							+ "client-driven advancement is not implemented yet (rollout chunk 7).",
-					qualifiedName(method)), method);
+			if (paginated.advance() == PaginationAdvance.NONE) {
+				reporter.error(String.format(
+						"The method %s's @Paginated has pointerSource = NONE, which needs advance() to be set for "
+								+ "client-driven pagination.",
+						qualifiedName(method)), method);
+				return;
+			}
+			validateAdvanceCursorParam(method, cursorParams, reporter);
 			return;
 		}
 		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", reporter);
@@ -628,6 +640,23 @@ final class CompileTimeRestClientValidator {
 							+ "%d @PaginationCursor parameter(s) (matching pointerField's %d comma-separated "
 							+ "entries) - found %d.",
 					qualifiedName(method), fieldCount, fieldCount, cursorParams.size()), method);
+		}
+	}
+
+	/**
+	 * Client-driven pagination (§6.5's advance-based fallback, chunk 7) has exactly one computed value - an offset
+	 * or a page number - so it needs exactly one {@code @PaginationCursor} parameter, on any one of the four
+	 * carriers; unlike {@link #validateCursorParamCount}, there's no {@code pointerField} entry count to match it
+	 * against.
+	 */
+	private static void validateAdvanceCursorParam(ExecutableElement method, List<VariableElement> cursorParams,
+			Reporter reporter) {
+		if (cursorParams.size() != 1) {
+			reporter.error(String.format(
+					"The method %s's @Paginated has pointerSource = NONE with advance() set, which needs exactly "
+							+ "one @PaginationCursor parameter to carry the client-computed offset/page value - "
+							+ "found %d.",
+					qualifiedName(method), cursorParams.size()), method);
 		}
 	}
 

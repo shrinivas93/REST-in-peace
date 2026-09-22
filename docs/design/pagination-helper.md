@@ -760,13 +760,29 @@ chunk its own PR, verified and merged before the next starts.
    `rel="first"`) resolves to no pointer, same as any other exhausted
    `FULL_URL` pointer. Covers row 1.
 7. **`OFFSET_LIMIT`/`advance` (client-driven, no server pointer) +
-   `totalPagesSource`.** Covers rows 6, 8, 27-40.
+   `totalPagesSource`.** Landed. `totalPagesSource`/`totalPagesField` were
+   already wired into the termination precedence back in chunk 2 (§12 item
+   2) - this chunk's actual work is `PaginationAdvance`: when
+   `pointerSource = NONE` there's no pointer to extract at all, so
+   `PaginationCoordinator` computes the next offset/page number itself
+   (`INCREMENT_BY_PAGE_SIZE` advances by `pageSize`; `INCREMENT_BY_ONE`
+   advances the page number by one) and substitutes it into the single
+   `@PaginationCursor` parameter, exactly as if it had been extracted. A
+   `hasMoreSource`/`totalSource`/`totalPagesSource` signal, if set, still
+   takes precedence over the termination check (§6.5); absent any of
+   those, `INCREMENT_BY_PAGE_SIZE` falls back to stopping on a short page
+   (fewer items than `pageSize`) and `INCREMENT_BY_ONE` falls back to the
+   unconditional empty-items safety net. A computed value written into a
+   `@Body` carrier is a real JSON number (unlike an extracted pointer
+   value, always resent as the raw extracted string) - matching what a
+   numeric field like Elasticsearch's `from`/`size` actually expects.
+   Covers rows 6, 8, 27-40.
 8. **`PaginationStrategy<T>`** - the programmatic escape hatch (§6.8),
    including its mutual-exclusion validation against `@Paginated`.
 9. **`MockRestServer` multi-page test fixtures**, addressing the first
    open question in §11.
 
-Chunk 7 and later can reorder freely based on which real consumer need
+Chunk 8 and later can reorder freely based on which real consumer need
 surfaces first, per the same "park until real usage narrows which
 shape(s) actually matter" instinct that correctly parked this feature the
 first time - chunks 2-6 alone already cover the majority of real APIs

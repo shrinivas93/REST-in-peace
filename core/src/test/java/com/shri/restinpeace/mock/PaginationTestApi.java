@@ -8,6 +8,7 @@ import com.shri.restinpeace.Page;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.method.POST;
+import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
 import com.shri.restinpeace.annotation.pagination.PaginationCursor;
 import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
 import com.shri.restinpeace.annotation.pagination.Paginated;
@@ -98,6 +99,33 @@ public interface PaginationTestApi {
 	@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
 			pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
 	Page<Order> listOrdersByLinkHeader();
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+			advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 2,
+			totalSource = PaginationSignalSource.RESPONSE_BODY, totalField = "total")
+	Page<Order> listOrdersByOffsetWithTotal(@QueryParam("offset") @PaginationCursor int offset);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+			advance = PaginationAdvance.INCREMENT_BY_ONE,
+			totalPagesSource = PaginationSignalSource.RESPONSE_BODY, totalPagesField = "totalPages")
+	Page<Order> listOrdersByPageNumberWithTotalPages(@QueryParam("page") @PaginationCursor int page);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+			advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 2)
+	Page<Order> listOrdersByOffsetShortPageStop(@QueryParam("offset") @PaginationCursor int offset);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+			advance = PaginationAdvance.INCREMENT_BY_ONE)
+	Page<Order> listOrdersByPageNumberNoSignal(@QueryParam("page") @PaginationCursor int page);
+
+	@POST("/orders/search")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+			advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 2)
+	Page<Order> searchOrdersByOffsetIntoBody(@Body @PaginationCursor(bodyField = "offset") Map<String, Object> body);
 
 	final class Order {
 		public String id;
