@@ -3,7 +3,6 @@ package com.shri.restinpeace.processor;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -581,9 +580,12 @@ final class CompileTimeRestClientValidator {
 		}
 		List<? extends TypeMirror> returnTypeArguments = ((DeclaredType) returnType).getTypeArguments();
 		TypeMirror itemType = returnTypeArguments.isEmpty() ? null : returnTypeArguments.get(0);
-		TypeMirror strategyType = strategyParams.get(0).asType();
-		List<? extends TypeMirror> strategyTypeArguments = strategyType.getKind() == TypeKind.DECLARED
-				? ((DeclaredType) strategyType).getTypeArguments() : Collections.emptyList();
+		// Always a DeclaredType - strategyParams is already filtered to erasure-match
+		// com.shri.restinpeace.PaginationStrategy - getTypeArguments() is empty for a
+		// raw (unparameterized) PaginationStrategy parameter, same as the return type
+		// case above.
+		List<? extends TypeMirror> strategyTypeArguments = ((DeclaredType) strategyParams.get(0).asType())
+				.getTypeArguments();
 		TypeMirror strategyItemType = strategyTypeArguments.isEmpty() ? null : strategyTypeArguments.get(0);
 		if (itemType != null && strategyItemType != null && !types.isSameType(itemType, strategyItemType)) {
 			reporter.error(String.format(

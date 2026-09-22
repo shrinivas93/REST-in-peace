@@ -2054,6 +2054,46 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void rawPageWithStrategy_failsCompilationWithRawTypeErrorOnly() throws IOException {
+		// A raw Page return type is already flagged generically - the item-type-match
+		// check must not also crash (or add a second error) when there's no return
+		// type argument to compare the strategy's own type argument against.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawPageWithStrategy", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawPageWithStrategy {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page listOrders(PaginationStrategy<String> strategy);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw Page with no type parameter");
+		assertFalse(errorMessages(diagnostics).stream().anyMatch(message -> message.contains("doesn't match")));
+	}
+
+	@Test
+	void rawStrategyParam_compilesCleanAndFallsBackReflectively() throws IOException {
+		// A raw PaginationStrategy parameter (no type argument) has nothing to compare
+		// against the method's own Page<String> return type - skipped, not an error.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawStrategyParam", "" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.PaginationStrategy;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "public interface RawStrategyParam {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Page<String> listOrders(PaginationStrategy strategy);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
+	@Test
 	void paginationCursorOnBody_compilesCleanAndFallsBackReflectively() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("CursorOnBody", "" //
 				+ "import com.shri.restinpeace.Page;\n" //

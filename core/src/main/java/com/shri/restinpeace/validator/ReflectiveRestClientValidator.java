@@ -694,12 +694,6 @@ public class ReflectiveRestClientValidator {
 
 	private static void validatePaginationCursorParam(Method method, Parameter cursorParam,
 			ValidationResult validationResult) {
-		if (method.getAnnotation(Paginated.class) == null) {
-			validationResult.addError(String.format(
-					"The method %s.%s has a @PaginationCursor parameter but is not annotated with @Paginated.",
-					method.getDeclaringClass().getName(), method.getName()));
-			return;
-		}
 		boolean onQuery = cursorParam.getAnnotation(QueryParam.class) != null;
 		boolean onPath = cursorParam.getAnnotation(PathParam.class) != null;
 		boolean onHeader = cursorParam.getAnnotation(HeaderParam.class) != null;

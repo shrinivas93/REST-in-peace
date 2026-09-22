@@ -458,6 +458,20 @@ class ReflectiveRestClientValidatorPaginationTest {
 		List<Order> listOrders(PaginationStrategy<Order> strategy);
 	}
 
+	@RestClient
+	@SuppressWarnings("rawtypes")
+	public interface RawPageWithStrategy {
+		@GET("http://example.com/orders")
+		Page listOrders(PaginationStrategy<Order> strategy);
+	}
+
+	@RestClient
+	@SuppressWarnings("rawtypes")
+	public interface RawStrategyParam {
+		@GET("http://example.com/orders")
+		Page<Order> listOrders(PaginationStrategy strategy);
+	}
+
 	@Test
 	void validate_fullUrlPointer_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidFullUrlPointer.class));
@@ -871,6 +885,24 @@ class ReflectiveRestClientValidatorPaginationTest {
 				() -> ReflectiveRestClientValidator.validate(StrategyNotReturningPage.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
+	}
+
+	@Test
+	void validate_rawPageWithStrategy_throwsWithRawTypeErrorOnly() {
+		// A raw Page return type is already flagged generically - the item-type-match
+		// check must not also crash (or add a second error) when there's no return
+		// type argument to compare the strategy's own type argument against.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RawPageWithStrategy.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("returns a raw Page with no type parameter"));
+		assertFalse(exception.getValidationResult().getAllErrors().contains("doesn't match"));
+	}
+
+	@Test
+	void validate_rawStrategyParam_doesNotThrow() {
+		// A raw PaginationStrategy parameter (no type argument) has nothing to compare
+		// against the method's own Page<Order> return type - skipped, not an error.
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(RawStrategyParam.class));
 	}
 
 }
