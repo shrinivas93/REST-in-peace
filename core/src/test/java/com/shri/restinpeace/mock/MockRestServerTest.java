@@ -261,6 +261,33 @@ class MockRestServerTest {
 	}
 
 	@Test
+	void onPages_servesEachResponseInOrderThenSticksOnTheLast() {
+		server.onPages(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"page\":1}"),
+				MockResponse.ok("{\"page\":2}"), MockResponse.ok("{\"page\":3}"));
+
+		assertEquals("{\"page\":1}", api.getOrder("abc123", "false"));
+		assertEquals("{\"page\":2}", api.getOrder("abc123", "false"));
+		assertEquals("{\"page\":3}", api.getOrder("abc123", "false"));
+		assertEquals("{\"page\":3}", api.getOrder("abc123", "false"));
+	}
+
+	@Test
+	void onPages_withRequiredQueryParams_onlyMatchesThoseRequests() {
+		server.onPages(HTTPMethod.GET, "/orders/{id}", singletonMap("verbose", "true"),
+				MockResponse.ok("{\"page\":1}"), MockResponse.ok("{\"page\":2}"));
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"other\":true}"));
+
+		assertEquals("{\"page\":1}", api.getOrder("abc123", "true"));
+		assertEquals("{\"page\":2}", api.getOrder("abc123", "true"));
+		assertEquals("{\"other\":true}", api.getOrder("abc123", "false"));
+	}
+
+	@Test
+	void onPages_noResponses_throwsIllegalArgumentException() {
+		assertThrows(IllegalArgumentException.class, () -> server.onPages(HTTPMethod.GET, "/orders/{id}"));
+	}
+
+	@Test
 	void on_calledTwiceForTheSameRoute_replacesInsteadOfShadowing() {
 		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"status\":\"PENDING\"}"));
 		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("{\"status\":\"CONFIRMED\"}"));

@@ -2053,6 +2053,20 @@ server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2,
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt
 ```
 
+The same per-route queue scripts a `@Paginated`/`PaginationStrategy<T>`
+fetch's page-by-page sequence — `onPages(...)` answers by request order,
+not by matching each page's differing cursor/offset query param value, so
+there's no need for a separate route per page's exact cursor:
+
+```java
+server.onPages(HTTPMethod.GET, "/orders",
+        MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"has_more\":true,\"next_cursor\":\"tok\"}"),
+        MockResponse.ok("{\"orders\":[{\"id\":\"2\"}],\"has_more\":false}"));
+
+Page<Order> page1 = api.listOrders(null);   // page1.items() -> [{"id": "1"}]
+Page<Order> page2 = page1.next();           // page2.items() -> [{"id": "2"}]
+```
+
 `RecordedRequest` (via `server.getRecordedRequests()`/`takeRequest()`)
 exposes exactly what was actually sent — path, query params, headers, body
 (`getBody()`, `getParts()` for a decoded `@Multipart` body,

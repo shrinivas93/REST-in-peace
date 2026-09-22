@@ -890,6 +890,52 @@ class PaginationIntegrationTest {
 		assertFalse(iterator.hasNext());
 	}
 
+	@Test
+	void onPages_scriptsAHasMoreDrivenThreePageSequenceInOneCall() {
+		// MockRestServer.onPages() (§11's open question, chunk 9) answers requests by
+		// call order, not by matching each page's differing cursor query param value -
+		// the natural way to script a page-by-page response sequence without a
+		// separate route per page's exact cursor value.
+		server.onPages(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"has_more\":true,\"next_cursor\":\"tok\"}"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"2\"}],\"has_more\":true,\"next_cursor\":\"tok\"}"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}],\"has_more\":false}"));
+
+		Page<Order> page1 = api.listOrdersWithHasMore(null);
+		assertEquals("1", page1.items().get(0).id);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals("2", page2.items().get(0).id);
+		assertTrue(page2.hasNext());
+
+		Page<Order> page3 = page2.next();
+		assertEquals("3", page3.items().get(0).id);
+		assertFalse(page3.hasNext());
+		assertEquals(3, server.requestCount());
+	}
+
+	@Test
+	void onPages_scriptsAStrategyDrivenPageSequenceInOneCall() {
+		server.onPages(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"}]"), MockResponse.ok("[{\"id\":\"2\"}]"),
+				MockResponse.ok("[]"));
+
+		PaginationStrategy<Order> strategy = ctx -> ctx.items().isEmpty() ? Optional.empty()
+				: Optional.of(PaginationRequest.withQueryParam("page", ctx.pagesFetchedSoFar() + 1));
+
+		Page<Order> page1 = api.listOrdersByStrategyQueryParam(null, strategy);
+		assertEquals("1", page1.items().get(0).id);
+		assertTrue(page1.hasNext());
+
+		Page<Order> page2 = page1.next();
+		assertEquals("2", page2.items().get(0).id);
+		assertTrue(page2.hasNext());
+
+		Page<Order> page3 = page2.next();
+		assertTrue(page3.items().isEmpty());
+		assertFalse(page3.hasNext());
+	}
+
 	private static Map<String, String> queryParams(String name, String value) {
 		Map<String, String> params = new HashMap<>();
 		params.put(name, value);
