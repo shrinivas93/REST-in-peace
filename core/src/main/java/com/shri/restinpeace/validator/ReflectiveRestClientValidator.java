@@ -428,6 +428,14 @@ public class ReflectiveRestClientValidator {
 		if (paginated == null) {
 			return;
 		}
+		// A raw RipResponse/CompletableFuture (no type parameter at all) is already
+		// flagged by validateReturnType regardless of @Paginated - skip adding a
+		// second, overlapping message about the same underlying "raw generic
+		// return type" mistake on the same method.
+		if ((returnType == RipResponse.class || returnType == CompletableFuture.class)
+				&& !(method.getGenericReturnType() instanceof ParameterizedType)) {
+			return;
+		}
 		if (returnType == RipResponse.class && isStreamOrIteratorInner(method.getGenericReturnType())) {
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with @Paginated and returns RipResponse<%s<T>>, which is not "
@@ -492,11 +500,12 @@ public class ReflectiveRestClientValidator {
 		}
 	}
 
-	/** Whether {@code RipResponse<T>}'s {@code T} is itself {@code Stream<?>}/{@code Iterator<?>} - see §7's dedicated rejection for that shape. */
+	/**
+	 * Whether {@code RipResponse<T>}'s {@code T} is itself {@code Stream<?>}/{@code Iterator<?>} - see §7's
+	 * dedicated rejection for that shape. Callers only reach this once the raw-generic-return-type guard above
+	 * has confirmed {@code ripResponseGenericType} is parameterized, so that case isn't re-checked here.
+	 */
 	private static boolean isStreamOrIteratorInner(Type ripResponseGenericType) {
-		if (!(ripResponseGenericType instanceof ParameterizedType)) {
-			return false;
-		}
 		Type inner = ((ParameterizedType) ripResponseGenericType).getActualTypeArguments()[0];
 		if (!(inner instanceof ParameterizedType)) {
 			return false;

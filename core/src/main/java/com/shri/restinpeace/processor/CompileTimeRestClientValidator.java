@@ -456,6 +456,16 @@ final class CompileTimeRestClientValidator {
 		if (paginated == null) {
 			return;
 		}
+		// A raw RipResponse/CompletableFuture (no type parameter at all) is already
+		// flagged by validateReturnType regardless of @Paginated - skip adding a
+		// second, overlapping message about the same underlying "raw generic
+		// return type" mistake on the same method.
+		if (isDeclared
+				&& ("com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+						|| "java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))
+				&& ((DeclaredType) returnType).getTypeArguments().isEmpty()) {
+			return;
+		}
 		if (isDeclared && "com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
 				&& streamOrIteratorInnerName(returnType, types) != null) {
 			reporter.error(String.format(

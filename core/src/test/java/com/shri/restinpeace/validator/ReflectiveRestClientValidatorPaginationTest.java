@@ -139,6 +139,21 @@ class ReflectiveRestClientValidatorPaginationTest {
 	}
 
 	@RestClient
+	public interface RipResponseWrappingNonStreamType {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@SuppressWarnings("rawtypes")
+	@RestClient
+	public interface RawRipResponseReturn {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
 	public interface PaginatedWithUrl {
 		@GET
 		@Paginated(itemsField = "orders", pointerKind = PointerKind.FULL_URL, pointerField = "next")
@@ -320,6 +335,28 @@ class ReflectiveRestClientValidatorPaginationTest {
 				() -> ReflectiveRestClientValidator.validate(RipResponseWrappingIterator.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("returns RipResponse<Iterator<T>>, which is not supported"));
+	}
+
+	@Test
+	void validate_ripResponseWrappingNonStreamType_throwsWithGenericError() {
+		// RipResponse<Order> isn't Stream/Iterator-wrapped, so the dedicated
+		// rejection doesn't apply - falls through to the generic "does not
+		// return Page/Stream/Iterator" message instead.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RipResponseWrappingNonStreamType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
+	}
+
+	@Test
+	void validate_rawRipResponseReturn_throwsWithTheExistingRawTypeError() {
+		// validateReturnType already flags a raw RipResponse regardless of
+		// @Paginated - the pagination-specific checks add nothing further for
+		// this exact case, avoiding a second, overlapping message.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RawRipResponseReturn.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns a raw RipResponse with no type parameter"));
 	}
 
 	@Test
