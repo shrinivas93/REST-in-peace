@@ -99,6 +99,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `withBodyField` route through the method's own `@PathParam`/`@Body`
   parameter, the same mechanism the declarative `@PaginationCursor`
   carriers use. The unconditional empty-items safety net applies here too.
+- `MockRestServer.onPages(httpMethod, pathTemplate, responses...)` scripts
+  an ordered page-by-page response sequence for a `@Paginated`/
+  `PaginationStrategy<T>` fetch in one call - the Nth request gets
+  `responses[N-1]`, with the last response sticky for every request after
+  that, by request order rather than matching each page's differing
+  cursor/offset query param value. Sugar over the existing per-route
+  response queue `enqueueFor`/`onFlaky` already used for retry-recovery
+  scripting - no change to `MockResponse` was needed.
 
 ## [1.0.0.48] - 2026-09-20
 

@@ -694,11 +694,19 @@ the only option, not a stylistic choice:
   "the first call can be async like any other RIP call" - deliberately
   deferred rather than guessed at now, consistent with parking the whole
   feature until usage was concrete enough to design against.
-- **`MockRestServer` multi-page fixtures.** Testing a paginated fetch needs
-  a way to script a page sequence in one test (page 1 responds with
-  `next=url2`, page 2 responds with `next=null`) - likely a small addition
-  to `MockRestServer`/`MockResponse`, sketched in the rollout plan (§12)
-  but not designed in detail here.
+- ~~**`MockRestServer` multi-page fixtures.**~~ **Resolved (chunk 9).**
+  `MockRestServer` already had the right underlying mechanism -
+  `enqueueFor`/`onFlaky` script a per-route response *queue*, consumed in
+  request order regardless of what the request's query params/body
+  actually are, rather than matching each page's differing cursor value
+  with a separate route. `onPages(httpMethod, pathTemplate, responses...)`
+  is sugar over that same queue for the pagination case specifically: the
+  Nth request gets `responses[N-1]`, and the last response answers every
+  request after the sequence is exhausted (mirroring `on`'s existing
+  sticky-response convention) - sugar for `on(...)` with the last response
+  plus `enqueueFor(...)` with the rest, in the right order. No change to
+  `MockResponse` was needed; the existing per-route queue already covered
+  the shape this open question described.
 - **Cursor expiry (Elasticsearch scroll-style).** Per §3, out of scope to
   auto-handle - but should the thrown exception on an expired scroll be a
   distinguishable RIP exception type, so a consumer can catch it
@@ -801,10 +809,18 @@ chunk its own PR, verified and merged before the next starts.
    arithmetic. The unconditional empty-items safety net (§6.5 step 5)
    applies here too, regardless of what the strategy itself returns.
 9. **`MockRestServer` multi-page test fixtures**, addressing the first
-   open question in §11.
+   open question in §11. Landed. `MockRestServer.onPages(httpMethod,
+   pathTemplate, responses...)` scripts an ordered page sequence for a
+   route - the Nth request gets `responses[N-1]`, with the last response
+   sticky for every request after that - by request order, not by
+   matching each page's differing cursor/offset query param value.
+   Built entirely on the existing per-route response queue
+   (`enqueueFor`/`onFlaky` already used it for retry-recovery scripting);
+   no change to `MockResponse` was needed.
 
-Chunk 9 and later can reorder freely based on which real consumer need
-surfaces first, per the same "park until real usage narrows which
-shape(s) actually matter" instinct that correctly parked this feature the
-first time - chunks 2-6 alone already cover the majority of real APIs
-surveyed in §9.
+This closes every numbered chunk in this rollout plan - `PaginationStrategy<T>`
+(chunk 8) and this chunk were the two remaining items, both addressing
+open questions from §11. An async `Page<T>.next()` iteration protocol
+remains the one deliberately-deferred item (§11), left for if/when real
+usage calls for it, per the same "park until usage narrows the shape"
+instinct that governed this feature from the start.

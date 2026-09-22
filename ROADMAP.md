@@ -851,7 +851,7 @@ up.
       attempt, since every attempt gets its own `afterResponse` notification
       - verified with a dedicated test asserting three samples
       (`503, 503, 200`) for a call that fails twice before succeeding.
-- [ ] **A pagination helper** — an annotation (`@Paginated`) or, for
+- [x] **A pagination helper** — an annotation (`@Paginated`) or, for
       whatever it can't reach, a programmatic `PaginationStrategy<T>`
       escape hatch, following a `next`/cursor field or response header
       automatically and handing back a `Page<T>` (manual) or lazy
@@ -872,18 +872,20 @@ up.
       `CircuitBreakerConfig`/`CircuitBreakerProvider`'s build-your-own-
       default-pluggable-override shape) for the residue no closed
       annotation vocabulary can ever fully anticipate. Chunked rollout
-      plan in the doc's §12; chunks 2-8 have landed (`@Paginated`,
-      `@PaginationCursor`, `Page<T>`, `Stream<T>`/`Iterator<T>` lazy
-      auto-flattening, `FULL_URL`/`VALUE`/`ITEM_FIELD` (keyset, including
-      N-way composite) pointers via `@QueryParam`/`@PathParam`/
-      `@HeaderParam`/`@Body`, `hasMore`/`total`/`totalPages` termination
-      signals, RFC 8288 `Link` header `rel="next"` parsing for a
-      `RESPONSE_HEADER`-sourced `FULL_URL` pointer, `PaginationAdvance`
+      plan in the doc's §12; every numbered chunk (2-9) has landed:
+      `@Paginated`, `@PaginationCursor`, `Page<T>`, `Stream<T>`/
+      `Iterator<T>` lazy auto-flattening, `FULL_URL`/`VALUE`/`ITEM_FIELD`
+      (keyset, including N-way composite) pointers via `@QueryParam`/
+      `@PathParam`/`@HeaderParam`/`@Body`, `hasMore`/`total`/`totalPages`
+      termination signals, RFC 8288 `Link` header `rel="next"` parsing for
+      a `RESPONSE_HEADER`-sourced `FULL_URL` pointer, `PaginationAdvance`
       client-driven offset/page-number arithmetic for APIs with no
-      server-given pointer at all, and the fully programmatic
-      `PaginationStrategy<T>` escape hatch, synchronous only) - chunk 9
-      (an async first fetch, `MockRestServer` multi-page fixtures) remains
-      unstarted.
+      server-given pointer at all, the fully programmatic
+      `PaginationStrategy<T>` escape hatch, and `MockRestServer.onPages(...)`
+      for scripting a page sequence in one test call. Synchronous only -
+      a fully async `Page<T>.next()` iteration protocol (§11) remains a
+      deliberately-deferred future enhancement, left for if/when real
+      usage calls for it, not a numbered rollout chunk.
 - [x] **Spring integration module** — auto-registers every `@RestClient`
       interface found on the classpath as a bean, the way OpenFeign
       integrates with Spring Cloud, via the optional
