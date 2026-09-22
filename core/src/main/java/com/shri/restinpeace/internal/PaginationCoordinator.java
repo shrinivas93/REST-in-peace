@@ -391,7 +391,12 @@ final class PaginationCoordinator {
 		if (paginated.pointerSource() != PaginationSignalSource.ITEM_FIELD) {
 			JsonElement element = extractElement(bodyTree, response, paginated.pointerSource(),
 					paginated.pointerField());
-			values.add(element == null ? null : element.getAsString());
+			String value = element == null ? null : element.getAsString();
+			if (value != null && paginated.pointerKind() == PointerKind.FULL_URL
+					&& paginated.pointerSource() == PaginationSignalSource.RESPONSE_HEADER) {
+				value = parseLinkHeaderRelNext(value);
+			}
+			values.add(value);
 			return values;
 		}
 		String[] fields = paginated.pointerField().split(",", -1);
@@ -407,6 +412,41 @@ final class PaginationCoordinator {
 			values.add(value == null || value.isJsonNull() ? null : value.getAsString());
 		}
 		return values;
+	}
+
+	/**
+	 * Parses an RFC 8288 (formerly RFC 5988) {@code Link} header value - one or more comma-separated
+	 * {@code <uri>; param=value; ...} segments (GitHub REST, Shopify REST) - and returns the {@code rel="next"}
+	 * segment's URI, or {@code null} if there's no such segment (the genuinely last page still has {@code prev}/
+	 * {@code first} links, just no {@code next}). A value that doesn't look like this format at all (no
+	 * angle-bracketed URI) is returned unchanged, preserving the simpler "the header's raw value already IS the
+	 * next URL" case for a non-standard header.
+	 */
+	private static String parseLinkHeaderRelNext(String rawHeaderValue) {
+		if (!rawHeaderValue.contains("<")) {
+			return rawHeaderValue;
+		}
+		for (String linkValue : rawHeaderValue.split(",")) {
+			String segment = linkValue.trim();
+			int uriEnd = segment.indexOf('>');
+			if (!segment.startsWith("<") || uriEnd < 0) {
+				continue;
+			}
+			String uri = segment.substring(1, uriEnd);
+			for (String param : segment.substring(uriEnd + 1).split(";")) {
+				param = param.trim();
+				if (!param.startsWith("rel=")) {
+					continue;
+				}
+				String relValue = param.substring(4).replaceAll("^\"|\"$", "");
+				for (String rel : relValue.split("\\s+")) {
+					if ("next".equals(rel)) {
+						return uri;
+					}
+				}
+			}
+		}
+		return null;
 	}
 
 	private Boolean toBoolean(JsonElement element, Method method, String attributeName) {
