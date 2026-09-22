@@ -225,6 +225,16 @@
         <a href="#ripresponse">RipResponse&lt;T&gt;</a>
         <a href="#async">Async — CompletableFuture</a>
 
+        <div class="group-title">Pagination</div>
+        <a href="#pagination-basics">@Paginated basics</a>
+        <a href="#pagination-flatten">Stream&lt;T&gt; / Iterator&lt;T&gt;</a>
+        <a href="#pagination-termination">Termination signals</a>
+        <a href="#pagination-body-cursor">POST body cursor</a>
+        <a href="#pagination-item-field">Keyset / composite cursors</a>
+        <a href="#pagination-link-header">Link response header</a>
+        <a href="#pagination-advance">Client-driven advance</a>
+        <a href="#pagination-strategy">PaginationStrategy&lt;T&gt;</a>
+
         <div class="group-title">Errors &amp; resilience</div>
         <a href="#errors">Error handling</a>
         <a href="#retry">@Retry &amp; idempotency</a>
@@ -659,6 +669,214 @@ userApi.getUserAsync("42").thenAccept(user -> System.out.println(user.name));</c
 // outliving its own shutdown — the starter's auto-configuration calls
 // RIP.useDaemonThreadsForAsync() automatically. No property to opt out;
 // exclude RestInPeaceAutoConfiguration if you truly need the plain-Java default.</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PAGINATION ============ -->
+    <section class="category" id="pagination-basics">
+      <h2>Pagination</h2>
+      <p class="category-desc"><code>@Paginated</code> follows a next-page pointer automatically instead of leaving the fetch-extract-repeat loop to hand-written code — <code>page.next()</code> re-invokes the exact same annotated method through the full existing call pipeline (<code>@Retry</code>, cache, circuit breaker, bulkhead, interceptors), exactly as if it were called again by hand.</p>
+
+      <div class="feature">
+        <h3>@Paginated + Page&lt;T&gt;</h3>
+        <p class="blurb">The pointer is extracted from the response body and resent through whichever parameter carries <code>@PaginationCursor</code>.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+
+Page<Order> page = orderApi.listOrders(null);
+while (true) {
+    for (Order order : page.items()) {
+        process(order);
+    }
+    if (!page.hasNext()) {
+        break;
+    }
+    page = page.next();
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · page metadata</span>
+              <span class="snippet-caption">status/headers for the page currently held, not wherever iteration has since moved to</span></div>
+            <pre><code class="language-java">RipResponse<Void> meta = page.rawResponse();
+meta.getStatus();          // 200
+meta.getHeader("ETag");</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-flatten">
+        <h3>Stream&lt;T&gt; / Iterator&lt;T&gt; auto-flattening</h3>
+        <p class="blurb">Same method, same annotation — just declare a different return type to flatten every page into one lazy sequence instead of managing <code>Page&lt;T&gt;</code> by hand. No network call happens until the first terminal operation / <code>hasNext()</code>, unlike <code>Page&lt;T&gt;</code>'s own eager first fetch.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · Stream&lt;T&gt;</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Stream<Order> streamOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+
+orderApi.streamOrders(null).forEach(this::process);   // fetches pages on demand
+long shipped = orderApi.streamOrders(null).filter(o -> "shipped".equals(o.status)).count();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · Iterator&lt;T&gt;</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Iterator<Order> iterateOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+
+Iterator<Order> it = orderApi.iterateOrders(null);
+while (it.hasNext()) {
+    process(it.next());
+}</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-termination">
+        <h3>Termination signals</h3>
+        <p class="blurb">An API that keeps the pointer populated even on the genuinely last page (Stripe, for one) needs an explicit stop condition instead of "the pointer is gone". Precedence when more than one is set: <code>hasMore</code> → total count → total pages → pointer presence, always under an empty-page safety net.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · hasMore boolean</span></div>
+            <pre><code class="language-java">@GET("/charges")
+@Paginated(itemsField = "data", pointerField = "next_cursor",
+        hasMoreSource = PaginationSignalSource.RESPONSE_BODY, hasMoreField = "has_more")
+Page<Charge> listCharges(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · total record count</span>
+              <span class="snippet-caption">a running fetched-items counter compared against a header</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor",
+        totalSource = PaginationSignalSource.RESPONSE_HEADER, totalField = "X-Total-Count")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · total page count</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor",
+        totalPagesSource = PaginationSignalSource.RESPONSE_BODY, totalPagesField = "total_pages")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-body-cursor">
+        <h3>POST body cursor</h3>
+        <p class="blurb">For a cursor resent as a JSON request body field (Elasticsearch's <code>search_after</code>, DynamoDB's <code>ExclusiveStartKey</code>) rather than a query/path/header value — stack <code>@PaginationCursor</code> on a <code>@Body Map&lt;String,Object&gt;</code> parameter, with <code>bodyField</code> naming the dotted-path field to overwrite.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@POST("/orders/search")
+@Paginated(itemsField = "orders", pointerField = "search_after")
+Page<Order> searchOrders(@Body @PaginationCursor(bodyField = "search_after") Map<String, Object> body);
+
+Map<String, Object> body = new HashMap<>();
+body.put("filter", "region:eu");
+body.put("size", 100);
+Page<Order> page = orderApi.searchOrders(body);
+// every field the caller put in `body` carries forward unchanged on every
+// subsequent page; only `search_after` gets overwritten, `body` itself is never mutated</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-item-field">
+        <h3>Keyset pagination &amp; composite cursors</h3>
+        <p class="blurb">For a <code>since_id</code>/keyset-style API whose cursor isn't in the response envelope at all but derived from the last item on the page (Stripe, classic Twitter) — set <code>pointerSource = ITEM_FIELD</code>. A comma-separated <code>pointerField</code> covers an N-way composite key for a stable sort under concurrent writes.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · single key</span></div>
+            <pre><code class="language-java">@GET("/charges")
+@Paginated(itemsField = "data", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = "id")
+Page<Charge> listCharges(@QueryParam("starting_after") @PaginationCursor String startingAfter);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · composite (id, timestamp) key</span>
+              <span class="snippet-caption">positionally matched to two @PaginationCursor parameters</span></div>
+            <pre><code class="language-java">@GET("/events")
+@Paginated(itemsField = "events", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
+        @QueryParam("lastTs") @PaginationCursor String lastTimestamp);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-link-header">
+        <h3>RFC 8288 Link response header</h3>
+        <p class="blurb">GitHub/Shopify's <code>Link: &lt;url&gt;; rel="next", &lt;url&gt;; rel="last"</code> convention needs no special parsing beyond a <code>FULL_URL</code> pointer sourced from that header — RIP follows the <code>rel="next"</code> target until a page's <code>Link</code> header no longer has one.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span></div>
+            <pre><code class="language-java">@GET("/repos")
+@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+        pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+Page<Repo> listRepos();</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-advance">
+        <h3>Client-driven advance (no server pointer at all)</h3>
+        <p class="blurb">A homegrown endpoint that just expects the client to compute the next offset or page number itself, with no pointer to extract. <code>INCREMENT_BY_PAGE_SIZE</code> advances the offset by <code>pageSize</code> each fetch (stopping on a short page absent another signal); <code>INCREMENT_BY_ONE</code> advances the page number by one (stopping on an empty page).</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · offset + page size</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+        advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE, pageSize = 50,
+        totalSource = PaginationSignalSource.RESPONSE_HEADER, totalField = "X-Total-Count")
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · page number</span></div>
+            <pre><code class="language-java">@GET("/orders")
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+        advance = PaginationAdvance.INCREMENT_BY_ONE,
+        totalPagesSource = PaginationSignalSource.RESPONSE_BODY, totalPagesField = "total_pages")
+Page<Order> listOrdersByPage(@QueryParam("page") @PaginationCursor int page);</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="pagination-strategy">
+        <h3>PaginationStrategy&lt;T&gt; — the programmatic escape hatch</h3>
+        <p class="blurb">For whatever the closed <code>@Paginated</code> attribute vocabulary can't reach — a cursor needing decoding before reuse, termination logic combining several signals with OR instead of the fixed precedence, a page count needing a separate API call. A plain parameter, no annotation, recognized by its declared type — the same idiom RIP already uses for <code>CompletableFuture&lt;T&gt;</code>/<code>RipResponse&lt;T&gt;</code> return types. Mutually exclusive with <code>@Paginated</code> on one method, and unlike it, the response body must itself be the JSON items array — there's no <code>itemsField</code> equivalent.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · query param override</span></div>
+            <pre><code class="language-java">@GET("/orders")
+Page<Order> listOrders(@QueryParam("status") String status, PaginationStrategy<Order> strategy);
+
+PaginationStrategy<Order> strategy = ctx -> ctx.items().isEmpty() ? Optional.empty()
+        : Optional.of(PaginationRequest.withQueryParam("since",
+                ctx.items().get(ctx.items().size() - 1).getId()));
+
+Page<Order> page = api.listOrders("active", strategy);</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · follow a full URL</span></div>
+            <pre><code class="language-java">PaginationStrategy<Repo> strategy = ctx -> {
+    String next = ctx.header("X-Next-Page-Url");
+    return next == null ? Optional.empty() : Optional.of(PaginationRequest.toUrl(next));
+};</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · combine two overrides</span>
+              <span class="snippet-caption">a two-column composite keyset written into a @Body carrier</span></div>
+            <pre><code class="language-java">PaginationStrategy<Event> strategy = ctx -> {
+    if (ctx.items().isEmpty()) {
+        return Optional.empty();
+    }
+    Event last = ctx.items().get(ctx.items().size() - 1);
+    return Optional.of(PaginationRequest.withBodyField("lastId", last.getId())
+            .and(PaginationRequest.withBodyField("lastTimestamp", last.getCreatedAt())));
+};</code></pre>
           </div>
         </div>
       </div>
@@ -1196,6 +1414,17 @@ class OrderApiTest {
         MockResponse.status(503, ""), MockResponse.json(new Order("42", "shipped")));
 
 Order order = orderApiWithRetry.getOrder("42");   // succeeds on the 3rd attempt</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · script a @Paginated/PaginationStrategy&lt;T&gt; page sequence</span>
+              <span class="snippet-caption">answers by request order, not by matching each page's differing cursor/offset query param - no per-cursor route needed</span></div>
+            <pre><code class="language-java">server.onPages(HTTPMethod.GET, "/orders",
+        MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"has_more\":true,\"next_cursor\":\"tok\"}"),
+        MockResponse.ok("{\"orders\":[{\"id\":\"2\"}],\"has_more\":false}"));
+
+Page<Order> page1 = api.listOrders(null);   // page1.items() -> [{"id": "1"}]
+Page<Order> page2 = page1.next();           // page2.items() -> [{"id": "2"}]
+// a 3rd call would replay the last response (has_more: false) rather than error</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · simulate what @Retry/@Timeout actually handle</span>

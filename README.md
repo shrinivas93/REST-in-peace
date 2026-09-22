@@ -1032,16 +1032,25 @@ for more than one override at once. Unlike `@Paginated`, there's no
 `@Paginated` and a `PaginationStrategy<T>` parameter are mutually
 exclusive on one method - pick declarative or programmatic, not both.
 
-This is an incrementally-landing feature — see
+Testing a paginated method against `MockRestServer` usually means scripting
+a short, fixed sequence of pages rather than one canned response — see
+[`onPages(...)`](#testing-with-mockrestserver) in the testing section
+below, which answers each successive request in order and then sticks on
+the last response for anything after.
+
+Every numbered chunk of the rollout plan (2 through 9) has now landed — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
-the full design, an exhaustive 46-row catalogue of real-world pagination
-shapes, and exactly which shapes are implemented so far. As of now: a
+the full design and an exhaustive 46-row catalogue of real-world pagination
+shapes mapped onto the feature surface above. Supported today: a
 `VALUE`/`FULL_URL` pointer sourced from the response body/headers/last
-item, client-driven `advance` when there's no pointer at all, or the fully
-programmatic `PaginationStrategy<T>` escape hatch, and a synchronous
-`Page<T>`/`Stream<T>`/`Iterator<T>` return type — `RIP.getClient(...)`
-rejects an unsupported shape (an async first fetch) by name, naming the
-rollout chunk that adds it, rather than silently misbehaving.
+item (including RFC 8288 `Link` headers and composite keyset cursors),
+client-driven `advance` when there's no pointer at all, or the fully
+programmatic `PaginationStrategy<T>` escape hatch, through a
+`Page<T>`/`Stream<T>`/`Iterator<T>` return type — including an async
+*first* fetch via `CompletableFuture<Page<T>>` (each subsequent
+`page.next()` call is still synchronous). Only a fully async iteration
+protocol (`page.next()` itself returning a `CompletableFuture<Page<T>>`)
+remains deliberately deferred — see §11 of the design doc.
 
 ## Error handling
 

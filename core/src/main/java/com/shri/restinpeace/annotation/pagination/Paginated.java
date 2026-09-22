@@ -20,22 +20,26 @@ import java.lang.annotation.Target;
  * </pre>
  *
  * <p>
- * Landing incrementally per the design doc's rollout plan (§12) - chunks
- * 2-5 and 7 support {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE}
- * pointers sourced from {@link PaginationSignalSource#RESPONSE_BODY}/
+ * Every rollout chunk in the design doc's plan (§12) has landed: a
+ * {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE} pointer sourced
+ * from {@link PaginationSignalSource#RESPONSE_BODY}/
  * {@link PaginationSignalSource#RESPONSE_HEADER}/
  * {@link PaginationSignalSource#ITEM_FIELD} (keyset pagination, including
- * an N-way composite key), resent via {@code @QueryParam}/
- * {@code @PathParam}/{@code @HeaderParam}/{@code @Body}, with
- * {@code hasMoreSource}/{@code totalSource}/{@code totalPagesSource}
- * termination signals, {@link PaginationAdvance} client-driven offset/
- * page-number advancement when there's no server-given pointer at all
- * ({@code pointerSource = NONE}), and a synchronous {@code Page<T>}/
- * {@code Stream<T>}/{@code Iterator<T>} return type.
- * {@code PaginationStrategy<T>} and an async first fetch are not
- * implemented yet - {@code RIP.getClient(...)} rejects a method using one
- * of those shapes, naming what's missing, rather than silently misbehaving
- * at call time.
+ * an N-way composite key, and RFC 8288 {@code Link} response headers),
+ * resent via {@code @QueryParam}/{@code @PathParam}/{@code @HeaderParam}/
+ * {@code @Body}, with {@code hasMoreSource}/{@code totalSource}/
+ * {@code totalPagesSource} termination signals, {@link PaginationAdvance}
+ * client-driven offset/page-number advancement when there's no
+ * server-given pointer at all ({@code pointerSource = NONE}), and a
+ * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} return type,
+ * including an async first fetch via {@code CompletableFuture<Page<T>>}.
+ * Whatever this closed attribute vocabulary can't reach, a
+ * {@link com.shri.restinpeace.PaginationStrategy} parameter is the fully
+ * programmatic escape hatch instead - mutually exclusive with this
+ * annotation on the same method. Only a fully async iteration protocol
+ * ({@code Page<T>.next()} itself returning a future) remains deliberately
+ * deferred (§11) - {@code RIP.getClient(...)} rejects that shape by name
+ * rather than silently misbehaving at call time.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)

@@ -3,10 +3,12 @@ package com.shri.restinpeace;
 import java.util.List;
 
 /**
- * One page of a {@code @Paginated} method's results, for manual,
- * page-at-a-time iteration - see {@code docs/design/pagination-helper.md}
- * §6.4. {@code Stream<T>}/{@code Iterator<T>} auto-flattened iteration
- * across every page is planned for a later rollout chunk (§12).
+ * One page of a {@code @Paginated} (or {@code PaginationStrategy<T>})
+ * method's results, for manual, page-at-a-time iteration - see
+ * {@code docs/design/pagination-helper.md} §6.4. Declare {@code Stream<T>}
+ * or {@code Iterator<T>} instead of {@code Page<T>} on the exact same
+ * method for auto-flattened, lazy iteration across every page instead of
+ * calling {@link #next()} by hand.
  *
  * <p>
  * {@link #rawResponse()} returns a {@link RipResponse}{@code <Void>} rather
