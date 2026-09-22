@@ -73,8 +73,30 @@ public interface PaginationTestApi {
 	Page<Order> searchOrdersByNestedBodyField(
 			@Body @PaginationCursor(bodyField = "meta.cursor") Map<String, Object> body);
 
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = "id")
+	Page<Order> listOrdersByItemFieldCursor(@QueryParam("since") @PaginationCursor String since);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+			pointerField = "id,createdAt")
+	Page<Order> listOrdersByCompositeItemFieldCursor(@QueryParam("lastId") @PaginationCursor String lastId,
+			@QueryParam("lastTs") @PaginationCursor String lastTimestamp);
+
+	@POST("/orders/search")
+	@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.ITEM_FIELD,
+			pointerField = "id,createdAt")
+	Page<Order> searchOrdersByCompositeItemFieldIntoBody(
+			@Body @PaginationCursor(bodyField = "lastId,lastTimestamp") Map<String, Object> body);
+
+	@GET("/orders")
+	@Paginated(itemsField = "orders", hasMoreSource = PaginationSignalSource.RESPONSE_BODY,
+			hasMoreField = "has_more", pointerSource = PaginationSignalSource.ITEM_FIELD, pointerField = "id")
+	Page<Order> listOrdersByItemFieldWithHasMore(@QueryParam("since") @PaginationCursor String since);
+
 	final class Order {
 		public String id;
+		public String createdAt;
 	}
 
 }

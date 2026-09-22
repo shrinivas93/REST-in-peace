@@ -1,24 +1,24 @@
 # Design: Pagination helper
 
-Status: **chunks 2-4 of the rollout plan (§12) have landed.** `@Paginated`,
+Status: **chunks 2-5 of the rollout plan (§12) have landed.** `@Paginated`,
 `@PaginationCursor`, `Page<T>`, `Stream<T>`/`Iterator<T>` auto-flattening,
 and the three enums in §6.1 are real code - a `PointerKind.FULL_URL` or
 `VALUE` pointer sourced from `PaginationSignalSource.RESPONSE_BODY`/
-`RESPONSE_HEADER`, resent via `@QueryParam`/`@PathParam`/`@HeaderParam`/
-`@Body`, with `hasMoreSource`/`totalSource`/`totalPagesSource` termination
-signals, synchronous only. A `Stream<T>`/`Iterator<T>` return type is
-lazy - the first page (and every page after it) is only fetched on first
-use, matching ordinary lazy-iterator/lazy-stream semantics; `Page<T>` still
-fetches its first page eagerly, like any other RIP call. Everything else in
-this doc - `ITEM_FIELD` keyset pagination (including the composite,
-N-way-into-one-body-field shape §6.7 sketches, which needs `ITEM_FIELD` to
-produce more than one extracted value), `PaginationAdvance` client-driven
-advancement, `PaginationStrategy<T>`, an async first fetch, and
-`MockRestServer` multi-page fixtures - is still design only, chunked per
-§12; `RIP.getClient(...)` rejects a method using one of those not-yet-
-supported shapes by name rather than silently misbehaving. The
-feature was previously parked (see `ROADMAP.md`) after a
-first sketch (a fixed `Page<T>` interface with `getItems()`/
+`RESPONSE_HEADER`/`ITEM_FIELD` (§6.6's keyset pagination, including an N-way
+composite key resent via N separate carriers or one `@Body` carrier's
+comma-separated `bodyField`, §6.7), resent via `@QueryParam`/`@PathParam`/
+`@HeaderParam`/`@Body`, with `hasMoreSource`/`totalSource`/
+`totalPagesSource` termination signals, synchronous only. A `Stream<T>`/
+`Iterator<T>` return type is lazy - the first page (and every page after
+it) is only fetched on first use, matching ordinary lazy-iterator/
+lazy-stream semantics; `Page<T>` still fetches its first page eagerly, like
+any other RIP call. Everything else in this doc - `PaginationAdvance`
+client-driven advancement, `PaginationStrategy<T>`, an async first fetch,
+`LINK_HEADER` RFC 5988 parsing, and `MockRestServer` multi-page fixtures -
+is still design only, chunked per §12; `RIP.getClient(...)` rejects a
+method using one of those not-yet-supported shapes by name rather than
+silently misbehaving. The feature was previously parked (see `ROADMAP.md`)
+after a first sketch (a fixed `Page<T>` interface with `getItems()`/
 `getNextUrl()`) turned out not to be generic enough for how differently
 real APIs shape pagination. This doc replaces that sketch with a design
 built from a deliberately exhaustive survey of real-world pagination
@@ -726,16 +726,22 @@ chunk its own PR, verified and merged before the next starts.
    dotted-path `bodyField` (`get`'s request-side counterpart, walked as a
    copy-on-write `set` so the caller's own map/nested maps are never
    mutated) covers every row whose cursor is one scalar value written into
-   the request body - rows 3, 11, 16, 17. Rows 29/36/46 also need
-   `advance` (chunk 7); row 43's composite keyset also needs
-   `pointerSource = ITEM_FIELD` to actually produce more than one
-   extracted value (chunk 5) - a comma-separated `bodyField` is rejected
-   for now with a "not implemented yet (rollout chunk 5)" message, the
-   same by-name-rejection pattern used everywhere else in §7, rather than
-   silently mishandling a shape this chunk can't yet fill with real values.
+   the request body - rows 3, 11, 16, 17. A comma-separated `bodyField`
+   (composite keyset into one body field) is wired up too, but has nothing
+   to consume until chunk 5 lands `pointerSource = ITEM_FIELD`, the only
+   source that can ever produce more than one extracted value; rows
+   29/36/46 also need `advance` (chunk 7).
 5. **`NEXT_CURSOR`-shaped `ITEM_FIELD`/keyset pointer source**, including
-   N-way composite via multiple `@PaginationCursor` parameters. Covers
-   rows 14, 41-44.
+   N-way composite via multiple `@PaginationCursor` parameters or one
+   `@Body` carrier's comma-separated `bodyField`. Landed. Extracts from the
+   *last fetched item* in the current page rather than a dedicated response
+   field; a composite `pointerField` needs either exactly N non-`@Body`
+   cursor parameters (positionally matched) or one `@Body` cursor parameter
+   whose `bodyField` names the same N values. Without a `hasMore`/`total`/
+   `totalPages` signal, a `since_id`-style API's own field is (by
+   construction) always present on a non-empty page, so termination in
+   practice falls to the unconditional empty-items safety net (§6.5 step 5)
+   rather than the pointer-presence fallback. Covers rows 14, 41-44.
 6. **`LINK_HEADER` pointer source** (RFC 5988 parsing, `rel="next"`).
    Covers row 1.
 7. **`OFFSET_LIMIT`/`advance` (client-driven, no server pointer) +
@@ -745,7 +751,7 @@ chunk its own PR, verified and merged before the next starts.
 9. **`MockRestServer` multi-page test fixtures**, addressing the first
    open question in §11.
 
-Chunks 5-7 can reorder freely based on which real consumer need surfaces
+Chunks 6-7 can reorder freely based on which real consumer need surfaces
 first, per the same "park until real usage narrows which shape(s) actually
 matter" instinct that correctly parked this feature the first time -
-chunks 2-4 alone already cover the majority of real APIs surveyed in §9.
+chunks 2-5 alone already cover the majority of real APIs surveyed in §9.

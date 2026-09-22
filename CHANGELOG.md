@@ -25,9 +25,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a raw `List<User>` return type already does, falling back to the
   reflective proxy. See `docs/design/pagination-helper.md` for the full
   design, every default, and exactly which of its 46 cataloged real-world
-  pagination shapes this chunk covers - keyset pagination, client-driven
-  advancement, a programmatic `PaginationStrategy<T>` escape hatch, and an
-  async first fetch land in later chunks.
+  pagination shapes this chunk covers - client-driven advancement, a
+  programmatic `PaginationStrategy<T>` escape hatch, and an async first
+  fetch land in later chunks.
 - `@Paginated` also supports `Stream<T>`/`Iterator<T>` return types, lazily
   auto-flattening every page into one sequence instead of managing pages by
   hand via `Page<T>` - a pure wrapper over the same `Page<T>` chain, with no
@@ -48,9 +48,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   existing dotted-path `get`, so neither the caller's original map nor any
   nested map along the path is mutated in place; every other field the
   caller put in the body carries forward unchanged on every subsequent
-  page. A comma-separated `bodyField` (composite keyset into one body
-  field) is rejected for now - it needs `pointerSource = ITEM_FIELD` to
-  actually produce more than one extracted value, which is a later chunk.
+  page.
+- `@Paginated` supports `pointerSource = ITEM_FIELD`: keyset pagination
+  (`since_id`/`max_id`-style APIs like Stripe and classic Twitter) that
+  derives the next-page pointer from the *last fetched item* rather than a
+  dedicated response field. `pointerField` accepts a comma-separated list
+  for a composite key (an `(id, timestamp)` pair for a stable sort under
+  concurrent writes) - resent via either N separate `@PaginationCursor`
+  parameters, positionally matched to the N entries, or one `@Body`
+  parameter whose comma-separated `bodyField` names the same N values
+  (composite keyset into one JSON body). Without a `hasMore`/`total`/
+  `totalPages` signal, a keyset API's own field is virtually always present
+  on a non-empty page, so termination falls to the unconditional
+  empty-items safety net rather than the usual pointer-presence fallback.
 
 ## [1.0.0.48] - 2026-09-20
 

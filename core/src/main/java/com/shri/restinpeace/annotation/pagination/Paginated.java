@@ -20,19 +20,20 @@ import java.lang.annotation.Target;
  * </pre>
  *
  * <p>
- * Landing incrementally per the design doc's rollout plan (§12) - this
- * chunk supports {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE}
+ * Landing incrementally per the design doc's rollout plan (§12) - chunks
+ * 2-5 support {@link PointerKind#FULL_URL}/{@link PointerKind#VALUE}
  * pointers sourced from {@link PaginationSignalSource#RESPONSE_BODY}/
- * {@link PaginationSignalSource#RESPONSE_HEADER}, resent via
- * {@code @QueryParam}/{@code @PathParam}/{@code @HeaderParam}, with
+ * {@link PaginationSignalSource#RESPONSE_HEADER}/
+ * {@link PaginationSignalSource#ITEM_FIELD} (keyset pagination, including
+ * an N-way composite key), resent via {@code @QueryParam}/
+ * {@code @PathParam}/{@code @HeaderParam}/{@code @Body}, with
  * {@code hasMoreSource}/{@code totalSource}/{@code totalPagesSource}
- * termination signals, and only a synchronous {@code Page<T>} return type.
- * An {@code @Body} carrier, {@link PaginationSignalSource#ITEM_FIELD} keyset
- * pagination, {@link PaginationAdvance} client-driven advancement,
- * {@code Stream<T>}/{@code Iterator<T>} auto-flattening, and an async first
- * fetch are not implemented yet - {@code RIP.getClient(...)} rejects a
- * method using one of those shapes, naming what's missing, rather than
- * silently misbehaving at call time.
+ * termination signals, and a synchronous {@code Page<T>}/{@code Stream<T>}/
+ * {@code Iterator<T>} return type. {@link PaginationAdvance} client-driven
+ * advancement, {@code PaginationStrategy<T>}, and an async first fetch are
+ * not implemented yet - {@code RIP.getClient(...)} rejects a method using
+ * one of those shapes, naming what's missing, rather than silently
+ * misbehaving at call time.
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.RUNTIME)
@@ -63,8 +64,9 @@ public @interface Paginated {
 
 	/**
 	 * Where the pointer is read from within that source: a dotted body path,
-	 * a header name, or (keyset pagination, not yet implemented) a
-	 * comma-separated list of item field names for an N-way composite key.
+	 * a header name, or - for {@link PaginationSignalSource#ITEM_FIELD}
+	 * keyset pagination - a comma-separated list of item field names for an
+	 * N-way composite key.
 	 *
 	 * @return the pointer's field/header name, or comma-separated names for a composite keyset
 	 */

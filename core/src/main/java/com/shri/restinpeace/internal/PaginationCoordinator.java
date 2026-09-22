@@ -4,6 +4,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,15 +81,25 @@ final class PaginationCoordinator {
 		return itemType;
 	}
 
-	/** Returns the index of the method's one {@code @PaginationCursor} parameter, or {@code -1} if it has none. */
-	int findCursorParamIndex(Method method) {
+	/**
+	 * Returns the indices of every {@code @PaginationCursor} parameter, in declaration order - empty for a
+	 * {@code pointerKind = FULL_URL} method (no cursor parameter at all), a single-element array for the common
+	 * single-value case, or one element per comma-separated {@code pointerField} entry for an N-way composite
+	 * keyset resent via N separate carriers (§6.6) rather than one {@code @Body} carrier (§6.7).
+	 */
+	int[] findCursorParamIndices(Method method) {
 		Parameter[] parameters = method.getParameters();
+		List<Integer> indices = new ArrayList<>();
 		for (int i = 0; i < parameters.length; i++) {
 			if (parameters[i].getAnnotation(PaginationCursor.class) != null) {
-				return i;
+				indices.add(i);
 			}
 		}
-		return -1;
+		int[] result = new int[indices.size()];
+		for (int i = 0; i < result.length; i++) {
+			result[i] = indices.get(i);
+		}
+		return result;
 	}
 
 	/**
@@ -97,23 +108,25 @@ final class PaginationCoordinator {
 	 * {@code pageFetch} the same way, threading the running fetched-items/
 	 * fetched-pages counters forward for the termination precedence.
 	 *
-	 * @param method          the annotated method, for exception messages
-	 * @param paginated       the method's {@code @Paginated} annotation
-	 * @param itemType        {@code T}, resolved via {@link #resolveItemType}
-	 * @param cursorParamIndex the {@code @PaginationCursor} parameter's index, or
-	 *                        {@code -1} for a {@code pointerKind = FULL_URL} method
-	 * @param errorType       the class to decode a non-2xx response's body into,
-	 *                        or {@code null} for none
-	 * @param initialArgs     the original call's argument values
-	 * @param pageFetch       executes one page's HTTP call - {@code (args, urlOverride) -> response},
-	 *                        {@code urlOverride} non-{@code null} only for a
-	 *                        {@code FULL_URL} pointer's re-fetch
+	 * @param method              the annotated method, for exception messages
+	 * @param paginated           the method's {@code @Paginated} annotation
+	 * @param itemType            {@code T}, resolved via {@link #resolveItemType}
+	 * @param cursorParamIndices  every {@code @PaginationCursor} parameter's index, resolved via
+	 *                            {@link #findCursorParamIndices} - empty for a {@code pointerKind = FULL_URL}
+	 *                            method
+	 * @param errorType           the class to decode a non-2xx response's body into,
+	 *                            or {@code null} for none
+	 * @param initialArgs         the original call's argument values
+	 * @param pageFetch           executes one page's HTTP call - {@code (args, urlOverride) -> response},
+	 *                            {@code urlOverride} non-{@code null} only for a
+	 *                            {@code FULL_URL} pointer's re-fetch
 	 * @return the first page
 	 */
-	Page<Object> fetchFirstPage(Method method, Paginated paginated, Type itemType, int cursorParamIndex,
+	Page<Object> fetchFirstPage(Method method, Paginated paginated, Type itemType, int[] cursorParamIndices,
 			Class<?> errorType, Object[] initialArgs,
 			BiFunction<Object[], String, HttpResponse<String>> pageFetch) {
-		return fetchPage(method, paginated, itemType, cursorParamIndex, errorType, initialArgs, null, 0, 0, pageFetch);
+		return fetchPage(method, paginated, itemType, cursorParamIndices, errorType, initialArgs, null, 0, 0,
+				pageFetch);
 	}
 
 	/**
@@ -190,7 +203,7 @@ final class PaginationCoordinator {
 
 	}
 
-	private Page<Object> fetchPage(Method method, Paginated paginated, Type itemType, int cursorParamIndex,
+	private Page<Object> fetchPage(Method method, Paginated paginated, Type itemType, int[] cursorParamIndices,
 			Class<?> errorType, Object[] args, String urlOverride, int itemsFetchedSoFar, int pagesFetchedSoFar,
 			BiFunction<Object[], String, HttpResponse<String>> pageFetch) {
 		HttpResponse<String> response = pageFetch.apply(args, urlOverride);
@@ -205,11 +218,14 @@ final class PaginationCoordinator {
 					paginated.itemsField().isEmpty() ? "the response body itself" : paginated.itemsField(),
 					itemsElement == null ? "nothing" : itemsElement));
 		}
-		List<Object> items = decodeItems(itemsElement.getAsJsonArray(), itemType);
+		JsonArray itemsArray = itemsElement.getAsJsonArray();
+		List<Object> items = decodeItems(itemsArray, itemType);
 
-		JsonElement pointerElement = extractElement(bodyTree, response, paginated.pointerSource(),
-				paginated.pointerField());
-		String pointerValue = pointerElement == null ? null : pointerElement.getAsString();
+		// Never empty - validation guarantees a non-empty pointerField, and splitting a
+		// non-empty String on "," always yields at least one entry.
+		List<String> pointerValues = extractPointerValues(bodyTree, response, itemsArray, paginated);
+		boolean anyPointerMissing = pointerValues.stream().anyMatch(value -> value == null || value.isEmpty());
+		String pointerValue = pointerValues.get(0);
 
 		Boolean hasMore = toBoolean(extractElement(bodyTree, response, paginated.hasMoreSource(),
 				paginated.hasMoreField()), method, "hasMoreField");
@@ -230,7 +246,7 @@ final class PaginationCoordinator {
 		} else if (totalPages != null) {
 			hasNext = pagesFetchedTotal < totalPages;
 		} else {
-			hasNext = pointerValue != null && !pointerValue.isEmpty();
+			hasNext = !anyPointerMissing;
 		}
 		if (items.isEmpty()) {
 			// Unconditional safety net (§6.5 step 5) - guards against a server bug
@@ -245,7 +261,7 @@ final class PaginationCoordinator {
 		if (!hasNext) {
 			return new PageImpl(items, false, rawResponse, null);
 		}
-		if (pointerValue == null || pointerValue.isEmpty()) {
+		if (anyPointerMissing) {
 			throw new RestInPeaceException(String.format(
 					"The @Paginated method %s indicated another page exists but no next-page pointer could be "
 							+ "extracted (pointerField '%s').",
@@ -254,26 +270,35 @@ final class PaginationCoordinator {
 
 		Supplier<Page<Object>> nextPageSupplier;
 		if (paginated.pointerKind() == PointerKind.FULL_URL) {
-			nextPageSupplier = () -> fetchPage(method, paginated, itemType, cursorParamIndex, errorType, args,
+			nextPageSupplier = () -> fetchPage(method, paginated, itemType, cursorParamIndices, errorType, args,
 					pointerValue, itemsFetchedTotal, pagesFetchedTotal, pageFetch);
 		} else {
-			// Coercing/substituting the extracted value into the cursor parameter is
+			// Coercing/substituting the extracted value(s) into the cursor parameter(s) is
 			// deferred into the supplier (evaluated only when next() is actually called)
 			// rather than done eagerly here - a malformed value is a problem with
 			// fetching the NEXT page, not with the page already successfully returned.
-			String bodyField = method.getParameters()[cursorParamIndex].getAnnotation(PaginationCursor.class)
+			String bodyField = method.getParameters()[cursorParamIndices[0]].getAnnotation(PaginationCursor.class)
 					.bodyField();
+			boolean isBodyCarrier = cursorParamIndices.length == 1 && !bodyField.isEmpty();
 			nextPageSupplier = () -> {
 				Object[] nextArgs = args.clone();
-				if (bodyField.isEmpty()) {
-					nextArgs[cursorParamIndex] = coerceCursorValue(pointerValue,
-							method.getParameters()[cursorParamIndex].getType(), method);
-				} else {
+				if (isBodyCarrier) {
+					int paramIndex = cursorParamIndices[0];
+					String[] bodyFields = bodyField.split(",", -1);
 					@SuppressWarnings("unchecked")
-					Map<String, Object> currentBody = (Map<String, Object>) args[cursorParamIndex];
-					nextArgs[cursorParamIndex] = withFieldSet(currentBody, bodyField, pointerValue);
+					Map<String, Object> body = (Map<String, Object>) args[paramIndex];
+					for (int i = 0; i < bodyFields.length; i++) {
+						body = withFieldSet(body, bodyFields[i], pointerValues.get(i));
+					}
+					nextArgs[paramIndex] = body;
+				} else {
+					for (int i = 0; i < cursorParamIndices.length; i++) {
+						int paramIndex = cursorParamIndices[i];
+						nextArgs[paramIndex] = coerceCursorValue(pointerValues.get(i),
+								method.getParameters()[paramIndex].getType(), method);
+					}
 				}
-				return fetchPage(method, paginated, itemType, cursorParamIndex, errorType, nextArgs, null,
+				return fetchPage(method, paginated, itemType, cursorParamIndices, errorType, nextArgs, null,
 						itemsFetchedTotal, pagesFetchedTotal, pageFetch);
 			};
 		}
@@ -349,6 +374,39 @@ final class PaginationCoordinator {
 		}
 		JsonElement element = getPath(bodyTree, field);
 		return (element == null || element.isJsonNull()) ? null : element;
+	}
+
+	/**
+	 * Resolves the next-page pointer's value(s), positionally matching {@code pointerField}'s comma-separated
+	 * entries - always exactly one entry unless {@code pointerSource = ITEM_FIELD} with a composite (N-way)
+	 * {@code pointerField} (§6.6), which validation guarantees for every other source. {@code ITEM_FIELD}
+	 * extracts from the *last fetched item* in this page's raw items array rather than a dedicated response
+	 * field - covers {@code since_id}/{@code max_id}-style and timestamp-cursor APIs. A missing field resolves
+	 * to {@code null} in its slot (including every slot when {@code itemsArray} is empty, since there's no last
+	 * item to read) - the caller decides what an absent value means for termination/error-reporting.
+	 */
+	private List<String> extractPointerValues(JsonElement bodyTree, HttpResponse<String> response,
+			JsonArray itemsArray, Paginated paginated) {
+		List<String> values = new ArrayList<>();
+		if (paginated.pointerSource() != PaginationSignalSource.ITEM_FIELD) {
+			JsonElement element = extractElement(bodyTree, response, paginated.pointerSource(),
+					paginated.pointerField());
+			values.add(element == null ? null : element.getAsString());
+			return values;
+		}
+		String[] fields = paginated.pointerField().split(",", -1);
+		if (itemsArray.isEmpty()) {
+			for (int i = 0; i < fields.length; i++) {
+				values.add(null);
+			}
+			return values;
+		}
+		JsonElement lastItem = itemsArray.get(itemsArray.size() - 1);
+		for (String field : fields) {
+			JsonElement value = getPath(lastItem, field);
+			values.add(value == null || value.isJsonNull() ? null : value.getAsString());
+		}
+		return values;
 	}
 
 	private Boolean toBoolean(JsonElement element, Method method, String attributeName) {

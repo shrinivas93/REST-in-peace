@@ -571,26 +571,63 @@ final class CompileTimeRestClientValidator {
 					qualifiedName(method)), method);
 			return;
 		}
-		if (source == PaginationSignalSource.ITEM_FIELD) {
+		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", reporter);
+		if (paginated.pointerField().isEmpty()) {
+			return;
+		}
+		int fieldCount = paginated.pointerField().split(",", -1).length;
+		if (fieldCount > 1 && source != PaginationSignalSource.ITEM_FIELD) {
 			reporter.error(String.format(
-					"The method %s's @Paginated has pointerSource = ITEM_FIELD (keyset pagination), which is not "
-							+ "implemented yet (rollout chunk 5).",
+					"The method %s's @Paginated has a comma-separated pointerField - a composite pointer is only "
+							+ "supported for pointerSource = ITEM_FIELD.",
 					qualifiedName(method)), method);
 			return;
 		}
-		validatePaginationFieldNonEmpty(method, paginated.pointerField(), "pointerField", reporter);
-		if (paginated.pointerField().contains(",")) {
-			reporter.error(String.format(
-					"The method %s's @Paginated has a comma-separated pointerField - a composite pointer is only "
-							+ "supported for pointerSource = ITEM_FIELD, which is not implemented yet (rollout "
-							+ "chunk 5).",
-					qualifiedName(method)), method);
+		validateCursorParamCount(method, cursorParams, fieldCount, reporter);
+	}
+
+	/**
+	 * A {@code VALUE} pointer needs either exactly {@code fieldCount} non-{@code @Body} cursor parameters,
+	 * positionally matched to {@code pointerField}'s comma-separated entries (§6.6 - N-way composite keyset via
+	 * N separate carriers), or exactly one {@code @Body} cursor parameter whose comma-separated
+	 * {@code bodyField} names the same {@code fieldCount} values (§6.7 - composite keyset into one JSON body).
+	 */
+	private static void validateCursorParamCount(ExecutableElement method, List<VariableElement> cursorParams,
+			int fieldCount, Reporter reporter) {
+		List<VariableElement> bodyParams = new ArrayList<>();
+		for (VariableElement param : cursorParams) {
+			if (param.getAnnotation(Body.class) != null) {
+				bodyParams.add(param);
+			}
 		}
-		if (cursorParams.size() != 1) {
+		if (!bodyParams.isEmpty()) {
+			if (cursorParams.size() > 1) {
+				reporter.error(String.format(
+						"The method %s has a @PaginationCursor stacked on @Body alongside other @PaginationCursor "
+								+ "parameters - a @Body carrier must be the method's only @PaginationCursor "
+								+ "parameter.",
+						qualifiedName(method)), method);
+				return;
+			}
+			String bodyField = bodyParams.get(0).getAnnotation(PaginationCursor.class).bodyField();
+			if (bodyField.isEmpty()) {
+				return; // already flagged by validatePaginationCursorParam
+			}
+			int bodyFieldCount = bodyField.split(",", -1).length;
+			if (bodyFieldCount != fieldCount) {
+				reporter.error(String.format(
+						"The method %s's @Paginated has a pointerField naming %d value(s) but its @Body "
+								+ "@PaginationCursor's bodyField names %d - they must match.",
+						qualifiedName(method), fieldCount, bodyFieldCount), method);
+			}
+			return;
+		}
+		if (cursorParams.size() != fieldCount) {
 			reporter.error(String.format(
 					"The method %s's @Paginated has pointerKind = VALUE with pointerSource != NONE, which needs "
-							+ "exactly one @PaginationCursor parameter - found %d.",
-					qualifiedName(method), cursorParams.size()), method);
+							+ "%d @PaginationCursor parameter(s) (matching pointerField's %d comma-separated "
+							+ "entries) - found %d.",
+					qualifiedName(method), fieldCount, fieldCount, cursorParams.size()), method);
 		}
 	}
 
@@ -637,12 +674,6 @@ final class CompileTimeRestClientValidator {
 						"The method %s has a @PaginationCursor stacked on @Body but bodyField is empty - set it to "
 								+ "the JSON path inside the body to write the next-page value to.",
 						qualifiedName(method)), cursorParam);
-			} else if (bodyField.contains(",")) {
-				reporter.error(String.format(
-						"The method %s's @PaginationCursor has a comma-separated bodyField '%s' - composite "
-								+ "keyset into one body field needs pointerSource = ITEM_FIELD, which is not "
-								+ "implemented yet (rollout chunk 5).",
-						qualifiedName(method), bodyField), cursorParam);
 			}
 			if (!isMapOfStringToObject(cursorParam.asType(), env)) {
 				reporter.error(String.format(

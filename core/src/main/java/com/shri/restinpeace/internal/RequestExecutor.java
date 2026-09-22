@@ -372,10 +372,10 @@ public class RequestExecutor {
 	private Object processPaginatedRequest(Method method, HTTPMethod httpMethod, Object[] args, Paginated paginated) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Type itemType = paginationCoordinator.resolveItemType(method);
-		int cursorParamIndex = paginationCoordinator.findCursorParamIndex(method);
+		int[] cursorParamIndices = paginationCoordinator.findCursorParamIndices(method);
 		Object[] initialArgs = args == null ? new Object[method.getParameterCount()] : args.clone();
 		Supplier<Page<Object>> firstPageSupplier = () -> paginationCoordinator.fetchFirstPage(method, paginated,
-				itemType, cursorParamIndex, errorType, initialArgs,
+				itemType, cursorParamIndices, errorType, initialArgs,
 				(fetchArgs, urlOverride) -> executePageFetch(method, httpMethod, fetchArgs, urlOverride));
 
 		Class<?> returnType = method.getReturnType();
