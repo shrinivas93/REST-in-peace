@@ -933,6 +933,22 @@ Both are lazy — no network call happens until the first `hasNext()`
 (`Iterator<T>`) or terminal stream operation, unlike `Page<T>` itself,
 which fetches its first page eagerly like any other RIP call.
 
+For a POST-based API whose cursor is resent as a JSON request body field
+(Elasticsearch's `search_after`, DynamoDB's `ExclusiveStartKey`) rather than
+a query/path/header value, stack `@PaginationCursor` on a `@Body
+Map<String,Object>` parameter instead, with `bodyField` naming the
+(dotted-path) field inside that body to write the next-page value into:
+
+```java
+@POST("/orders/search")
+@Paginated(itemsField = "orders", pointerField = "search_after")
+Page<Order> searchOrders(@Body @PaginationCursor(bodyField = "search_after") Map<String, Object> body);
+```
+
+Every field the caller put in `body` on the first call — a filter, a page
+size — carries forward unchanged on every subsequent page; only `bodyField`
+gets overwritten, and the caller's own map is never mutated in place.
+
 This is an incrementally-landing feature — see
 [`docs/design/pagination-helper.md`](docs/design/pagination-helper.md) for
 the full design, an exhaustive 46-row catalogue of real-world pagination
@@ -940,9 +956,9 @@ shapes, the programmatic `PaginationStrategy<T>` escape hatch for whatever
 a closed annotation vocabulary can't express, and exactly which shapes are
 implemented so far. As of now: a `VALUE`/`FULL_URL` pointer sourced from the
 response body/headers, resent via `@QueryParam`/`@PathParam`/
-`@HeaderParam`, and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>` return
-type — `RIP.getClient(...)` rejects an unsupported shape (an `@Body` cursor
-carrier, keyset/`ITEM_FIELD` pagination, client-driven `advance`,
+`@HeaderParam`/`@Body`, and a synchronous `Page<T>`/`Stream<T>`/`Iterator<T>`
+return type — `RIP.getClient(...)` rejects an unsupported shape
+(keyset/`ITEM_FIELD` pagination, client-driven `advance`,
 `PaginationStrategy<T>`, an async first fetch) by name, naming the rollout
 chunk that adds it, rather than silently misbehaving.
 

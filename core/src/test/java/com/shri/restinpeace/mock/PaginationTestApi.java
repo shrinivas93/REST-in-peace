@@ -1,15 +1,18 @@
 package com.shri.restinpeace.mock;
 
 import java.util.Iterator;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
+import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.pagination.PaginationCursor;
 import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
 import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.pagination.PointerKind;
+import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.QueryParam;
 
 /**
@@ -60,6 +63,15 @@ public interface PaginationTestApi {
 	@GET("/orders")
 	@Paginated(itemsField = "orders", pointerField = "next_cursor")
 	Iterator<Order> iterateOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+
+	@POST("/orders/search")
+	@Paginated(itemsField = "orders", pointerField = "next_cursor")
+	Page<Order> searchOrders(@Body @PaginationCursor(bodyField = "cursor") Map<String, Object> body);
+
+	@POST("/orders/search")
+	@Paginated(itemsField = "orders", pointerField = "next_cursor")
+	Page<Order> searchOrdersByNestedBodyField(
+			@Body @PaginationCursor(bodyField = "meta.cursor") Map<String, Object> body);
 
 	final class Order {
 		public String id;

@@ -1,20 +1,22 @@
 # Design: Pagination helper
 
-Status: **chunks 2-3 of the rollout plan (§12) have landed.** `@Paginated`,
+Status: **chunks 2-4 of the rollout plan (§12) have landed.** `@Paginated`,
 `@PaginationCursor`, `Page<T>`, `Stream<T>`/`Iterator<T>` auto-flattening,
 and the three enums in §6.1 are real code - a `PointerKind.FULL_URL` or
 `VALUE` pointer sourced from `PaginationSignalSource.RESPONSE_BODY`/
-`RESPONSE_HEADER`, resent via `@QueryParam`/`@PathParam`/`@HeaderParam`,
-with `hasMoreSource`/`totalSource`/`totalPagesSource` termination signals,
-synchronous only. A `Stream<T>`/`Iterator<T>` return type is lazy - the
-first page (and every page after it) is only fetched on first use, matching
-ordinary lazy-iterator/lazy-stream semantics; `Page<T>` still fetches its
-first page eagerly, like any other RIP call. Everything else in this doc -
-an `@Body` carrier, `ITEM_FIELD` keyset pagination, `PaginationAdvance`
-client-driven advancement, `PaginationStrategy<T>`, an async first fetch,
-and `MockRestServer` multi-page fixtures - is still design only, chunked
-per §12; `RIP.getClient(...)` rejects a method using one of those
-not-yet-supported shapes by name rather than silently misbehaving. The
+`RESPONSE_HEADER`, resent via `@QueryParam`/`@PathParam`/`@HeaderParam`/
+`@Body`, with `hasMoreSource`/`totalSource`/`totalPagesSource` termination
+signals, synchronous only. A `Stream<T>`/`Iterator<T>` return type is
+lazy - the first page (and every page after it) is only fetched on first
+use, matching ordinary lazy-iterator/lazy-stream semantics; `Page<T>` still
+fetches its first page eagerly, like any other RIP call. Everything else in
+this doc - `ITEM_FIELD` keyset pagination (including the composite,
+N-way-into-one-body-field shape §6.7 sketches, which needs `ITEM_FIELD` to
+produce more than one extracted value), `PaginationAdvance` client-driven
+advancement, `PaginationStrategy<T>`, an async first fetch, and
+`MockRestServer` multi-page fixtures - is still design only, chunked per
+§12; `RIP.getClient(...)` rejects a method using one of those not-yet-
+supported shapes by name rather than silently misbehaving. The
 feature was previously parked (see `ROADMAP.md`) after a
 first sketch (a fixed `Page<T>` interface with `getItems()`/
 `getNextUrl()`) turned out not to be generic enough for how differently
@@ -720,9 +722,17 @@ chunk its own PR, verified and merged before the next starts.
    both return types are lazy (no page fetched until the first
    `hasNext()`/terminal stream operation), unlike `Page<T>` itself, which
    still fetches its first page eagerly like any other RIP call.
-4. **`@Body Map<String,Object>` + `bodyField` carrier**, including
-   composite-keyset-into-one-body-field. Covers rows 3, 11, 16, 17, 29,
-   36, 43, 46.
+4. **`@Body Map<String,Object>` + `bodyField` carrier.** Landed. A single
+   dotted-path `bodyField` (`get`'s request-side counterpart, walked as a
+   copy-on-write `set` so the caller's own map/nested maps are never
+   mutated) covers every row whose cursor is one scalar value written into
+   the request body - rows 3, 11, 16, 17. Rows 29/36/46 also need
+   `advance` (chunk 7); row 43's composite keyset also needs
+   `pointerSource = ITEM_FIELD` to actually produce more than one
+   extracted value (chunk 5) - a comma-separated `bodyField` is rejected
+   for now with a "not implemented yet (rollout chunk 5)" message, the
+   same by-name-rejection pattern used everywhere else in §7, rather than
+   silently mishandling a shape this chunk can't yet fill with real values.
 5. **`NEXT_CURSOR`-shaped `ITEM_FIELD`/keyset pointer source**, including
    N-way composite via multiple `@PaginationCursor` parameters. Covers
    rows 14, 41-44.

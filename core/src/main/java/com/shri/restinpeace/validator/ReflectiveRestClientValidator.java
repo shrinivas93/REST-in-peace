@@ -399,17 +399,17 @@ public class ReflectiveRestClientValidator {
 	}
 
 	/**
-	 * Validates a {@code @Paginated} method - the chunk-2-supported subset of
+	 * Validates a {@code @Paginated} method - the chunk-2/3/4-supported subset of
 	 * {@code docs/design/pagination-helper.md} §7: {@link PointerKind#FULL_URL}/
 	 * {@link PointerKind#VALUE} pointers sourced from
 	 * {@link PaginationSignalSource#RESPONSE_BODY}/{@link PaginationSignalSource#RESPONSE_HEADER},
 	 * resent via a single {@code @QueryParam}/{@code @PathParam}/
-	 * {@code @HeaderParam} {@code @PaginationCursor}, and a synchronous
-	 * {@code Page<T>} return type. Every not-yet-implemented shape (an
-	 * {@code @Body} carrier, {@code ITEM_FIELD}/keyset, client-driven
-	 * {@code advance}, composite pointers, {@code Stream<T>}/
-	 * {@code Iterator<T>}/{@code CompletableFuture<Page<T>>}) is rejected by
-	 * name rather than silently misbehaving at call time.
+	 * {@code @HeaderParam}/{@code @Body} {@code @PaginationCursor}, and a
+	 * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} return type. Every
+	 * not-yet-implemented shape ({@code ITEM_FIELD}/keyset, client-driven
+	 * {@code advance}, composite pointers into non-body carriers,
+	 * {@code CompletableFuture<Page<T>>}) is rejected by name rather than
+	 * silently misbehaving at call time.
 	 */
 	private static void validatePaginated(Method method, String url, ValidationResult validationResult) {
 		Paginated paginated = method.getAnnotation(Paginated.class);
@@ -589,15 +589,39 @@ public class ReflectiveRestClientValidator {
 		boolean onHeader = cursorParam.getAnnotation(HeaderParam.class) != null;
 		boolean onBody = cursorParam.getAnnotation(Body.class) != null;
 		int carrierCount = (onQuery ? 1 : 0) + (onPath ? 1 : 0) + (onHeader ? 1 : 0) + (onBody ? 1 : 0);
-		if (onBody) {
-			validationResult.addError(String.format(
-					"The method %s.%s has a @PaginationCursor stacked on @Body, which is not implemented yet "
-							+ "(rollout chunk 4) - use @QueryParam/@PathParam/@HeaderParam instead.",
-					method.getDeclaringClass().getName(), method.getName()));
-		} else if (carrierCount != 1) {
+		if (carrierCount != 1) {
 			validationResult.addError(String.format(
 					"The method %s.%s has a @PaginationCursor parameter that must be stacked on exactly one of "
-							+ "@QueryParam/@PathParam/@HeaderParam.",
+							+ "@QueryParam/@PathParam/@HeaderParam/@Body.",
+					method.getDeclaringClass().getName(), method.getName()));
+			return;
+		}
+		String bodyField = cursorParam.getAnnotation(PaginationCursor.class).bodyField();
+		if (onBody) {
+			if (bodyField.isEmpty()) {
+				validationResult.addError(String.format(
+						"The method %s.%s has a @PaginationCursor stacked on @Body but bodyField is empty - set it "
+								+ "to the JSON path inside the body to write the next-page value to.",
+						method.getDeclaringClass().getName(), method.getName()));
+			} else if (bodyField.contains(",")) {
+				validationResult.addError(String.format(
+						"The method %s.%s's @PaginationCursor has a comma-separated bodyField '%s' - composite "
+								+ "keyset into one body field needs pointerSource = ITEM_FIELD, which is not "
+								+ "implemented yet (rollout chunk 5).",
+						method.getDeclaringClass().getName(), method.getName(), bodyField));
+			}
+			if (!isMapOfStringToObject(cursorParam)) {
+				validationResult.addError(String.format(
+						"The method %s.%s has a @PaginationCursor stacked on @Body but the parameter's declared "
+								+ "type is not Map<String,Object>.",
+						method.getDeclaringClass().getName(), method.getName()));
+			}
+			return;
+		}
+		if (!bodyField.isEmpty()) {
+			validationResult.addError(String.format(
+					"The method %s.%s has a @PaginationCursor with a non-empty bodyField but is not stacked on "
+							+ "@Body - bodyField is only meaningful there.",
 					method.getDeclaringClass().getName(), method.getName()));
 		}
 		Class<?> type = cursorParam.getType();
@@ -607,6 +631,19 @@ public class ReflectiveRestClientValidator {
 							+ "are supported.",
 					method.getDeclaringClass().getName(), method.getName(), type.getName()));
 		}
+	}
+
+	/** Whether {@code parameter}'s declared type is exactly {@code Map<String,Object>} - the required shape for a {@code @Body @PaginationCursor} carrier (§6.7). */
+	private static boolean isMapOfStringToObject(Parameter parameter) {
+		if (!Map.class.isAssignableFrom(parameter.getType())) {
+			return false;
+		}
+		Type genericType = parameter.getParameterizedType();
+		if (!(genericType instanceof ParameterizedType)) {
+			return false;
+		}
+		Type[] typeArguments = ((ParameterizedType) genericType).getActualTypeArguments();
+		return typeArguments.length == 2 && typeArguments[0] == String.class && typeArguments[1] == Object.class;
 	}
 
 	/**

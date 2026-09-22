@@ -15,6 +15,7 @@ import com.shri.restinpeace.Page;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
+import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
 import com.shri.restinpeace.annotation.pagination.PaginationCursor;
 import com.shri.restinpeace.annotation.pagination.PaginationSignalSource;
@@ -222,9 +223,62 @@ class ReflectiveRestClientValidatorPaginationTest {
 
 	@RestClient
 	public interface CursorOnBody {
-		@GET("http://example.com/orders")
+		@POST("http://example.com/orders")
 		@Paginated(itemsField = "orders", pointerField = "next_cursor")
 		Page<Order> listOrders(@Body @PaginationCursor(bodyField = "cursor") java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface CursorOnBodyNestedField {
+		@POST("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(
+				@Body @PaginationCursor(bodyField = "meta.cursor") java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface CursorOnBodyMissingBodyField {
+		@POST("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(@Body @PaginationCursor java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface CursorOnBodyCompositeBodyField {
+		@POST("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(
+				@Body @PaginationCursor(bodyField = "lastId,lastTimestamp") java.util.Map<String, Object> body);
+	}
+
+	@RestClient
+	public interface CursorOnBodyWrongMapType {
+		@POST("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(
+				@Body @PaginationCursor(bodyField = "cursor") java.util.Map<String, String> body);
+	}
+
+	@SuppressWarnings("rawtypes")
+	@RestClient
+	public interface CursorOnBodyRawMapType {
+		@POST("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(@Body @PaginationCursor(bodyField = "cursor") java.util.Map body);
+	}
+
+	@RestClient
+	public interface CursorOnBodyNonMapType {
+		@POST("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(@Body @PaginationCursor(bodyField = "cursor") String body);
+	}
+
+	@RestClient
+	public interface BodyFieldWithoutBodyCarrier {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor(bodyField = "cursor") String cursor);
 	}
 
 	@RestClient
@@ -453,11 +507,61 @@ class ReflectiveRestClientValidatorPaginationTest {
 	}
 
 	@Test
-	void validate_cursorOnBody_throwsWithError() {
+	void validate_cursorOnBody_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(CursorOnBody.class));
+	}
+
+	@Test
+	void validate_cursorOnBodyNestedField_doesNotThrow() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(CursorOnBodyNestedField.class));
+	}
+
+	@Test
+	void validate_cursorOnBodyMissingBodyField_throwsWithError() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
-				() -> ReflectiveRestClientValidator.validate(CursorOnBody.class));
+				() -> ReflectiveRestClientValidator.validate(CursorOnBodyMissingBodyField.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("@PaginationCursor stacked on @Body, which is not implemented yet"));
+				.contains("stacked on @Body but bodyField is empty"));
+	}
+
+	@Test
+	void validate_cursorOnBodyCompositeBodyField_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(CursorOnBodyCompositeBodyField.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("composite keyset into one body field needs pointerSource = ITEM_FIELD"));
+	}
+
+	@Test
+	void validate_cursorOnBodyWrongMapType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(CursorOnBodyWrongMapType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("declared type is not Map<String,Object>"));
+	}
+
+	@Test
+	void validate_cursorOnBodyRawMapType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(CursorOnBodyRawMapType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("declared type is not Map<String,Object>"));
+	}
+
+	@Test
+	void validate_cursorOnBodyNonMapType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(CursorOnBodyNonMapType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("declared type is not Map<String,Object>"));
+	}
+
+	@Test
+	void validate_bodyFieldWithoutBodyCarrier_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(BodyFieldWithoutBodyCarrier.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("non-empty bodyField but is not stacked on @Body"));
 	}
 
 	@Test
@@ -465,7 +569,7 @@ class ReflectiveRestClientValidatorPaginationTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(BareCursorParam.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
-				.contains("must be stacked on exactly one of @QueryParam/@PathParam/@HeaderParam"));
+				.contains("must be stacked on exactly one of @QueryParam/@PathParam/@HeaderParam/@Body"));
 	}
 
 	@Test
