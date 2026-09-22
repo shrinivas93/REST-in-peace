@@ -5,9 +5,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,15 +30,16 @@ import com.shri.restinpeace.exception.RestInPeaceHttpException;
 import com.shri.restinpeace.mock.PaginationTestApi.Order;
 
 /**
- * {@code @Paginated}/{@code Page<T>} against a real {@link MockRestServer} -
- * the chunk-2-supported shapes: a {@code VALUE} query-param cursor, a
- * {@code FULL_URL} pointer, and the {@code hasMore}/{@code total}
- * termination precedence (§6.5 of {@code docs/design/pagination-helper.md}).
- * Every {@code @Paginated} method falls back to the reflective proxy (its
- * {@code Page<T>} return type disqualifies compile-time codegen, the same
- * E9 pattern a raw {@code List<User>} return type already gets), so this
- * exercises {@code RequestExecutor.processPaginatedRequest}/
- * {@code executePageFetch} for real.
+ * {@code @Paginated} against a real {@link MockRestServer} - a {@code VALUE}
+ * query-param cursor, a {@code FULL_URL} pointer, the {@code hasMore}/
+ * {@code total} termination precedence (§6.5 of
+ * {@code docs/design/pagination-helper.md}), and the {@code Page<T>}/
+ * {@code Stream<T>}/{@code Iterator<T>} return-type-driven iteration styles
+ * (§6.4). Every {@code @Paginated} method falls back to the reflective proxy
+ * (its return type disqualifies compile-time codegen, the same E9 pattern a
+ * raw {@code List<User>} return type already gets), so this exercises
+ * {@code RequestExecutor.processPaginatedRequest}/{@code executePageFetch}
+ * for real.
  */
 class PaginationIntegrationTest {
 
@@ -277,6 +285,77 @@ class PaginationIntegrationTest {
 		Page<Order> page1 = api.listOrdersByNestedItemsField(null);
 		assertEquals(1, page1.items().size());
 		assertFalse(page1.hasNext());
+	}
+
+	@Test
+	void stream_flattensEveryPageInOrder() {
+		server.on(HTTPMethod.GET, "/orders", queryParams("cursor", "tok"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}]}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"},{\"id\":\"2\"}],\"next_cursor\":\"tok\"}"));
+
+		Stream<Order> stream = api.streamOrders(null);
+		List<String> ids = stream.map(order -> order.id).collect(Collectors.toList());
+
+		assertEquals(Arrays.asList("1", "2", "3"), ids);
+	}
+
+	@Test
+	void stream_isLazy_noRequestUntilATerminalOperation() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
+
+		Stream<Order> stream = api.streamOrders(null);
+		assertEquals(0, server.requestCount(), "constructing the Stream must not make any network call yet");
+
+		long count = stream.count();
+		assertEquals(1, count);
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void iterator_flattensEveryPageInOrder() {
+		server.on(HTTPMethod.GET, "/orders", queryParams("cursor", "tok"),
+				MockResponse.ok("{\"orders\":[{\"id\":\"3\"}]}"));
+		server.on(HTTPMethod.GET, "/orders",
+				MockResponse.ok("{\"orders\":[{\"id\":\"1\"},{\"id\":\"2\"}],\"next_cursor\":\"tok\"}"));
+
+		Iterator<Order> iterator = api.iterateOrders(null);
+		List<String> ids = new ArrayList<>();
+		while (iterator.hasNext()) {
+			ids.add(iterator.next().id);
+		}
+
+		assertEquals(Arrays.asList("1", "2", "3"), ids);
+	}
+
+	@Test
+	void iterator_isLazy_noRequestUntilHasNext() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
+
+		Iterator<Order> iterator = api.iterateOrders(null);
+		assertEquals(0, server.requestCount(), "constructing the Iterator must not make any network call yet");
+
+		assertTrue(iterator.hasNext());
+		assertEquals(1, server.requestCount());
+	}
+
+	@Test
+	void iterator_exhausted_nextThrowsNoSuchElementException() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
+
+		Iterator<Order> iterator = api.iterateOrders(null);
+		assertTrue(iterator.hasNext());
+		iterator.next();
+		assertFalse(iterator.hasNext());
+		assertThrows(NoSuchElementException.class, iterator::next);
+	}
+
+	@Test
+	void stream_emptyFirstPage_yieldsNoItems() {
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[]}"));
+
+		long count = api.streamOrders(null).count();
+		assertEquals(0, count);
 	}
 
 	private static Map<String, String> queryParams(String name, String value) {

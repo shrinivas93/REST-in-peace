@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -412,26 +413,47 @@ public class ReflectiveRestClientValidator {
 	 */
 	private static void validatePaginated(Method method, String url, ValidationResult validationResult) {
 		Paginated paginated = method.getAnnotation(Paginated.class);
-		boolean returnsPage = method.getReturnType() == Page.class;
+		Class<?> returnType = method.getReturnType();
+		boolean returnsPage = returnType == Page.class;
+		boolean returnsStream = returnType == Stream.class;
+		boolean returnsIterator = returnType == Iterator.class;
+		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator;
 
-		if (returnsPage && paginated == null) {
+		if (returnsSupportedType && paginated == null) {
 			validationResult.addError(String.format(
-					"The method %s.%s returns Page<T> but is not annotated with @Paginated.",
-					method.getDeclaringClass().getName(), method.getName()));
+					"The method %s.%s returns %s<T> but is not annotated with @Paginated.",
+					method.getDeclaringClass().getName(), method.getName(), returnType.getSimpleName()));
 			return;
 		}
 		if (paginated == null) {
 			return;
 		}
-		if (!returnsPage) {
+		// A raw RipResponse/CompletableFuture (no type parameter at all) is already
+		// flagged by validateReturnType regardless of @Paginated - skip adding a
+		// second, overlapping message about the same underlying "raw generic
+		// return type" mistake on the same method.
+		if ((returnType == RipResponse.class || returnType == CompletableFuture.class)
+				&& !(method.getGenericReturnType() instanceof ParameterizedType)) {
+			return;
+		}
+		if (returnType == RipResponse.class && isStreamOrIteratorInner(method.getGenericReturnType())) {
 			validationResult.addError(String.format(
-					"The method %s.%s is annotated with @Paginated but does not return Page<T> - "
-							+ "Stream<T>/Iterator<T> auto-flattening and an async CompletableFuture<Page<T>> first "
-							+ "fetch are not implemented yet.",
+					"The method %s.%s is annotated with @Paginated and returns RipResponse<%s<T>>, which is not "
+							+ "supported - auto-flattening spans an unknown number of underlying calls, so there is "
+							+ "no single response to wrap; use Page<T> and its rawResponse() instead.",
+					method.getDeclaringClass().getName(), method.getName(),
+					streamOrIteratorInnerName(method.getGenericReturnType())));
+			return;
+		}
+		if (!returnsSupportedType) {
+			validationResult.addError(String.format(
+					"The method %s.%s is annotated with @Paginated but does not return Page<T>, Stream<T>, or "
+							+ "Iterator<T> - wrapping in CompletableFuture is not implemented yet.",
 					method.getDeclaringClass().getName(), method.getName()));
 			return;
 		}
-		validateParameterizedReturnType(method, method.getGenericReturnType(), "Page", false, validationResult);
+		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+		validateParameterizedReturnType(method, method.getGenericReturnType(), typeName, false, validationResult);
 
 		// Only reported when there's no static URL - validateUrlParam already reports
 		// a more specific "has both a @Url parameter and a static URL" error for that
@@ -476,6 +498,26 @@ public class ReflectiveRestClientValidator {
 		for (Parameter cursorParam : cursorParams) {
 			validatePaginationCursorParam(method, cursorParam, validationResult);
 		}
+	}
+
+	/**
+	 * Whether {@code RipResponse<T>}'s {@code T} is itself {@code Stream<?>}/{@code Iterator<?>} - see §7's
+	 * dedicated rejection for that shape. Callers only reach this once the raw-generic-return-type guard above
+	 * has confirmed {@code ripResponseGenericType} is parameterized, so that case isn't re-checked here.
+	 */
+	private static boolean isStreamOrIteratorInner(Type ripResponseGenericType) {
+		Type inner = ((ParameterizedType) ripResponseGenericType).getActualTypeArguments()[0];
+		if (!(inner instanceof ParameterizedType)) {
+			return false;
+		}
+		Type innerRawType = ((ParameterizedType) inner).getRawType();
+		return innerRawType == Stream.class || innerRawType == Iterator.class;
+	}
+
+	private static String streamOrIteratorInnerName(Type ripResponseGenericType) {
+		Type inner = ((ParameterizedType) ripResponseGenericType).getActualTypeArguments()[0];
+		Type innerRawType = ((ParameterizedType) inner).getRawType();
+		return innerRawType == Stream.class ? "Stream" : "Iterator";
 	}
 
 	private static void validatePaginatedValuePointer(Method method, Paginated paginated,

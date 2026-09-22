@@ -1519,6 +1519,26 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void paginatedVoidReturn_failsCompilation() throws IOException {
+		// void's TypeMirror.getKind() is VOID, not DECLARED - exercises the
+		// isDeclared == false branch of the raw-RipResponse/CompletableFuture and
+		// RipResponse-wrapping-Stream/Iterator guards, which String (a declared
+		// type) can't reach.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedVoidReturn", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedVoidReturn {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  void listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "is annotated with @Paginated but does not return Page<T>");
+	}
+
+	@Test
 	void pageReturnWithoutPaginated_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PageWithoutPaginated", "" //
 				+ "import com.shri.restinpeace.Page;\n" //
@@ -1824,6 +1844,212 @@ class CompileTimeValidationTest {
 				+ "}\n");
 
 		assertNoErrors(diagnostics);
+	}
+
+	@Test
+	void paginatedStreamReturn_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedStreamApi", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedStreamApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Stream<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedStreamApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void paginatedRipResponseWrappingIterator_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseIterator", "" //
+				+ "import java.util.Iterator;\n" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseIterator {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<Iterator<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns RipResponse<Iterator<T>>, which is not supported");
+	}
+
+	@Test
+	void paginatedRipResponseWrappingStream_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseStream", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseStream {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<Stream<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns RipResponse<Stream<T>>, which is not supported");
+	}
+
+	@Test
+	void paginatedRipResponseWrappingNonStreamType_failsWithGenericError() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseNonStream", "" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseNonStream {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void paginatedRipResponseWrappingArrayType_failsWithGenericError() throws IOException {
+		// RipResponse<byte[]>'s type argument isn't a DECLARED type (it's an
+		// array), so streamOrIteratorInnerName's remaining guard rejects it
+		// before comparing raw type names - falls through to the generic
+		// "does not return Page/Stream/Iterator" message.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRipResponseArray", "" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRipResponseArray {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse<byte[]> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
+	void paginatedRawRipResponseReturn_failsWithTheExistingRawTypeError() throws IOException {
+		// validateReturnType already flags a raw RipResponse regardless of
+		// @Paginated - the pagination-specific checks add nothing further for
+		// this exact case, avoiding a second, overlapping message.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRawRipResponse", "" //
+				+ "import com.shri.restinpeace.RipResponse;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRawRipResponse {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  RipResponse listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw RipResponse with no type parameter");
+	}
+
+	@Test
+	void paginatedRawCompletableFutureReturn_failsWithTheExistingRawTypeError() throws IOException {
+		// Same overlap-avoidance as the raw RipResponse case above, but for the
+		// other raw-generic return type the early-return guard covers.
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedRawCompletableFuture", "" //
+				+ "import java.util.concurrent.CompletableFuture;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedRawCompletableFuture {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  CompletableFuture listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw CompletableFuture with no type parameter");
+	}
+
+	@Test
+	void paginatedIteratorReturn_compilesCleanAndFallsBackReflectively() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedIteratorApi", "" //
+				+ "import java.util.Iterator;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedIteratorApi {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Iterator<String> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedIteratorApi_RipImpl.class")),
+				"Expected no _RipImpl to be generated for an interface with only a @Paginated method, found: "
+						+ list(outputDir));
+	}
+
+	@Test
+	void rawStreamReturn_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("RawStreamReturn", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@SuppressWarnings(\"rawtypes\")\n" //
+				+ "@RestClient\n" //
+				+ "public interface RawStreamReturn {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  Stream listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns a raw Stream with no type parameter");
+	}
+
+	@Test
+	void returnsStreamWithoutPaginated_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("ReturnsStreamWithoutPaginated", "" //
+				+ "import java.util.stream.Stream;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "@RestClient\n" //
+				+ "public interface ReturnsStreamWithoutPaginated {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  Stream<String> listOrders();\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "returns Stream<T> but is not annotated with @Paginated");
 	}
 
 	private List<Diagnostic<? extends JavaFileObject>> compile(String className, String source) throws IOException {

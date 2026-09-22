@@ -4,9 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Iterator;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
+
 import org.junit.jupiter.api.Test;
 
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.GET;
 import com.shri.restinpeace.annotation.pagination.PaginationAdvance;
@@ -23,9 +29,10 @@ import com.shri.restinpeace.exception.RestInPeaceValidationException;
 
 /**
  * Validation rules for {@code @Paginated}/{@code @PaginationCursor}/
- * {@code Page<T>} - the chunk-2-supported subset of
- * {@code docs/design/pagination-helper.md} §7 (see
- * {@code ReflectiveRestClientValidator.validatePaginated}'s own javadoc).
+ * {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>} - the
+ * chunk-2/3-supported subset of {@code docs/design/pagination-helper.md} §7
+ * (see {@code ReflectiveRestClientValidator.validatePaginated}'s own
+ * javadoc).
  */
 class ReflectiveRestClientValidatorPaginationTest {
 
@@ -89,6 +96,78 @@ class ReflectiveRestClientValidatorPaginationTest {
 		@GET("http://example.com/orders")
 		@Paginated(itemsField = "orders", pointerKind = PointerKind.FULL_URL, pointerField = "next")
 		Page listOrders();
+	}
+
+	@RestClient
+	public interface ValidStreamReturn {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Stream<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface ValidIteratorReturn {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Iterator<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface ReturnsStreamWithoutAnnotation {
+		@GET("http://example.com/orders")
+		Stream<Order> listOrders();
+	}
+
+	@SuppressWarnings("rawtypes")
+	@RestClient
+	public interface RawStreamReturn {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		Stream listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface RipResponseWrappingStream {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse<Stream<Order>> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface RipResponseWrappingIterator {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse<Iterator<Order>> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface RipResponseWrappingNonStreamType {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface RipResponseWrappingParameterizedNonStreamType {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse<List<Order>> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@SuppressWarnings("rawtypes")
+	@RestClient
+	public interface RawRipResponseReturn {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		RipResponse listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@SuppressWarnings("rawtypes")
+	@RestClient
+	public interface RawCompletableFutureReturn {
+		@GET("http://example.com/orders")
+		@Paginated(itemsField = "orders", pointerField = "next_cursor")
+		CompletableFuture listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
 	}
 
 	@RestClient
@@ -231,6 +310,92 @@ class ReflectiveRestClientValidatorPaginationTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(RawPageReturn.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("returns a raw Page with no type parameter"));
+	}
+
+	@Test
+	void validate_streamReturn_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidStreamReturn.class));
+	}
+
+	@Test
+	void validate_iteratorReturn_passes() {
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidIteratorReturn.class));
+	}
+
+	@Test
+	void validate_returnsStreamWithoutPaginated_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(ReturnsStreamWithoutAnnotation.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns Stream<T> but is not annotated with @Paginated"));
+	}
+
+	@Test
+	void validate_rawStreamReturn_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RawStreamReturn.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns a raw Stream with no type parameter"));
+	}
+
+	@Test
+	void validate_ripResponseWrappingStream_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RipResponseWrappingStream.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns RipResponse<Stream<T>>, which is not supported"));
+	}
+
+	@Test
+	void validate_ripResponseWrappingIterator_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RipResponseWrappingIterator.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns RipResponse<Iterator<T>>, which is not supported"));
+	}
+
+	@Test
+	void validate_ripResponseWrappingNonStreamType_throwsWithGenericError() {
+		// RipResponse<Order> isn't Stream/Iterator-wrapped, so the dedicated
+		// rejection doesn't apply - falls through to the generic "does not
+		// return Page/Stream/Iterator" message instead.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RipResponseWrappingNonStreamType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
+	}
+
+	@Test
+	void validate_ripResponseWrappingParameterizedNonStreamType_throwsWithGenericError() {
+		// RipResponse<List<Order>>'s inner type IS parameterized, but its raw type
+		// is neither Stream nor Iterator - exercises the branch of
+		// isStreamOrIteratorInner's final check that RipResponse<Order> (a
+		// non-parameterized inner type) can't reach.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RipResponseWrappingParameterizedNonStreamType.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
+	}
+
+	@Test
+	void validate_rawRipResponseReturn_throwsWithTheExistingRawTypeError() {
+		// validateReturnType already flags a raw RipResponse regardless of
+		// @Paginated - the pagination-specific checks add nothing further for
+		// this exact case, avoiding a second, overlapping message.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RawRipResponseReturn.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns a raw RipResponse with no type parameter"));
+	}
+
+	@Test
+	void validate_rawCompletableFutureReturn_throwsWithTheExistingRawTypeError() {
+		// Same overlap-avoidance as the raw RipResponse case above, but for the
+		// other raw-generic return type the early-return guard covers.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(RawCompletableFutureReturn.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns a raw CompletableFuture with no type parameter"));
 	}
 
 	@Test

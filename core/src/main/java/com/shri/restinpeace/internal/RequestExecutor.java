@@ -10,16 +10,20 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 
 import com.shri.restinpeace.BulkheadConfig;
 import com.shri.restinpeace.CircuitBreakerConfig;
+import com.shri.restinpeace.Page;
 import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.request.Body;
@@ -351,23 +355,37 @@ public class RequestExecutor {
 	}
 
 	/**
-	 * Entry point for a {@code @Paginated} method - fetches the first page
-	 * and hands the rest of the iteration off to {@link PaginationCoordinator},
-	 * which calls back into {@link #executePageFetch} for every subsequent
-	 * page a consumer fetches via {@link com.shri.restinpeace.Page#next()}.
+	 * Entry point for a {@code @Paginated} method - {@code Page<T>} fetches
+	 * the first page eagerly (like any other RIP call); {@code Stream<T>}/
+	 * {@code Iterator<T>} instead hand back a lazy view that only fetches the
+	 * first page (and every page after it) on first use, matching ordinary
+	 * lazy-iterator/lazy-stream semantics. Either way, the rest of the
+	 * iteration is handed off to {@link PaginationCoordinator}, which calls
+	 * back into {@link #executePageFetch} for every subsequent page.
 	 * Reflective-only; a {@code @Paginated} method always falls back to this
-	 * proxy from compile-time codegen (its {@code Page<T>} return type is a
-	 * parameterized type {@code RestClientProcessor} doesn't recognize,
-	 * disqualifying it the same way a raw {@code List<User>} already does -
-	 * see the E9 pattern in {@code docs/design/pagination-helper.md} §8.5).
+	 * proxy from compile-time codegen (its {@code Page<T>}/{@code Stream<T>}/
+	 * {@code Iterator<T>} return type is a parameterized type
+	 * {@code RestClientProcessor} doesn't recognize, disqualifying it the
+	 * same way a raw {@code List<User>} already does - see the E9 pattern in
+	 * {@code docs/design/pagination-helper.md} §8.5).
 	 */
 	private Object processPaginatedRequest(Method method, HTTPMethod httpMethod, Object[] args, Paginated paginated) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
 		Type itemType = paginationCoordinator.resolveItemType(method);
 		int cursorParamIndex = paginationCoordinator.findCursorParamIndex(method);
 		Object[] initialArgs = args == null ? new Object[method.getParameterCount()] : args.clone();
-		return paginationCoordinator.fetchFirstPage(method, paginated, itemType, cursorParamIndex, errorType,
-				initialArgs, (fetchArgs, urlOverride) -> executePageFetch(method, httpMethod, fetchArgs, urlOverride));
+		Supplier<Page<Object>> firstPageSupplier = () -> paginationCoordinator.fetchFirstPage(method, paginated,
+				itemType, cursorParamIndex, errorType, initialArgs,
+				(fetchArgs, urlOverride) -> executePageFetch(method, httpMethod, fetchArgs, urlOverride));
+
+		Class<?> returnType = method.getReturnType();
+		if (returnType == Stream.class) {
+			return paginationCoordinator.flattenToStream(firstPageSupplier);
+		}
+		if (returnType == Iterator.class) {
+			return paginationCoordinator.flatten(firstPageSupplier);
+		}
+		return firstPageSupplier.get();
 	}
 
 	/**
