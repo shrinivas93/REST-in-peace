@@ -532,19 +532,21 @@ final class CompileTimeRestClientValidator {
 		}
 	}
 
+	/** Only ever called with one of the three fully-qualified pagination return type names, which always have a dot. */
 	private static String simpleTypeName(String qualifiedName) {
-		int lastDot = qualifiedName.lastIndexOf('.');
-		return lastDot < 0 ? qualifiedName : qualifiedName.substring(lastDot + 1);
+		return qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
 	}
 
 	/**
 	 * "Stream"/"Iterator" if {@code ripResponseType}'s (a {@code RipResponse<T>}
 	 * return type) {@code T} is itself {@code Stream<?>}/{@code Iterator<?>},
-	 * else {@code null} - see §7's dedicated rejection for that shape.
+	 * else {@code null} - see §7's dedicated rejection for that shape. Callers only reach this once the
+	 * raw-generic-return-type guard above has confirmed {@code ripResponseType} has a type argument, so an empty
+	 * argument list isn't re-checked here.
 	 */
 	private static String streamOrIteratorInnerName(TypeMirror ripResponseType, Types types) {
 		List<? extends TypeMirror> typeArguments = ((DeclaredType) ripResponseType).getTypeArguments();
-		if (typeArguments.isEmpty() || typeArguments.get(0).getKind() != TypeKind.DECLARED) {
+		if (typeArguments.get(0).getKind() != TypeKind.DECLARED) {
 			return null;
 		}
 		String innerRawTypeName = types.erasure(typeArguments.get(0)).toString();
