@@ -1,6 +1,6 @@
 # Design: pluggable `CallAdapter` return types, with Project Reactor as the first consumer
 
-Status: **chunk 2 of the rollout plan (§14) has landed.** The general
+Status: **chunks 2 and 3 of the rollout plan (§14) have landed.** The general
 `CallAdapter`/`CallAdapterFactory` SPI (§5) is real code in `core`, with
 global registration (`RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
 `clearCallAdapterFactories`, §5.2) and the dispatch hook in
@@ -8,6 +8,25 @@ global registration (`RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
 through the identical `processAsync`/retry/cache/circuit-breaker/bulkhead/
 interceptor pipeline as any other async call, with zero Reactor (or any
 other reactive library) dependency anywhere in `core`.
+
+**Chunk 3 (`Mono<T>` support, §6/§6.1/§6.2) is also real code now**, in a new
+`rest-in-peace-reactor` module: `MonoCallAdapterFactory` claims every
+`Mono<T>`-returning `@RestClient` method - `Mono<Void>`,
+`Mono<RipResponse<T>>`, and `Mono<byte[]>` all work identically, since it's
+the same `CallAdapter` contract chunk 2 already built - and
+`RestInPeaceReactor.register()`/`unregister()` is the one-call entry point.
+A raw `Mono` (no type argument) declines rather than throws, falling through
+cleanly to chunk 2's own denylist instead of aborting the validation loop
+for the whole interface - see the module's own `MonoCallAdapterFactory`
+javadoc for the reasoning. Verified via `StepVerifier`-based tests against a
+real `MockRestServer`, including a dedicated disposal test; that test proves
+the weaker, but still meaningful, black-box-testable contract that no signal
+reaches a disposed subscriber, not that the underlying Apache HttpClient
+request is aborted mid-flight at the TCP level - the `sink.onCancel(() ->
+delegate.cancel(true))` wiring described in §6.2 does call
+`CompletableFuture#cancel(true)` on dispose, but confirming the socket
+itself closes is not something a `MockRestServer`-based test can observe
+from outside. `Flux<T>` (§7) is still design only, pending a later chunk.
 
 **Real deviation from §8.3's original sketch, caught during implementation,
 not after:** that sketch ("reject any unclaimed return type with type
@@ -28,8 +47,7 @@ question by sidestepping it rather than answering it as originally posed -
 no positive whitelist was needed once the rule became a narrow, explicit
 denylist instead.
 
-`Mono<T>`/`Flux<T>` support itself (§6, §7) and the `rest-in-peace-reactor`
-module (§10) are still design only, pending chunk 3 onward.
+`Flux<T>` support (§7) is still design only, pending a later chunk.
 
 **A naming collision worth flagging immediately**, since this doc otherwise
 uses "reactor" constantly: Maven's own multi-module build unit is also
