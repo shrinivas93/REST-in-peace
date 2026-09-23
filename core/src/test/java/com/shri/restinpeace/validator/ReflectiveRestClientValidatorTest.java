@@ -759,6 +759,21 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@Test
+	void validate_callAdapterWithNonRipResponseParameterizedResponseBodyType_passes() throws NoSuchMethodException {
+		// List<String> - a real ParameterizedType whose raw type is NOT RipResponse,
+		// exercising validateCallAdapterResponseBodyType's other branch from the
+		// RipResponse<T> case covered by validate_callAdapterWithRipResponseBodyType_passes.
+		Type completableFutureOfList = ValidCompletableFutureOfList.class.getMethod("foo").getGenericReturnType();
+		Type listOfString = ((java.lang.reflect.ParameterizedType) completableFutureOfList).getActualTypeArguments()[0];
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(listOfString))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+	}
+
+	@Test
 	void validate_callAdapterWithUnsupportedResponseBodyType_throwsWithError() throws NoSuchMethodException {
 		// A wildcard type - neither a Class nor a ParameterizedType - reused from an
 		// existing fixture's own generic signature rather than hand-implementing
