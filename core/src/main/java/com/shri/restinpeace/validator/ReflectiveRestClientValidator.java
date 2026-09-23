@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 
 import com.shri.restinpeace.CallAdapter;
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginatedCallAdapter;
 import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.internal.RequestExecutor;
@@ -408,6 +409,14 @@ public class ReflectiveRestClientValidator {
 			return;
 		}
 		if (KNOWN_UNSUPPORTED_REACTIVE_TYPES.contains(returnType.getName())) {
+			if (method.getAnnotation(Paginated.class) != null) {
+				// A @Paginated method's return type - claimed by a registered
+				// PaginatedCallAdapterFactory (e.g. rest-in-peace-reactor's Flux<T>
+				// pagination flavor, §7.2) or not - is validated separately, by
+				// validatePaginated; this check exists to catch an unclaimed
+				// reactive type on an otherwise-ordinary (non-paginated) call.
+				return;
+			}
 			validationResult.addError(String.format(
 					"The method %s.%s returns %s, which RIP has no built-in support for and no registered "
 							+ "CallAdapterFactory claims. If this is a Mono<T>/Flux<T>, add the rest-in-peace-reactor "
@@ -497,7 +506,13 @@ public class ReflectiveRestClientValidator {
 		boolean returnsPage = returnType == Page.class;
 		boolean returnsStream = returnType == Stream.class;
 		boolean returnsIterator = returnType == Iterator.class;
-		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator;
+		// Consulted only when @Paginated is actually present (never for a
+		// PaginationStrategy<T>-parameter method) - flavor 2 (§7.2) is scoped to
+		// the declarative path only.
+		Optional<PaginatedCallAdapter<?>> paginatedCallAdapter = paginated != null
+				? RequestExecutor.resolvePaginatedCallAdapter(method) : Optional.empty();
+		boolean returnsAdaptedType = paginatedCallAdapter.isPresent();
+		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator || returnsAdaptedType;
 
 		if (paginated != null && !strategyParams.isEmpty()) {
 			validationResult.addError(String.format(
@@ -536,12 +551,14 @@ public class ReflectiveRestClientValidator {
 		if (!returnsSupportedType) {
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with @Paginated or has a PaginationStrategy<T> parameter but "
-							+ "does not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is "
-							+ "not implemented yet.",
-					method.getDeclaringClass().getName(), method.getName()));
+							+ "does not return Page<T>, Stream<T>, or Iterator<T>, and no registered "
+							+ "PaginatedCallAdapterFactory claims %s - wrapping in CompletableFuture is not "
+							+ "implemented yet.",
+					method.getDeclaringClass().getName(), method.getName(), returnType.getName()));
 			return;
 		}
-		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : returnsIterator ? "Iterator"
+				: returnType.getSimpleName();
 		validateParameterizedReturnType(method, method.getGenericReturnType(), typeName, false, validationResult);
 
 		// Only reported when there's no static URL - validateUrlParam already reports

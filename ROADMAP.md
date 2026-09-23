@@ -812,11 +812,40 @@ up.
       convention rather than Reactor's usual defer-until-subscribed one),
       disposing genuinely cancels the underlying `CompletableFuture`, and a
       raw `Mono` fails validation the same way an unclaimed `Mono<T>`
-      already does. `Flux<T>` support remains unstarted (a later chunk,
-      doc §14); RxJava remains an explicit non-goal of this rollout (the
-      SPI itself is library-agnostic, but a second reactive library needs
-      its own concrete consumer to build against, the same "don't guess
-      ahead of a real user" instinct that governed pagination and
+      already does. **Chunk 4 (`Flux<T>` support, both flavors) has also
+      landed**: `FluxListCallAdapterFactory` claims a plain, non-`@Paginated`
+      `Flux<T>` method (decode as `List<T>`, emit item by item via
+      `Flux.fromIterable` - no real backpressure, since the whole list is
+      already in memory); a new `PaginatedCallAdapter`/
+      `PaginatedCallAdapterFactory` SPI in `core` (the pagination-aware
+      counterpart of `CallAdapter`/`CallAdapterFactory`, consumed from
+      `RequestExecutor.processPaginatedRequest` and validated the same way
+      in `ReflectiveRestClientValidator.validatePaginated`) lets
+      `FluxPaginatedCallAdapterFactory` claim a `@Paginated Flux<T>` method
+      instead - a third, genuinely backpressure-aware return-type-driven
+      flattening mode for `@Paginated` alongside `Page<T>` and
+      `Stream<T>`/`Iterator<T>`, fetching the next page only once
+      `FluxSink`'s own accumulated demand exceeds what's already buffered.
+      Needing that new SPI at all (rather than teaching `core`'s
+      `PaginationCoordinator` about Reactor types directly, which would
+      have broken the "zero Reactor dependency in `core`" invariant) was
+      itself a real deviation from the design doc's original "no new
+      coordinator logic" assumption. Its existence also exposed two latent
+      compile-time gaps, both fixed as part of this chunk: a `@Paginated`
+      method returning something other than `Page`/`Stream`/`Iterator` no
+      longer unconditionally fails compilation (a registered adapter might
+      legitimately claim it, invisibly to the compile-time processor); and
+      `RestClientProcessor` now explicitly disqualifies every
+      `@Paginated`/`PaginationStrategy<T>` method from compile-time codegen
+      regardless of return type, instead of relying on `Page`/`Stream`/
+      `Iterator`'s own generic type arguments to do so "by accident" -
+      closing a real bug where a `@Paginated` method returning a plain,
+      non-generic type would previously have been silently codegen'd into a
+      broken, non-paginating method. RxJava remains an explicit non-goal of
+      this rollout (the SPI itself is library-agnostic, but a second
+      reactive library needs its own concrete consumer to build against,
+      the same "don't guess ahead of a real user" instinct that governed
+      pagination and
       circuit-breaker/bulkhead before this).
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call

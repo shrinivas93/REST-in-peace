@@ -4,8 +4,8 @@ import com.shri.restinpeace.RIP;
 
 /**
  * Entry point for {@code rest-in-peace-reactor}: registers this module's
- * {@link com.shri.restinpeace.CallAdapter} factories with RIP. Call once at
- * startup, before
+ * {@link com.shri.restinpeace.CallAdapter}/{@link com.shri.restinpeace.PaginatedCallAdapter}
+ * factories with RIP. Call once at startup, before
  * building any {@code @RestClient} - the same "configure globals first"
  * requirement {@link RIP#addCallAdapterFactory} itself already documents,
  * since a factory needs to be registered before
@@ -19,12 +19,19 @@ import com.shri.restinpeace.RIP;
  * interface UserApi {
  *     {@literal @}GET("/users/{id}")
  *     Mono{@literal <}User{@literal >} getUser({@literal @}PathParam("id") String id);
+ *
+ *     {@literal @}GET("/users")
+ *     Flux{@literal <}User{@literal >} listUsers();   // flavor 1 (§7.1) - a single JSON array response
+ *
+ *     {@literal @}GET("/users")
+ *     {@literal @}Paginated(itemsField = "users", pointerField = "next_cursor")
+ *     Flux{@literal <}User{@literal >} fluxUsers({@literal @}QueryParam("cursor") {@literal @}PaginationCursor String cursor);   // flavor 2 (§7.2) - real backpressure
  * }
  * </pre>
  *
  * <p>
- * Only {@code Mono<T>} is registered so far - {@code Flux<T>} lands in a
- * later chunk (see {@code docs/design/reactor-call-adapter.md} §14).
+ * {@code Mono<T>} and both {@code Flux<T>} flavors are registered - see
+ * {@code docs/design/reactor-call-adapter.md} §14 for the full rollout plan.
  */
 public final class RestInPeaceReactor {
 
@@ -33,17 +40,22 @@ public final class RestInPeaceReactor {
 	}
 
 	private static final MonoCallAdapterFactory MONO_FACTORY = new MonoCallAdapterFactory();
+	private static final FluxListCallAdapterFactory FLUX_LIST_FACTORY = new FluxListCallAdapterFactory();
+	private static final FluxPaginatedCallAdapterFactory FLUX_PAGINATED_FACTORY = new FluxPaginatedCallAdapterFactory();
 
 	/**
-	 * Registers this module's {@link com.shri.restinpeace.CallAdapterFactory}
-	 * instances with {@link RIP#addCallAdapterFactory}. Idempotent by
-	 * identity - calling this more than once registers the same singleton
-	 * factory instance again, which call-adapter resolution would simply
-	 * find twice in a row with the same answer either time; harmless, but
-	 * there's no reason to call it more than once.
+	 * Registers this module's {@link com.shri.restinpeace.CallAdapterFactory}/
+	 * {@link com.shri.restinpeace.PaginatedCallAdapterFactory} instances with
+	 * {@link RIP#addCallAdapterFactory}/{@link RIP#addPaginatedCallAdapterFactory}.
+	 * Idempotent by identity - calling this more than once registers the same
+	 * singleton factory instances again, which resolution would simply find
+	 * twice in a row with the same answer either time; harmless, but there's
+	 * no reason to call it more than once.
 	 */
 	public static void register() {
 		RIP.addCallAdapterFactory(MONO_FACTORY);
+		RIP.addCallAdapterFactory(FLUX_LIST_FACTORY);
+		RIP.addPaginatedCallAdapterFactory(FLUX_PAGINATED_FACTORY);
 	}
 
 	/**
@@ -52,6 +64,8 @@ public final class RestInPeaceReactor {
 	 */
 	public static void unregister() {
 		RIP.removeCallAdapterFactory(MONO_FACTORY);
+		RIP.removeCallAdapterFactory(FLUX_LIST_FACTORY);
+		RIP.removePaginatedCallAdapterFactory(FLUX_PAGINATED_FACTORY);
 	}
 
 }

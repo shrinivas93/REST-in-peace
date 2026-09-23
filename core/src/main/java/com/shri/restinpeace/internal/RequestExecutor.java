@@ -28,6 +28,8 @@ import com.shri.restinpeace.CallAdapter;
 import com.shri.restinpeace.CallAdapterFactory;
 import com.shri.restinpeace.CircuitBreakerConfig;
 import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginatedCallAdapter;
+import com.shri.restinpeace.PaginatedCallAdapterFactory;
 import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.annotation.cache.NoCache;
 import com.shri.restinpeace.annotation.pagination.Paginated;
@@ -305,6 +307,61 @@ public class RequestExecutor {
 	}
 
 	/**
+	 * Global registry of {@link PaginatedCallAdapterFactory}s - the
+	 * pagination-aware counterpart of {@link #CALL_ADAPTER_FACTORIES}, same
+	 * process-wide registration scope. See
+	 * {@code docs/design/reactor-call-adapter.md} §7.2.
+	 */
+	private static final List<PaginatedCallAdapterFactory> PAGINATED_CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
+
+	/**
+	 * Registers a global {@link PaginatedCallAdapterFactory}. See
+	 * {@link com.shri.restinpeace.RIP#addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory)}.
+	 *
+	 * @param factory the factory to register
+	 */
+	public static void addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
+		PAGINATED_CALL_ADAPTER_FACTORIES.add(factory);
+	}
+
+	/**
+	 * Removes one previously registered {@link PaginatedCallAdapterFactory} by
+	 * identity. See
+	 * {@link com.shri.restinpeace.RIP#removePaginatedCallAdapterFactory(PaginatedCallAdapterFactory)}.
+	 *
+	 * @param factory the factory to remove
+	 */
+	public static void removePaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
+		PAGINATED_CALL_ADAPTER_FACTORIES.remove(factory);
+	}
+
+	/** Removes all registered {@link PaginatedCallAdapterFactory}s. */
+	public static void clearPaginatedCallAdapterFactories() {
+		PAGINATED_CALL_ADAPTER_FACTORIES.clear();
+	}
+
+	/**
+	 * Consults every registered {@link PaginatedCallAdapterFactory}, in
+	 * registration order, returning the first non-empty answer - the
+	 * pagination-aware counterpart of {@link #resolveCallAdapter}. Public for
+	 * the same cross-package validation need.
+	 *
+	 * @param method the {@code @Paginated} method being dispatched or
+	 *               validated
+	 * @return the first registered factory's non-empty answer, or
+	 *         {@link Optional#empty()} if none claims {@code method}
+	 */
+	public static Optional<PaginatedCallAdapter<?>> resolvePaginatedCallAdapter(Method method) {
+		for (PaginatedCallAdapterFactory factory : PAGINATED_CALL_ADAPTER_FACTORIES) {
+			Optional<PaginatedCallAdapter<?>> adapter = factory.get(method);
+			if (adapter.isPresent()) {
+				return adapter;
+			}
+		}
+		return Optional.empty();
+	}
+
+	/**
 	 * Sets the shared default cache. See
 	 * {@link com.shri.restinpeace.RIP#setCache(Cache)}.
 	 *
@@ -433,7 +490,11 @@ public class RequestExecutor {
 	 * the first page eagerly (like any other RIP call); {@code Stream<T>}/
 	 * {@code Iterator<T>} instead hand back a lazy view that only fetches the
 	 * first page (and every page after it) on first use, matching ordinary
-	 * lazy-iterator/lazy-stream semantics. Either way, the rest of the
+	 * lazy-iterator/lazy-stream semantics. A return type none of those three
+	 * recognize is offered to {@link #resolvePaginatedCallAdapter}
+	 * (e.g. {@code rest-in-peace-reactor}'s {@code Flux<T>} - see
+	 * {@code docs/design/reactor-call-adapter.md} §7.2/§7.3) before falling
+	 * back to {@code Page<T>}'s own eager fetch. Either way, the rest of the
 	 * iteration is handed off to {@link PaginationCoordinator}, which calls
 	 * back into {@link #executePageFetch} for every subsequent page.
 	 * Reflective-only; a {@code @Paginated} method always falls back to this
@@ -458,6 +519,12 @@ public class RequestExecutor {
 		}
 		if (returnType == Iterator.class) {
 			return paginationCoordinator.flatten(firstPageSupplier);
+		}
+		Optional<PaginatedCallAdapter<?>> paginatedCallAdapter = resolvePaginatedCallAdapter(method);
+		if (paginatedCallAdapter.isPresent()) {
+			@SuppressWarnings("unchecked")
+			PaginatedCallAdapter<Object> adapter = (PaginatedCallAdapter<Object>) paginatedCallAdapter.get();
+			return adapter.adapt(firstPageSupplier);
 		}
 		return firstPageSupplier.get();
 	}

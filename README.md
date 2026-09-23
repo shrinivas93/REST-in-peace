@@ -1269,11 +1269,52 @@ explicitly:
 A raw `Mono` (no type argument) fails validation by name, the same as an
 unclaimed `Mono<T>` with no factory registered.
 
-`Flux<T>` support (covering both a single-response list-flattening
-convenience and a `@Paginated` method auto-flattened into a genuinely
-backpressure-aware stream) is still design only — see
-[`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
-for the full design and rollout plan.
+### `Flux<T>` — two flavors, same module
+
+`rest-in-peace-reactor` also registers `Flux<T>` support, in two genuinely
+different flavors distinguished by `@Paginated`'s presence — the same
+`RestInPeaceReactor.register()` call above covers both, no separate setup:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+interface OrderApi {
+    @GET("/orders")
+    Flux<Order> listOrders();   // flavor 1 — a single JSON array response
+
+    @GET("/orders")
+    @Paginated(itemsField = "orders", pointerField = "next_cursor")
+    Flux<Order> fluxOrders(@QueryParam("cursor") @PaginationCursor String cursor);   // flavor 2 — real backpressure
+}
+```
+
+- **Flavor 1 — a single response's JSON array, emitted item by item.**
+  `listOrders()` decodes the response body as `List<Order>` (RIP's existing
+  generic-collection decoding) and emits each item via `Flux.fromIterable`.
+  There's no real backpressure here — the whole list is already decoded in
+  memory before any item is emitted — so this flavor is a convenience for a
+  consumer already writing Reactor-style pipelines over a normal,
+  non-paginated endpoint, not a memory-efficiency feature.
+- **Flavor 2 — `@Paginated` auto-flattened into a genuinely
+  backpressure-aware stream.** `fluxOrders(cursor)` is a third
+  return-type-driven flattening mode on `@Paginated`, alongside `Page<T>`
+  (manual) and `Stream<T>`/`Iterator<T>` (see
+  [Pagination](#pagination) below) — the next page is only fetched once
+  the subscriber's own demand (`request(n)`) genuinely exceeds what's
+  already buffered, so `.take(2)` or an explicit `request(2)` fetches at
+  most as many pages as needed to satisfy it, never the whole result set
+  up front. The first page is still fetched eagerly (blocking the calling
+  thread, exactly like a plain `Page<T>` return type on the same method),
+  matching RIP's "eager, not deferred" convention; every page after that
+  runs on a background thread, since `Page<T>.next()` is a plain blocking
+  call. Disposing (or a fired `.timeout(...)`) stops further pages from
+  being fetched — best-effort for a fetch already genuinely in flight,
+  since interrupting the worker thread doesn't guarantee the underlying
+  blocking HTTP call itself aborts mid-request the way `Mono<T>`'s
+  `CompletableFuture#cancel(true)` does.
+
+Both flavors decline a raw `Flux` (no type argument), falling through to
+the same by-name validation failure an unclaimed `Flux<T>` already gets.
 
 ## Retries
 

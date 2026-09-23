@@ -1503,7 +1503,7 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void paginatedMethodNotReturningPage_failsCompilation() throws IOException {
+	void paginatedMethodNotReturningPage_compilesCleanAndFallsBackReflectively() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedWrongReturnType", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
@@ -1515,7 +1515,20 @@ class CompileTimeValidationTest {
 				+ "  String listOrders();\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+		// No longer a compile error (chunk 4 of docs/design/reactor-call-adapter.md,
+		// §7.2): a @Paginated return type this processor doesn't recognize might
+		// still be legitimately claimed by a runtime-registered
+		// PaginatedCallAdapterFactory (e.g. rest-in-peace-reactor's Flux<T>
+		// pagination flavor) - registration is a plain method call this processor has
+		// no way to see, so it can no longer treat "unrecognized" as "definitely
+		// wrong" the way it safely could before that SPI existed.
+		// ReflectiveRestClientValidatorPaginationTest's own
+		// validate_paginatedNotReturningPage_throwsWithError still enforces this
+		// at RIP.getClient(...) time when nothing actually claims it.
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedWrongReturnType_RipImpl.class")),
+				"Expected no _RipImpl to be generated for a @Paginated method returning an unrecognized type, found: "
+						+ list(outputDir));
 	}
 
 	@Test
