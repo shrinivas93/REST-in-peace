@@ -99,8 +99,9 @@ library:
 ## 3. Non-goals
 
 - Not attempting Kotlin `suspend fun`, RxJava, or Reactor support here —
-  that's the separate "pluggable `CallAdapter`" roadmap item, and this
-  design should not block it (see §8).
+  that's the separate "pluggable `CallAdapter`" roadmap item (see
+  `docs/design/reactor-call-adapter.md`), and this design should not
+  block it (see §8).
 - Not changing wire behavior. A generated implementation must produce
   byte-identical requests to today's reflective path for every existing
   test in `RipIntegrationTest`. This is a dispatch-mechanism change, not
@@ -339,9 +340,16 @@ exactly as today.
   registered, or auto-activates via the `META-INF/services` SPI with no
   opt-in needed at all) is a middle ground worth prototyping before
   deciding.
-- **Interaction with the future pluggable `CallAdapter` roadmap item.**
-  If return-type handling becomes pluggable (letting Kotlin
-  `suspend fun`/RxJava/Reactor be added as optional modules), the
+- **Interaction with the pluggable `CallAdapter` roadmap item** (design:
+  `docs/design/reactor-call-adapter.md`). Now that this has moved from
+  a note to a full design, its own §4.2 confirms this codegen's existing
+  "any generic type with type arguments that isn't `RipResponse<T>`
+  disqualifies to the reflective fallback" check already covers an
+  adapter-shaped return type (`Mono<T>`, `Flux<T>`) unconditionally, with
+  no change needed here - narrowing this open question to Kotlin
+  `suspend fun`/RxJava specifically, should either ever get its own
+  concrete design. If return-type handling ever needs to become
+  pluggable at the codegen level too (not just the reflective path), the
   codegen's per-return-type dispatch (§5's last row) needs to call
   through whatever that adapter mechanism ends up being, not hardcode
   the current five shapes. Sequencing question: build this first and
