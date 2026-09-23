@@ -766,30 +766,38 @@ up.
             and a valid one compiles clean and produces a real generated
             class. See the design doc's §9.10. **All four steps are now
             complete - this roadmap item is done.**
-- [ ] **Parked: a pluggable `CallAdapter`-style return-type system** — return
-      types are currently hardcoded in `RestRequestProcessor` (String/void/
-      POJO/`CompletableFuture`/`RipResponse`). Extracting that into a small
-      adapter interface would let someone add RxJava's `Single`/`Observable`
-      or Reactor's `Mono`/`Flux` as a separate optional module, without RIP
-      itself depending on any of them or bloating the core. Parked rather
-      than started: a design pass surfaced two open questions worth
-      resolving before writing code, not during. First, RIP's two dispatch
-      paths pull in different directions here - the reflective proxy can
-      resolve a `CallAdapter` at runtime via a registry
-      (`RIP.addCallAdapter(...)`), but the compile-time generator needs to
-      know a method's return shape during annotation processing, before any
-      such registration has run - so an adapter-produced return type would
-      need to be one more entry in the existing "disqualify compile-time
-      generation, fall back to the reflective proxy" list, the same way a
-      generic `List<T>` return already is. Workable, but a real scope
-      boundary to commit to up front. Second, a Kotlin `suspend fun` isn't
-      actually `CallAdapter`-shaped at all - the Kotlin compiler rewrites it
-      to take a `Continuation<T>` parameter and return `Object`, closer to
-      its own compiler-plugin-shaped roadmap item than an adapter
-      implementation - so it needs to be scoped out of this item explicitly
-      rather than promised implicitly. Revisit once there's a concrete
-      RxJava/Reactor consumer motivating it, with the reflective-path-only
-      scope boundary decided up front.
+- [ ] **A pluggable `CallAdapter` return-type system, with Project Reactor
+      as the first consumer** — return types are currently hardcoded in
+      `RequestExecutor`/`RestClientProcessor` (String/void/POJO/
+      `CompletableFuture`/`RipResponse`/`byte[]`/`File`, plus `Page`/
+      `Stream`/`Iterator` for pagination). No longer parked: this item's two
+      original open questions (the dispatch-path split; Kotlin `suspend fun`
+      being out of scope) are both resolved in
+      [`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md),
+      which also verified against the actual code that the compile-time
+      codegen path *already* disqualifies any `CallAdapter`-shaped return
+      type (e.g. `Mono<T>`) to the reflective fallback today, unconditionally,
+      with no code change needed - a cleaner resolution than the original
+      note expected. The doc adds a small `CallAdapter`/`CallAdapterFactory`
+      SPI to `core` (zero new dependencies, registered globally via
+      `RIP.addCallAdapterFactory(...)`, mirroring the interceptor registry)
+      plus a full design for a new `rest-in-peace-reactor` module built on
+      it - `Mono<T>` as a thin wrapper over RIP's already-genuinely-async
+      `CompletableFuture<T>` path, and `Flux<T>` in two flavors: a
+      single-response list-flattening convenience, and a `@Paginated`
+      method auto-flattened into a real, backpressure-aware stream (page
+      N+1 fetched only once the subscriber has actually requested enough
+      items to need it). Also closes a real, separately-discovered gap: an
+      unrecognized return type (a `Mono<T>` with the reactor module never
+      added, or any other unclaimed generic type) currently passes
+      validation silently and can misdecode at call time instead of being
+      rejected by name - the doc's validation rule fixes this as part of
+      the same change. Chunked rollout plan in the doc's §14; RxJava
+      remains an explicit non-goal of this rollout (the SPI itself is
+      library-agnostic, but a second reactive library needs its own
+      concrete consumer to build against, the same "don't guess ahead of a
+      real user" instinct that governed pagination and circuit-breaker/
+      bulkhead before this).
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/
