@@ -6,12 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.InputStream;
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import reactor.core.publisher.Mono;
+
+import com.shri.restinpeace.CallAdapter;
+import com.shri.restinpeace.CallAdapterFactory;
+import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
@@ -181,6 +189,12 @@ class ReflectiveRestClientValidatorTest {
 	public interface ValidCompletableFutureOfRipResponseOfList {
 		@GET("http://example.com")
 		CompletableFuture<RipResponse<List<String>>> foo();
+	}
+
+	@RestClient
+	public interface UnclaimedReactiveReturnType {
+		@GET("http://example.com")
+		Mono<String> foo();
 	}
 
 	@RestClient
@@ -617,6 +631,11 @@ class ReflectiveRestClientValidatorTest {
 		String foo(@Url String first, @Url String second);
 	}
 
+	@AfterEach
+	void clearCallAdapterFactories() {
+		RIP.clearCallAdapterFactories();
+	}
+
 	@Test
 	void validate_nullRestClient_throws() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
@@ -720,6 +739,94 @@ class ReflectiveRestClientValidatorTest {
 	@Test
 	void validate_validCompletableFutureOfList_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidCompletableFutureOfList.class));
+	}
+
+	@Test
+	void validate_unclaimedReactiveReturnType_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("no registered CallAdapterFactory claims"));
+	}
+
+	@Test
+	void validate_reactiveReturnTypeClaimedByCallAdapterFactory_passes() {
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(String.class))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+	}
+
+	@Test
+	void validate_callAdapterWithNonRipResponseParameterizedResponseBodyType_passes() throws NoSuchMethodException {
+		// List<String> - a real ParameterizedType whose raw type is NOT RipResponse,
+		// exercising validateCallAdapterResponseBodyType's other branch from the
+		// RipResponse<T> case covered by validate_callAdapterWithRipResponseBodyType_passes.
+		Type completableFutureOfList = ValidCompletableFutureOfList.class.getMethod("foo").getGenericReturnType();
+		Type listOfString = ((java.lang.reflect.ParameterizedType) completableFutureOfList).getActualTypeArguments()[0];
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(listOfString))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+	}
+
+	@Test
+	void validate_callAdapterWithUnsupportedResponseBodyType_throwsWithError() throws NoSuchMethodException {
+		// A wildcard type - neither a Class nor a ParameterizedType - reused from an
+		// existing fixture's own generic signature rather than hand-implementing
+		// java.lang.reflect.WildcardType just for this test.
+		Type wildcardType = ((java.lang.reflect.ParameterizedType) UnsupportedCompletableFutureTypeParam.class
+				.getMethod("foo").getGenericReturnType()).getActualTypeArguments()[0];
+
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(wildcardType))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("unsupported responseBodyType()"));
+	}
+
+	@Test
+	void validate_callAdapterWithRipResponseBodyType_passes() throws NoSuchMethodException {
+		Type ripResponseOfString = ValidRipResponse.class.getMethod("get", String.class).getGenericReturnType();
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(ripResponseOfString))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+	}
+
+	@Test
+	void validate_callAdapterWithUnsupportedRipResponseBodyType_throwsWithError() throws NoSuchMethodException {
+		Type ripResponseOfWildcard = UnsupportedRipResponseTypeParam.class.getMethod("foo").getGenericReturnType();
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(ripResponseOfWildcard))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
+	}
+
+	private static CallAdapter<Object> testCallAdapter(Type responseBodyType) {
+		return new CallAdapter<Object>() {
+			@Override
+			public Type responseBodyType() {
+				return responseBodyType;
+			}
+
+			@Override
+			public Object adapt(CompletableFuture<Object> delegate) {
+				return null;
+			}
+		};
 	}
 
 	@Test

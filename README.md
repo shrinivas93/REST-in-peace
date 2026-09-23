@@ -73,6 +73,7 @@ test server for unit tests.
 - [Pagination](#pagination)
 - [Error handling](#error-handling)
 - [Async](#async)
+- [Pluggable return types (`CallAdapter`)](#pluggable-return-types-calladapter)
 - [Retries](#retries)
   - [Retry budget](#retry-budget)
   - [Circuit breaker](#circuit-breaker)
@@ -1173,6 +1174,51 @@ own afterward. Two ways to deal with that:
   already configures Unirest's async client itself.
 - Or call `kong.unirest.Unirest.shutDown()` when you're done making
   requests.
+
+## Pluggable return types (`CallAdapter`)
+
+Every return type above is one RIP knows about natively. For a return type
+it doesn't — Project Reactor's `Mono<T>`/`Flux<T>`, or any other
+programming model a consumer's codebase is already built around —
+`CallAdapterFactory` is the escape hatch, without RIP taking a hard
+dependency on any of them:
+
+```java
+public interface CallAdapter<T> {
+    Type responseBodyType();                       // what to decode the response body into
+    T adapt(CompletableFuture<Object> delegate);    // wraps the call RIP already dispatched
+}
+
+public interface CallAdapterFactory {
+    Optional<CallAdapter<?>> get(Method method);    // recognize a method's return type, or decline
+}
+```
+
+```java
+RIP.addCallAdapterFactory(myFactory);   // call once at startup, before building any client
+```
+
+An adapter never dispatches its own HTTP call — `adapt` only ever
+transforms the exact `CompletableFuture` RIP's own async dispatch path
+already produced, guaranteeing the adapted call goes through the identical
+`@Retry`/cache/circuit-breaker/bulkhead/interceptor pipeline as every other
+call, dispatched exactly once. Every registered factory is consulted, in
+registration order, and the first one to recognize a method wins.
+
+A method returning a known-opaque reactive wrapper type (Project Reactor's
+`Mono`/`Flux`, RxJava's `Single`/`Observable`/`Maybe`/`Completable`/
+`Flowable`) with no factory registered to claim it fails validation by
+name — pointing at registering a `CallAdapterFactory` — instead of
+attempting to decode the response body directly into that type and
+silently misbehaving.
+
+This is the core SPI only; see
+[`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
+for the full design, including the planned `rest-in-peace-reactor` module
+adding real `Mono<T>`/`Flux<T>` support (`Flux<T>` covering both a
+single-response list-flattening convenience and a `@Paginated` method
+auto-flattened into a genuinely backpressure-aware stream) — not yet
+implemented as of this section.
 
 ## Retries
 

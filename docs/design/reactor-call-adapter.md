@@ -1,10 +1,35 @@
 # Design: pluggable `CallAdapter` return types, with Project Reactor as the first consumer
 
-Status: **design only - nothing in this doc has landed.** Parked in
-`ROADMAP.md` until now for two open questions (below); this doc resolves
-both, adds a full worked design for the general `CallAdapter` SPI plus a
-concrete `rest-in-peace-reactor` module built on it, and lays out a chunked
-rollout plan (§13). No code has been written yet.
+Status: **chunk 2 of the rollout plan (§14) has landed.** The general
+`CallAdapter`/`CallAdapterFactory` SPI (§5) is real code in `core`, with
+global registration (`RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
+`clearCallAdapterFactories`, §5.2) and the dispatch hook in
+`RequestExecutor.processRestRequest` (§8.1) - an adapted call already goes
+through the identical `processAsync`/retry/cache/circuit-breaker/bulkhead/
+interceptor pipeline as any other async call, with zero Reactor (or any
+other reactive library) dependency anywhere in `core`.
+
+**Real deviation from §8.3's original sketch, caught during implementation,
+not after:** that sketch ("reject any unclaimed return type with type
+arguments unless a `CallAdapterFactory` claims it") would have broken
+already-working generic-collection decoding - `List<User>`/`Map<K,V>`/etc.
+reach `ResponseDecoder`'s generic Gson (`RuntimeGenericType`) path
+completely unchecked today, with no existing validator whitelist to
+extend safely. The rule that actually shipped is narrower and safer: a
+small, explicit denylist of known-opaque reactive wrapper class names
+(Project Reactor's `Mono`/`Flux`; RxJava 2/3's `Single`/`Observable`/
+`Maybe`/`Completable`/`Flowable`), checked by fully-qualified name only -
+zero dependency cost, since it's a string comparison, never a classpath
+reference. A return type on that list is rejected at validation time
+unless a registered `CallAdapterFactory` claims it (§8.3/§8.4); anything
+else keeps decoding via the pre-existing generic path, completely
+unchanged. This resolves §13's "known built-in shapes whitelist" open
+question by sidestepping it rather than answering it as originally posed -
+no positive whitelist was needed once the rule became a narrow, explicit
+denylist instead.
+
+`Mono<T>`/`Flux<T>` support itself (§6, §7) and the `rest-in-peace-reactor`
+module (§10) are still design only, pending chunk 3 onward.
 
 **A naming collision worth flagging immediately**, since this doc otherwise
 uses "reactor" constantly: Maven's own multi-module build unit is also
@@ -113,7 +138,7 @@ an afterthought.
   rollout.** The `CallAdapter` SPI (§5) is library-agnostic by
   construction - an RxJava `Single<T>`/`Observable<T>` adapter is a
   plausible future `rest-in-peace-rxjava` module built the same way - but
-  this doc scopes its own rollout plan (§13) to Reactor only, per the
+  this doc scopes its own rollout plan (§14) to Reactor only, per the
   ROADMAP note's own trigger ("revisit once there's a concrete
   RxJava/Reactor consumer"). Building two reactive adapters speculatively,
   with no second concrete consumer yet, repeats the exact mistake this
@@ -203,7 +228,7 @@ return type would need to be one more entry in the existing disqualify
 list" - implying a code change. It doesn't need one: the existing
 "any generic type with type arguments that isn't `RipResponse<T>`" check is
 already broad enough to catch `Mono<T>`/`Flux<T>` by construction, since
-neither is (or ever will be) special-cased there. §13's rollout plan
+neither is (or ever will be) special-cased there. §14's rollout plan
 still adds a **regression test** asserting this stays true (a compile-time
 codegen fixture with a `Mono<User>`-returning method, asserting it lands in
 `fallbackMethods` and the reflective proxy answers the call correctly) -
@@ -462,7 +487,7 @@ than just abandoning interest in a result that keeps computing anyway. This
 means a `.timeout(Duration.ofSeconds(2))` on a `Mono<T>`-returning RIP call
 genuinely stops the outbound HTTP call at 2 seconds, not merely stops
 *waiting* for it - a real, user-visible correctness property worth a
-dedicated integration test in §13.
+dedicated integration test in §14.
 
 ## 7. `Flux<T>`: two genuinely different shapes, both real, neither optional
 
@@ -624,7 +649,7 @@ logic.
 
 ### 8.2 Compile-time codegen path: already correct (§4.2), gains only a regression test
 
-No production code change to `RestClientProcessor`. §13's rollout plan adds
+No production code change to `RestClientProcessor`. §14's rollout plan adds
 a fixture test (a `@RestClient` interface with one `Mono<User>`-returning
 method alongside ordinary codegen-supported methods) asserting: (a) the
 `Mono`-returning method lands in `fallbackMethods`, not `methods`; (b) the
@@ -742,7 +767,7 @@ matrix before this rule ships.
   `Mono<T>`/`Flux<T>`-returning method registers routes/responses exactly
   as any other test does; `StepVerifier` (Reactor's own standard test
   utility) subscribes to the result the same way a consumer's production
-  code would. §13 adds worked examples, not new test infrastructure.
+  code would. §11 adds worked examples, not new test infrastructure.
 
 ## 10. Module layout: `rest-in-peace-reactor`
 
@@ -788,12 +813,12 @@ rest-in-peace-reactor/
   `rest-in-peace-reactor-spring-boot-starter` auto-configuration module
   (calling `register()` automatically, the way the plain Spring starter
   already auto-configures `useDaemonThreadsForAsync()`) is plausible follow-on
-  work, deliberately not bundled into this rollout's own chunks (§13) to
+  work, deliberately not bundled into this rollout's own chunks (§14) to
   keep this design's first landing minimal and reviewable.
 - **A `samples/reactor-consumer` sample module** (mirroring
   `samples/spring-boot-consumer`'s own precedent - a standalone Maven
   project depending on the published artifacts like a real downstream
-  consumer, not a reactor-internal module) is planned as part of §13's
+  consumer, not a reactor-internal module) is planned as part of §14's
   rollout, not before it - `samples/spring-boot-consumer` itself only
   landed once the starter's own chunks were feature-complete (§8 of
   `spring-boot-starter.md`), and this follows the same order.
@@ -1035,7 +1060,7 @@ a follow-on chunk of this one.
   `RestInPeaceReactor.register()` the way the plain Spring starter
   auto-calls `useDaemonThreadsForAsync()`) ships as part of this rollout or
   as genuinely separate follow-on work. §10 leans toward separate, to keep
-  this design's first landing reviewable - revisit once §13's chunks 2-4
+  this design's first landing reviewable - revisit once §14's chunks 2-4
   are real and a concrete Spring WebFlux consumer is asking for it.
 - **RxJava as a second `CallAdapterFactory` consumer.** Explicitly
   non-goal (§3) for *this* rollout, but the general SPI (§5) was

@@ -10,12 +10,14 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
@@ -23,9 +25,11 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.shri.restinpeace.CallAdapter;
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.PaginationStrategy;
 import com.shri.restinpeace.RipResponse;
+import com.shri.restinpeace.internal.RequestExecutor;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
 import com.shri.restinpeace.annotation.marker.RestClient;
 import com.shri.restinpeace.annotation.method.DELETE;
@@ -361,14 +365,81 @@ public class ReflectiveRestClientValidator {
 		}
 	}
 
+	/**
+	 * Return types known to be an opaque reactive/async wrapper with no
+	 * JSON-mappable fields of its own (Project Reactor's {@code Mono}/
+	 * {@code Flux}, RxJava 2 and 3's {@code Single}/{@code Observable}/
+	 * {@code Maybe}/{@code Completable}/{@code Flowable}) - checked by
+	 * fully-qualified name only, so recognizing them costs zero dependency
+	 * on any of these libraries. Without a registered {@link CallAdapter},
+	 * decoding into one of these via {@code ResponseDecoder}'s ordinary
+	 * generic (Gson/{@code RuntimeGenericType}) path can construct a
+	 * broken instance instead of throwing - Gson can often instantiate an
+	 * arbitrary class via {@code Unsafe} even with no matching fields - so
+	 * these are rejected by name at validation time instead, per
+	 * {@code docs/design/reactor-call-adapter.md} §8.3/§8.4. This is
+	 * deliberately narrower than "reject any unrecognized generic return
+	 * type": a generic collection like {@code List<User>}/{@code Map<String,User>}
+	 * decodes correctly via that same generic path today and must keep
+	 * working unchanged - only these specific known-opaque wrapper types
+	 * are denylisted.
+	 */
+	private static final Set<String> KNOWN_UNSUPPORTED_REACTIVE_TYPES = new HashSet<>(Arrays.asList(
+			"reactor.core.publisher.Mono", "reactor.core.publisher.Flux", "io.reactivex.rxjava3.core.Single",
+			"io.reactivex.rxjava3.core.Observable", "io.reactivex.rxjava3.core.Maybe",
+			"io.reactivex.rxjava3.core.Completable", "io.reactivex.rxjava3.core.Flowable", "io.reactivex.Single",
+			"io.reactivex.Observable", "io.reactivex.Maybe", "io.reactivex.Completable", "io.reactivex.Flowable"));
+
 	private static void validateReturnType(Method method, ValidationResult validationResult) {
 		Class<?> returnType = method.getReturnType();
 		if (returnType == CompletableFuture.class) {
 			validateParameterizedReturnType(method, method.getGenericReturnType(), "CompletableFuture", true,
 					validationResult);
-		} else if (returnType == RipResponse.class) {
+			return;
+		}
+		if (returnType == RipResponse.class) {
 			validateParameterizedReturnType(method, method.getGenericReturnType(), "RipResponse", false,
 					validationResult);
+			return;
+		}
+		Optional<CallAdapter<?>> callAdapter = RequestExecutor.resolveCallAdapter(method);
+		if (callAdapter.isPresent()) {
+			validateCallAdapterResponseBodyType(method, callAdapter.get().responseBodyType(), validationResult);
+			return;
+		}
+		if (KNOWN_UNSUPPORTED_REACTIVE_TYPES.contains(returnType.getName())) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s, which RIP has no built-in support for and no registered "
+							+ "CallAdapterFactory claims. If this is a Mono<T>/Flux<T>, add the rest-in-peace-reactor "
+							+ "dependency and call RestInPeaceReactor.register() (or RIP.addCallAdapterFactory(...) "
+							+ "directly) before building this client.",
+					method.getDeclaringClass().getName(), method.getName(), returnType.getName()));
+		}
+	}
+
+	/**
+	 * Validates a claimed {@link CallAdapter}'s {@code responseBodyType()} -
+	 * a plain {@code Class} (the common case), a {@code RipResponse<T>}
+	 * (recursively validated the same way {@code CompletableFuture<RipResponse<T>>}'s
+	 * inner type already is), or a {@link ParameterizedType} like
+	 * {@code List<User>} - rejecting anything else, such as an unresolved
+	 * type variable or wildcard, the same restriction
+	 * {@code RequestExecutor.requireDecodableType} already enforces at call
+	 * time for the ordinary {@code CompletableFuture<T>} path.
+	 */
+	private static void validateCallAdapterResponseBodyType(Method method, Type responseBodyType,
+			ValidationResult validationResult) {
+		if (responseBodyType instanceof ParameterizedType
+				&& ((ParameterizedType) responseBodyType).getRawType() == RipResponse.class) {
+			validateParameterizedReturnType(method, responseBodyType, "RipResponse", false, validationResult);
+			return;
+		}
+		if (!(responseBodyType instanceof Class) && !(responseBodyType instanceof ParameterizedType)) {
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s, whose registered CallAdapter declares an unsupported "
+							+ "responseBodyType() (%s).",
+					method.getDeclaringClass().getName(), method.getName(), method.getReturnType().getName(),
+					responseBodyType));
 		}
 	}
 
