@@ -2519,6 +2519,32 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
+	void paginatedCompletableFutureOfPageReturn_failsCompilation() throws IOException {
+		// CompletableFuture<Page<T>> - a genuinely parameterized (non-raw)
+		// CompletableFuture, so the raw-type early-return above doesn't apply -
+		// exercises the chunk-4 loosening's own CompletableFuture<T> exclusion
+		// (§7.2 of docs/design/reactor-call-adapter.md): still an unconditional
+		// hard error, since an async first fetch remains not implemented (the
+		// class's own javadoc already calls this exact shape out by name).
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedCompletableFutureOfPage", "" //
+				+ "import java.util.concurrent.CompletableFuture;\n" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedCompletableFutureOfPage {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  CompletableFuture<Page<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+	}
+
+	@Test
 	void paginatedIteratorReturn_compilesCleanAndFallsBackReflectively() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedIteratorApi", "" //
 				+ "import java.util.Iterator;\n" //

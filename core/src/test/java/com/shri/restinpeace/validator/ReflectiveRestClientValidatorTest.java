@@ -1,6 +1,7 @@
 package com.shri.restinpeace.validator;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,6 +31,8 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.pagination.PaginationCursor;
+import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.Field;
@@ -195,6 +198,13 @@ class ReflectiveRestClientValidatorTest {
 	public interface UnclaimedReactiveReturnType {
 		@GET("http://example.com")
 		Mono<String> foo();
+	}
+
+	@RestClient
+	public interface PaginatedUnclaimedReactiveReturnType {
+		@GET("http://example.com")
+		@Paginated(itemsField = "items", pointerField = "next")
+		Mono<String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
 	}
 
 	@RestClient
@@ -746,6 +756,21 @@ class ReflectiveRestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("no registered CallAdapterFactory claims"));
+	}
+
+	@Test
+	void validate_paginatedUnclaimedReactiveReturnType_reportsOnlyThePaginationSpecificError() {
+		// A @Paginated method's reactive-but-unclaimed return type is validated
+		// entirely by validatePaginated - validateReturnType's own denylist check
+		// (proven above by validate_unclaimedReactiveReturnType_throwsWithError for
+		// the non-paginated case) must skip it instead of also reporting, to avoid
+		// a redundant, overlapping second error message on the same method.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(PaginatedUnclaimedReactiveReturnType.class));
+		assertFalse(
+				exception.getValidationResult().getAllErrors().contains("no registered CallAdapterFactory claims"));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
 	}
 
 	@Test
