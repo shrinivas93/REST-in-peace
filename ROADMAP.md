@@ -799,13 +799,25 @@ up.
       scoped to exactly those known types rather than every unclaimed
       generic return type, since the broader rule would have broken
       already-working generic-collection decoding (`List<User>`, etc.),
-      which reaches the same unchecked generic decode path today. `Mono<T>`/
-      `Flux<T>` support itself and the `rest-in-peace-reactor` module remain
-      unstarted (chunk 3 onward, doc §14); RxJava remains an explicit
-      non-goal of this rollout (the SPI itself is library-agnostic, but a
-      second reactive library needs its own concrete consumer to build
-      against, the same "don't guess ahead of a real user" instinct that
-      governed pagination and circuit-breaker/bulkhead before this).
+      which reaches the same unchecked generic decode path today.
+      **Chunk 3 (real `Mono<T>` support) has also landed**: a new
+      `rest-in-peace-reactor` module adds `MonoCallAdapterFactory`, claiming
+      any `Mono<T>`-returning `@RestClient` method - `Mono<Void>`,
+      `Mono<RipResponse<T>>`, and `Mono<byte[]>` all work identically to
+      their `CompletableFuture<T>` equivalents - with
+      `RestInPeaceReactor.register()`/`unregister()` as the one-call
+      registration entry point. Verified via `StepVerifier`-based tests
+      against a real `MockRestServer`: dispatch is eager (already
+      in-flight before any subscribe, matching `CompletableFuture<T>`'s
+      convention rather than Reactor's usual defer-until-subscribed one),
+      disposing genuinely cancels the underlying `CompletableFuture`, and a
+      raw `Mono` fails validation the same way an unclaimed `Mono<T>`
+      already does. `Flux<T>` support remains unstarted (a later chunk,
+      doc §14); RxJava remains an explicit non-goal of this rollout (the
+      SPI itself is library-agnostic, but a second reactive library needs
+      its own concrete consumer to build against, the same "don't guess
+      ahead of a real user" instinct that governed pagination and
+      circuit-breaker/bulkhead before this).
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/

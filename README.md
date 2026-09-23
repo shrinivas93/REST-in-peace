@@ -265,10 +265,13 @@ for what actually happens under `getUser(...)`.
 ## Installation
 
 Published to [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace)
-under `io.github.shrinivas93:rest-in-peace` (core) and
+under `io.github.shrinivas93:rest-in-peace` (core),
 `io.github.shrinivas93:rest-in-peace-spring-boot-starter` (the
-[Spring Boot starter](#spring--spring-boot)) — no repository declaration or
-credentials needed, just add the dependency. The same coordinates are also
+[Spring Boot starter](#spring--spring-boot)), and
+`io.github.shrinivas93:rest-in-peace-reactor` (the
+[`Mono<T>` `CallAdapter`](#pluggable-return-types-calladapter)) — no
+repository declaration or credentials needed, just add the dependency. The
+same coordinates are also
 published to GitHub Packages, which does require authentication even for
 public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
@@ -1212,13 +1215,65 @@ name — pointing at registering a `CallAdapterFactory` — instead of
 attempting to decode the response body directly into that type and
 silently misbehaving.
 
-This is the core SPI only; see
+### `Mono<T>` via `rest-in-peace-reactor`
+
+The `rest-in-peace-reactor` module ships a real `CallAdapterFactory` for
+Project Reactor's `Mono<T>` — add the dependency, register it once at
+startup, and any `@RestClient` method can return a `Mono<T>` directly:
+
+```xml
+<dependency>
+    <groupId>io.github.shrinivas93</groupId>
+    <artifactId>rest-in-peace-reactor</artifactId>
+    <version>1.0.0.51</version>
+</dependency>
+```
+
+```java
+RestInPeaceReactor.register();   // once, at startup, before building any client
+
+@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    Mono<User> getUser(@PathParam("id") String id);
+
+    @GET("/users/{id}")
+    Mono<RipResponse<User>> getUserWithResponse(@PathParam("id") String id);
+
+    @GET("/reports/{id}")
+    Mono<byte[]> downloadReport(@PathParam("id") String id);
+
+    @POST("/events")
+    Mono<Void> fireEvent(@Body Event event);
+}
+```
+
+`Mono<Void>`, `Mono<RipResponse<T>>`, and `Mono<byte[]>` all work the same
+way `CompletableFuture<Void>`/`CompletableFuture<RipResponse<T>>`/
+`CompletableFuture<byte[]>` already do — the `Mono<T>` is just a different
+wrapper over the identical dispatch. Two things worth calling out
+explicitly:
+
+- **Eager, not deferred.** The HTTP call is already dispatched by the time
+  `getUser(id)` returns — before anything ever subscribes to the `Mono`.
+  This matches `CompletableFuture<T>`'s own semantics elsewhere in RIP, but
+  differs from Reactor's usual defer-until-subscribed convention. A caller
+  who wants that instead wraps it themselves:
+  `Mono.defer(() -> api.getUser(id))`.
+- **Disposing genuinely cancels the in-flight call.** `.subscribe()`'s
+  returned `Disposable`, or a fired `.timeout(...)`, cancels the underlying
+  `CompletableFuture` (`cancel(true)`), aborting the in-flight request
+  rather than merely discarding a result that keeps computing anyway.
+
+A raw `Mono` (no type argument) fails validation by name, the same as an
+unclaimed `Mono<T>` with no factory registered.
+
+`Flux<T>` support (covering both a single-response list-flattening
+convenience and a `@Paginated` method auto-flattened into a genuinely
+backpressure-aware stream) is still design only — see
 [`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
-for the full design, including the planned `rest-in-peace-reactor` module
-adding real `Mono<T>`/`Flux<T>` support (`Flux<T>` covering both a
-single-response list-flattening convenience and a `@Paginated` method
-auto-flattened into a genuinely backpressure-aware stream) — not yet
-implemented as of this section.
+for the full design and rollout plan.
 
 ## Retries
 
