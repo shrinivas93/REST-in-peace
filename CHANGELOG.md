@@ -8,6 +8,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A pluggable `CallAdapter`/`CallAdapterFactory` SPI, letting a method
+  declare a return type RIP has no built-in support for (e.g. Project
+  Reactor's `Mono<T>`/`Flux<T>`, via a planned separate
+  `rest-in-peace-reactor` module) without RIP taking a hard dependency on
+  it. Registered globally via `RIP.addCallAdapterFactory`/
+  `removeCallAdapterFactory`/`clearCallAdapterFactories`, mirroring the
+  existing global interceptor registry. An adapter never dispatches its
+  own HTTP call - it only transforms the exact `CompletableFuture` RIP's
+  own async dispatch path already produced, so an adapted call goes
+  through the identical retry/cache/circuit-breaker/bulkhead/interceptor
+  pipeline as any other call, dispatched exactly once. A method returning
+  a known-opaque reactive wrapper type (Project Reactor's `Mono`/`Flux`;
+  RxJava's `Single`/`Observable`/`Maybe`/`Completable`/`Flowable`) with no
+  registered factory to claim it now fails validation by name instead of
+  attempting to decode the response body directly into that type and
+  silently misbehaving. See `docs/design/reactor-call-adapter.md` for the
+  full design and its chunked rollout plan - this is chunk 2 (the general
+  SPI); `Mono<T>`/`Flux<T>` support itself is still design only.
+
 - `@Paginated` follows a next-page pointer automatically instead of
   hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for
   manual, page-at-a-time iteration. `page.next()` re-invokes the exact same

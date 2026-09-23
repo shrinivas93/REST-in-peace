@@ -767,7 +767,7 @@ up.
             class. See the design doc's §9.10. **All four steps are now
             complete - this roadmap item is done.**
 - [ ] **A pluggable `CallAdapter` return-type system, with Project Reactor
-      as the first consumer** — return types are currently hardcoded in
+      as the first consumer** — return types were previously hardcoded in
       `RequestExecutor`/`RestClientProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`/`byte[]`/`File`, plus `Page`/
       `Stream`/`Iterator` for pagination). No longer parked: this item's two
@@ -776,28 +776,36 @@ up.
       [`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md),
       which also verified against the actual code that the compile-time
       codegen path *already* disqualifies any `CallAdapter`-shaped return
-      type (e.g. `Mono<T>`) to the reflective fallback today, unconditionally,
+      type (e.g. `Mono<T>`) to the reflective fallback, unconditionally,
       with no code change needed - a cleaner resolution than the original
-      note expected. The doc adds a small `CallAdapter`/`CallAdapterFactory`
-      SPI to `core` (zero new dependencies, registered globally via
-      `RIP.addCallAdapterFactory(...)`, mirroring the interceptor registry)
-      plus a full design for a new `rest-in-peace-reactor` module built on
-      it - `Mono<T>` as a thin wrapper over RIP's already-genuinely-async
-      `CompletableFuture<T>` path, and `Flux<T>` in two flavors: a
-      single-response list-flattening convenience, and a `@Paginated`
-      method auto-flattened into a real, backpressure-aware stream (page
-      N+1 fetched only once the subscriber has actually requested enough
-      items to need it). Also closes a real, separately-discovered gap: an
-      unrecognized return type (a `Mono<T>` with the reactor module never
-      added, or any other unclaimed generic type) currently passes
-      validation silently and can misdecode at call time instead of being
-      rejected by name - the doc's validation rule fixes this as part of
-      the same change. Chunked rollout plan in the doc's §14; RxJava
-      remains an explicit non-goal of this rollout (the SPI itself is
-      library-agnostic, but a second reactive library needs its own
-      concrete consumer to build against, the same "don't guess ahead of a
-      real user" instinct that governed pagination and circuit-breaker/
-      bulkhead before this).
+      note expected. **Chunk 2 (the general SPI) has landed**: a small
+      `CallAdapter`/`CallAdapterFactory` SPI in `core` (zero new
+      dependencies), registered globally via
+      `RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
+      `clearCallAdapterFactories` (mirroring the interceptor registry), and
+      a dispatch hook in `RequestExecutor.processRestRequest` reusing the
+      exact already-genuinely-async `CompletableFuture<T>` path any other
+      async call already goes through - an adapter never dispatches its own
+      call, only transforms the future RIP already produced, so an adapted
+      call is dispatched exactly once through the identical retry/cache/
+      circuit-breaker/bulkhead/interceptor pipeline. Also closes a real,
+      separately-discovered gap, narrower than the design doc's own
+      original sketch (a real deviation, caught during implementation - see
+      that doc's Status line): a method returning one of a small, explicit
+      set of known-opaque reactive wrapper types by name (Project Reactor's
+      `Mono`/`Flux`; RxJava 2/3's `Single`/`Observable`/`Maybe`/
+      `Completable`/`Flowable`) now fails validation instead of silently
+      attempting to decode the response body directly into that type -
+      scoped to exactly those known types rather than every unclaimed
+      generic return type, since the broader rule would have broken
+      already-working generic-collection decoding (`List<User>`, etc.),
+      which reaches the same unchecked generic decode path today. `Mono<T>`/
+      `Flux<T>` support itself and the `rest-in-peace-reactor` module remain
+      unstarted (chunk 3 onward, doc §14); RxJava remains an explicit
+      non-goal of this rollout (the SPI itself is library-agnostic, but a
+      second reactive library needs its own concrete consumer to build
+      against, the same "don't guess ahead of a real user" instinct that
+      governed pagination and circuit-breaker/bulkhead before this).
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/

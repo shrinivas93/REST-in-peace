@@ -13,8 +13,10 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -22,6 +24,8 @@ import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 
 import com.shri.restinpeace.BulkheadConfig;
+import com.shri.restinpeace.CallAdapter;
+import com.shri.restinpeace.CallAdapterFactory;
 import com.shri.restinpeace.CircuitBreakerConfig;
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.PaginationStrategy;
@@ -240,6 +244,67 @@ public class RequestExecutor {
 	}
 
 	/**
+	 * Global registry of {@link CallAdapterFactory}s - a process-wide,
+	 * declared-return-type choice (which programming model a consumer's
+	 * code is written in), the same registration-scope category as
+	 * {@link InterceptorDispatcher}'s own global interceptor registry, and
+	 * unlike a per-client setting such as {@link RipClientConfig}'s own
+	 * cache/circuit-breaker/bulkhead. See
+	 * {@code docs/design/reactor-call-adapter.md} §5.2.
+	 */
+	private static final List<CallAdapterFactory> CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
+
+	/**
+	 * Registers a global {@link CallAdapterFactory}. See
+	 * {@link com.shri.restinpeace.RIP#addCallAdapterFactory(CallAdapterFactory)}.
+	 *
+	 * @param factory the factory to register
+	 */
+	public static void addCallAdapterFactory(CallAdapterFactory factory) {
+		CALL_ADAPTER_FACTORIES.add(factory);
+	}
+
+	/**
+	 * Removes one previously registered {@link CallAdapterFactory} by
+	 * identity. See
+	 * {@link com.shri.restinpeace.RIP#removeCallAdapterFactory(CallAdapterFactory)}.
+	 *
+	 * @param factory the factory to remove
+	 */
+	public static void removeCallAdapterFactory(CallAdapterFactory factory) {
+		CALL_ADAPTER_FACTORIES.remove(factory);
+	}
+
+	/** Removes all registered {@link CallAdapterFactory}s. */
+	public static void clearCallAdapterFactories() {
+		CALL_ADAPTER_FACTORIES.clear();
+	}
+
+	/**
+	 * Consults every registered {@link CallAdapterFactory}, in registration
+	 * order, returning the first non-empty answer - see
+	 * {@link CallAdapterFactory#get(Method)}. Public (not package-private,
+	 * unlike most of this registry) so
+	 * {@code ReflectiveRestClientValidator} can validate a claimed adapter's
+	 * {@link CallAdapter#responseBodyType()} at {@code RIP.getClient(...)}
+	 * time - the same cross-package need
+	 * {@link com.shri.restinpeace.PaginationStrategy} resolution already has.
+	 *
+	 * @param method the interface method being dispatched or validated
+	 * @return the first registered factory's non-empty answer, or
+	 *         {@link Optional#empty()} if none claims {@code method}
+	 */
+	public static Optional<CallAdapter<?>> resolveCallAdapter(Method method) {
+		for (CallAdapterFactory factory : CALL_ADAPTER_FACTORIES) {
+			Optional<CallAdapter<?>> adapter = factory.get(method);
+			if (adapter.isPresent()) {
+				return adapter;
+			}
+		}
+		return Optional.empty();
+	}
+
+	/**
 	 * Sets the shared default cache. See
 	 * {@link com.shri.restinpeace.RIP#setCache(Cache)}.
 	 *
@@ -350,6 +415,10 @@ public class RequestExecutor {
 						interceptorDispatcher.wrapWithShortCircuitBytes(context, request::asBytes))));
 			byte[] bytes = (byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class);
 			return writeToFile(destination, bytes);
+		}
+		Optional<CallAdapter<?>> callAdapter = resolveCallAdapter(method);
+		if (callAdapter.isPresent()) {
+			return dispatchViaCallAdapter(request, method, args, context, callAdapter.get());
 		}
 		Type genericReturnType = method.getGenericReturnType();
 		HttpResponse<String> response = retryExecutor.executeSyncWithRetry(method, genericReturnType, context,
@@ -975,8 +1044,22 @@ public class RequestExecutor {
 
 	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, Object[] args,
 			RequestContext context) {
+		return processAsync(request, method, args, context, resolveFutureInnerType(method));
+	}
+
+	/**
+	 * Same as {@link #processAsync(HttpRequest, Method, Object[], RequestContext)},
+	 * but decodes into {@code futureInnerType} instead of deriving it from
+	 * {@code method}'s own {@code CompletableFuture<T>} generic signature -
+	 * the one call site that needs a type supplied externally rather than
+	 * read off the method: a {@link CallAdapter}-adapted method declares
+	 * {@code Mono<T>}/{@code Flux<T>}, not {@code CompletableFuture<T>}, so
+	 * there is no {@code CompletableFuture}'s own type argument to read.
+	 * See {@link #dispatchViaCallAdapter}.
+	 */
+	private CompletableFuture<?> processAsync(HttpRequest<?> request, Method method, Object[] args,
+			RequestContext context, Type futureInnerType) {
 		Class<?> errorType = ResponseDecoder.errorTypeOf(method);
-		Type futureInnerType = resolveFutureInnerType(method);
 		if (isRipResponseType(futureInnerType)) {
 			Type innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
@@ -1018,6 +1101,29 @@ public class RequestExecutor {
 								cacheCoordinator.wrapWithCacheAsync(request, context,
 										interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))))
 				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
+	}
+
+	/**
+	 * Entry point for a method a registered {@link CallAdapterFactory}
+	 * claims (e.g. a {@code Mono<T>}/{@code Flux<T>}-returning method once
+	 * {@code rest-in-peace-reactor} registers its factories). Dispatches
+	 * through the exact same {@link #processAsync} path any other
+	 * {@code CompletableFuture<T>}-returning method uses - decoding into
+	 * {@link CallAdapter#responseBodyType()} instead of a
+	 * {@code CompletableFuture}'s own type argument - then hands the
+	 * resulting future to {@link CallAdapter#adapt} to produce the
+	 * declared return value. The adapter never dispatches its own call;
+	 * by the time it runs, RIP has already made exactly one request
+	 * through the identical retry/cache/circuit-breaker/bulkhead/
+	 * interceptor pipeline every other call goes through. See
+	 * {@code docs/design/reactor-call-adapter.md} §8.1.
+	 */
+	@SuppressWarnings("unchecked")
+	private Object dispatchViaCallAdapter(HttpRequest<?> request, Method method, Object[] args, RequestContext context,
+			CallAdapter<?> adapter) {
+		CompletableFuture<Object> delegate = (CompletableFuture<Object>) processAsync(request, method, args, context,
+				adapter.responseBodyType());
+		return ((CallAdapter<Object>) adapter).adapt(delegate);
 	}
 
 	private Type resolveFutureInnerType(Method method) {
