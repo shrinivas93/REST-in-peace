@@ -853,18 +853,19 @@ up.
       methods into the reflective fallback correctly, unconditionally, with
       no code change needed for chunks 3/4 - but nothing had locked that
       down against a future refactor accidentally narrowing or widening the
-      disqualification boundary for this specific shape. A new
-      `rest-in-peace-reactor` fixture (`MixedSupportedAndMonoTestApi`,
+      disqualification boundary for either shape. A new
+      `rest-in-peace-reactor` fixture (`MixedSupportedMonoAndFluxTestApi`,
       mixing one ordinary codegen-supported method with one real
-      `Mono<T>`-returning one) now proves all three things such a
-      regression could break: the `Mono` method lands in `fallbackMethods`,
+      `Mono<T>`-returning one and one real `Flux<T>`-returning one) now
+      proves all three things such a regression could break, for both
+      reactive shapes: each reactive method lands in `fallbackMethods`,
       not `methods`; the generated `_RipImpl` class still compiles and
-      generates the other method correctly; and `RIP.getClient(...)`
-      answers the `Mono` method via the lazily-built reflective sub-proxy
-      while the other method still dispatches through the generated
-      implementation - the same E9 "partial fallback, not whole-interface
-      fallback" guarantee already proven for a raw `List<T>`, now pinned
-      down for this shape too. RxJava
+      generates the ordinary method correctly; and `RIP.getClient(...)`
+      answers each reactive method via the lazily-built reflective
+      sub-proxy while the ordinary method still dispatches through the
+      generated implementation - the same E9 "partial fallback, not
+      whole-interface fallback" guarantee already proven for a
+      parameterized `List<T>`, now pinned down for both shapes too. RxJava
       remains an explicit non-goal of
       this rollout (the SPI itself is library-agnostic, but a second
       reactive library needs its own concrete consumer to build against,
