@@ -140,10 +140,14 @@ succeeds and `_RipImpl` is still generated, the ordinary method dispatches
 through it, and each reactive method resolves correctly via the
 lazily-built reflective sub-proxy - self-verified by temporarily widening
 `toSupportedMethodModel`'s generic-type-argument check to accept `Mono<T>`
-and confirming the resulting generated source fails to compile (both here
-and in `core`'s own pre-existing `CallAdapterMonoTestApi`, whose
-`Mono<String>` return type is the real `reactor.core.publisher.Mono` - see
-that class's own javadoc - which the widened check matched too), then
+and confirming the resulting generated source fails to compile (both here,
+against the genuine reactor-core type, and in `core`'s own pre-existing
+`CallAdapterMonoTestApi`, whose `Mono<String>` return type resolves to a
+hand-rolled, empty stand-in class `core` declares at that same
+fully-qualified name - `core` has no reactor-core dependency at all, so
+nothing else could resolve that import - which the widened check matched
+by name too, same as it always does regardless of which class actually
+answers to `reactor.core.publisher.Mono`), then
 reverting.
 
 **Real deviation from §8.3's original sketch, caught during implementation,
@@ -804,10 +808,12 @@ method still uses the generated implementation - proving E9's
 shapes too, not just for a parameterized `List<User>`. Self-verified by
 temporarily widening `toSupportedMethodModel`'s generic-type-argument
 check to also accept `Mono<T>`: the resulting generated source fails to
-compile, both for this new fixture and for `core`'s own pre-existing
-`CallAdapterMonoTestApi` (its `Mono<String>` return type is the real
-`reactor.core.publisher.Mono`; see that class's own javadoc, and the
-widened check matched it too), confirming the regression test's teeth
+compile, both for this new fixture (against the genuine reactor-core
+type) and for `core`'s own pre-existing `CallAdapterMonoTestApi` - whose
+`Mono<String>` return type resolves to a hand-rolled, empty stand-in class
+`core` declares at that same fully-qualified name, since `core` has no
+reactor-core dependency at all; see that class's own javadoc - which the
+widened check matched by name too, confirming the regression test's teeth
 before reverting.
 
 ### 8.3 Validation: reject an unclaimed, unrecognized return type by name
