@@ -109,6 +109,12 @@ public final class Main {
 				protected void hookOnComplete() {
 					streamCompleted.complete(null);
 				}
+
+				@Override
+				protected void hookOnError(Throwable error) {
+					firstItemReceived.completeExceptionally(error);
+					streamCompleted.completeExceptionally(error);
+				}
 			});
 			firstItemReceived.get(10, TimeUnit.SECONDS);
 			requireEquals(1, pagedFetchCount.get(),
