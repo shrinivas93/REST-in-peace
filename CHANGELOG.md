@@ -39,7 +39,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in-flight `CompletableFuture` rather than merely discarding a result
   that keeps computing anyway. A raw `Mono` (no type argument) fails
   validation the same way an unclaimed `Mono<T>` already does.
-  `Flux<T>` support is still design only.
+- `Flux<T>` support (chunk 4), in two flavors: `FluxListCallAdapterFactory`
+  claims a plain, non-`@Paginated` `Flux<T>` method, decoding the response
+  as `List<T>` and emitting it item by item via `Flux.fromIterable` (no
+  real backpressure - the whole list is already in memory); a new
+  `PaginatedCallAdapter`/`PaginatedCallAdapterFactory` SPI (the
+  pagination-aware counterpart of `CallAdapter`/`CallAdapterFactory`) lets
+  `FluxPaginatedCallAdapterFactory` claim a `@Paginated Flux<T>` method
+  instead, building a third, genuinely backpressure-aware
+  return-type-driven flattening mode for `@Paginated` alongside `Page<T>`
+  and `Stream<T>`/`Iterator<T>` - the next page is only fetched once
+  `FluxSink`'s own accumulated demand exceeds what's already buffered.
+  Also fixes two latent gaps the new SPI exposed: a `@Paginated` method
+  returning something other than `Page<T>`/`Stream<T>`/`Iterator<T>` no
+  longer unconditionally fails compilation (a registered
+  `PaginatedCallAdapterFactory` can now legitimately claim it, invisibly
+  to the compile-time processor); and `RestClientProcessor` now explicitly
+  disqualifies every `@Paginated`/`PaginationStrategy<T>` method from
+  compile-time codegen regardless of return type, instead of relying on
+  `Page`/`Stream`/`Iterator`'s own generic type arguments to do so "by
+  accident" - closing a real bug where a `@Paginated` method returning a
+  plain, non-generic type would previously have been silently codegen'd
+  into a broken, non-paginating method.
 
 - `@Paginated` follows a next-page pointer automatically instead of
   hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for

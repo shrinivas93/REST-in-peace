@@ -1503,19 +1503,34 @@ class CompileTimeValidationTest {
 	}
 
 	@Test
-	void paginatedMethodNotReturningPage_failsCompilation() throws IOException {
+	void paginatedMethodNotReturningPage_compilesCleanAndFallsBackReflectively() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedWrongReturnType", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
 				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
 				+ "@RestClient\n" //
 				+ "public interface PaginatedWrongReturnType {\n" //
 				+ "  @GET(\"http://localhost/orders\")\n" //
 				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
-				+ "  String listOrders();\n" //
+				+ "  String listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
 				+ "}\n");
 
-		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
+		// No longer a compile error (chunk 4 of docs/design/reactor-call-adapter.md,
+		// §7.2): a @Paginated return type this processor doesn't recognize might
+		// still be legitimately claimed by a runtime-registered
+		// PaginatedCallAdapterFactory (e.g. rest-in-peace-reactor's Flux<T>
+		// pagination flavor) - registration is a plain method call this processor has
+		// no way to see, so it can no longer treat "unrecognized" as "definitely
+		// wrong" the way it safely could before that SPI existed.
+		// ReflectiveRestClientValidatorPaginationTest's own
+		// validate_paginatedNotReturningPage_throwsWithError still enforces this
+		// at RIP.getClient(...) time when nothing actually claims it.
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("PaginatedWrongReturnType_RipImpl.class")),
+				"Expected no _RipImpl to be generated for a @Paginated method returning an unrecognized type, found: "
+						+ list(outputDir));
 	}
 
 	@Test
@@ -2503,6 +2518,32 @@ class CompileTimeValidationTest {
 				+ "}\n");
 
 		assertErrorContains(diagnostics, "returns a raw CompletableFuture with no type parameter");
+	}
+
+	@Test
+	void paginatedCompletableFutureOfPageReturn_failsCompilation() throws IOException {
+		// CompletableFuture<Page<T>> - a genuinely parameterized (non-raw)
+		// CompletableFuture, so the raw-type early-return above doesn't apply -
+		// exercises the chunk-4 loosening's own CompletableFuture<T> exclusion
+		// (§7.2 of docs/design/reactor-call-adapter.md): still an unconditional
+		// hard error, since an async first fetch remains not implemented (the
+		// class's own javadoc already calls this exact shape out by name).
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedCompletableFutureOfPage", "" //
+				+ "import java.util.concurrent.CompletableFuture;\n" //
+				+ "import com.shri.restinpeace.Page;\n" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
+				+ "@RestClient\n" //
+				+ "public interface PaginatedCompletableFutureOfPage {\n" //
+				+ "  @GET(\"http://localhost/orders\")\n" //
+				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
+				+ "  CompletableFuture<Page<String>> listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "does not return Page<T>, Stream<T>, or Iterator<T>");
 	}
 
 	@Test

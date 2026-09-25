@@ -494,15 +494,43 @@ final class CompileTimeRestClientValidator {
 			return;
 		}
 		if (!returnsSupportedType) {
-			reporter.error(String.format(
-					"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
-							+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
-							+ "implemented yet.",
-					qualifiedName(method)), method);
-			return;
+			// A @Paginated method (never a PaginationStrategy<T>-parameter one -
+			// PaginatedCallAdapterFactory is explicitly scoped to the declarative path
+			// only, §7.2/§7.3) returning some other plain declared type is not
+			// necessarily a mistake, unlike ReflectiveRestClientValidator's own
+			// equivalent check: a registered PaginatedCallAdapterFactory (e.g.
+			// rest-in-peace-reactor's Flux<T> pagination flavor) can legitimately claim
+			// it - but only at runtime, since factory registration is a plain method
+			// call (RIP.addPaginatedCallAdapterFactory) this processor has no way to
+			// see. A @Paginated method is reflective-only regardless (never
+			// compile-time-generated - see processPaginatedRequest's own javadoc), so
+			// there's no codegen correctness risk in deferring to the reflective
+			// validator's own, adapter-aware check at RIP.getClient(...) time instead.
+			// void/RipResponse<T>/CompletableFuture<T> are excluded from this
+			// deferral and still hard-error unconditionally - each is a single-value
+			// wrapper/future concept fundamentally incompatible with "an unknown
+			// number of underlying calls" (the exact reasoning the
+			// RipResponse<Stream/Iterator<T>> check above already uses), so no future
+			// pagination adapter could ever legitimately claim one either.
+			//
+			// Falls through rather than returning outright: deferring the *return
+			// type* check to the reflective validator doesn't mean @Paginated's own
+			// attribute/parameter checks below (URL conflict, advance/pointerSource,
+			// pageSize, pointerKind/cursor params, hasMore/total signals) stop
+			// applying - those are independent of what the return type actually is.
+			if (!(paginated != null && isDeclared && !"com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+					&& !"java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))) {
+				reporter.error(String.format(
+						"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
+								+ "not return Page<T>, Stream<T>, or Iterator<T>; void, RipResponse<T>, and "
+								+ "CompletableFuture<T> are not supported for pagination.",
+						qualifiedName(method)), method);
+				return;
+			}
+		} else {
+			String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+			validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 		}
-		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
-		validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 
 		// Only reported when there's no static URL - validateUrlParam already reports
 		// a more specific "has both a @Url parameter and a static URL" error for that

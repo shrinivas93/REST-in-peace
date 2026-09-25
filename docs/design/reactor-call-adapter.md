@@ -1,6 +1,6 @@
 # Design: pluggable `CallAdapter` return types, with Project Reactor as the first consumer
 
-Status: **chunks 2 and 3 of the rollout plan (§14) have landed.** The general
+Status: **chunks 2, 3, and 4 of the rollout plan (§14) have landed.** The general
 `CallAdapter`/`CallAdapterFactory` SPI (§5) is real code in `core`, with
 global registration (`RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
 `clearCallAdapterFactories`, §5.2) and the dispatch hook in
@@ -26,7 +26,108 @@ request is aborted mid-flight at the TCP level - the `sink.onCancel(() ->
 delegate.cancel(true))` wiring described in §6.2 does call
 `CompletableFuture#cancel(true)` on dispose, but confirming the socket
 itself closes is not something a `MockRestServer`-based test can observe
-from outside. `Flux<T>` (§7) is still design only, pending a later chunk.
+from outside.
+
+**Chunk 4 (`Flux<T>` support, §7/§7.1/§7.2/§7.3) is also real code now.**
+Both flavors landed together, since §7.3's disambiguation only makes sense
+with both in hand: `FluxListCallAdapterFactory` (flavor 1, §7.1) claims a
+plain, non-`@Paginated` `Flux<T>` method the same way `MonoCallAdapterFactory`
+claims `Mono<T>` - decode the response as `List<T>`, then
+`Flux.fromIterable`, no real backpressure since the whole list is already
+in memory. `FluxPaginatedCallAdapterFactory` (flavor 2, §7.2) claims a
+`@Paginated Flux<T>` method and is the actually novel one: genuine
+backpressure via `Flux.create`/`FluxSink.onRequest`, fetching the next page
+(on `Schedulers.boundedElastic()`, since `Page#next()` blocks) only once
+demand exceeds what's already buffered. Verified via the exact
+`fluxOrders_fetchesOnlyAsManyPagesAsRequested` test style §11.12 sketched -
+requesting exactly 1 item, then 1 more, then cancelling, and confirming the
+third scripted page is never fetched.
+
+**A second, larger real deviation, also caught during implementation:**
+flavor 2 needed a genuinely new SPI in `core` this doc's original sketch
+hadn't anticipated - `PaginatedCallAdapter`/`PaginatedCallAdapterFactory`,
+the pagination-aware counterpart of `CallAdapter`/`CallAdapterFactory`,
+consumed from a new `RequestExecutor.resolvePaginatedCallAdapter` hook in
+`processPaginatedRequest` (after the existing `Stream`/`Iterator` checks,
+before falling back to `Page<T>`'s own eager fetch) and validated the same
+way in `ReflectiveRestClientValidator.validatePaginated`. This was
+necessary because `Page<T>.next()`'s page-fetch machinery
+(`PaginationCoordinator`) is `core`-internal and package-private - exposing
+it as a plain `Supplier<Page<Object>>` to a new adapter interface let
+`rest-in-peace-reactor` build the whole backpressure-aware `Flux` itself,
+entirely outside `core`, preserving the "zero Reactor dependency in `core`"
+invariant chunk 2 established, rather than teaching `PaginationCoordinator`
+about Reactor types directly (the doc's original "no new coordinator logic"
+assumption, which turned out to undersell what this flavor actually
+needed).
+
+That new SPI's existence, in turn, exposed two more real, pre-existing gaps
+in the compile-time path, both fixed as part of this chunk:
+- `CompileTimeRestClientValidator.validatePaginated`'s "does not return
+  Page<T>/Stream<T>/Iterator<T>" check used to hard-fail `javac` for any
+  other return type, unconditionally - correct before this SPI existed
+  (nothing else could ever be valid), but no longer, since a registered
+  `PaginatedCallAdapterFactory` can legitimately claim some other
+  `@Paginated` return type at runtime, invisibly to the compile-time
+  processor. Loosened to defer to the reflective validator's own,
+  adapter-aware check instead - but only for a `@Paginated` (never
+  `PaginationStrategy<T>`-parameter) method whose return type is a plain
+  declared class, excluding `void`/`RipResponse<T>`/`CompletableFuture<T>`,
+  which stay hard errors unconditionally (each a single-value
+  wrapper/future concept no pagination adapter could ever legitimately
+  claim, the same "no single response to wrap" reasoning the
+  `RipResponse<Stream/Iterator<T>>` check already uses).
+- `RestClientProcessor` never actually checked for `@Paginated`/
+  `PaginationStrategy<T>` before deciding compile-time codegen eligibility
+  - `Page<T>`/`Stream<T>`/`Iterator<T>` were only ever disqualified "by
+  accident," via their own generic type arguments tripping the unrelated
+  E9 disqualification. A `@Paginated` method returning a plain, non-generic
+  type (e.g. a typo'd `@Paginated String listOrders()`) would have sailed
+  through unrecognized and been silently codegen'd into a broken
+  single-decode method that ignores `@Paginated`'s page-fetch-and-loop
+  semantics entirely - previously masked only because the (now-loosened)
+  compile-time validator check above always failed the build first,
+  before codegen ever ran. Fixed by adding an explicit, unconditional
+  `@Paginated`/`PaginationStrategy<T>` check to
+  `RestClientProcessor.toSupportedMethodModel`, disqualifying any such
+  method from codegen regardless of return type - matching the
+  already-documented "reflective-only, always" invariant
+  `RequestExecutor.processPaginatedRequest`'s own javadoc states.
+  `CompileTimeValidationTest.paginatedMethodNotReturningPage_compilesCleanAndFallsBackReflectively`
+  locks this in.
+
+**An honest coverage caveat, disclosed rather than chased:** a few
+defensive branches inside `FluxPaginatedCallAdapterFactory`'s internal
+drain loop - a handful of narrow windows where a cancellation flag flips
+exactly between an already-in-progress check and the code path it guards,
+and `addCapped`'s CAS-retry-loop path (needs genuine concurrent
+contention) - remain uncovered after a genuine, thorough attempt; each
+would need a deliberately engineered thread race to hit deterministically,
+which would trade a real test for a flaky one. `AtomicLong` overflow
+saturation at `Long.MAX_VALUE` is *not* one of these gaps - it's
+genuinely reachable through two ordinary, spec-compliant `request(n)`
+calls (nothing to do with Rule 3.9), so it's covered by dedicated,
+deterministic reflection-based unit tests against `addCapped` directly
+instead, bypassing the `Flux` subscription lifecycle's own inherent
+raciness. The Reactive-Streams-spec-invariant guard against a
+non-positive `request(n)` genuinely is Rule-3.9-adjacent, but empirically
+*not* unreachable: `Flux.create`'s own subscription does not enforce Rule
+3.9 pre-validation and forwards a non-positive request through, so that
+guard is live code too, and is likewise covered directly. Five real,
+meaningful gaps
+this same investigation *did* find and close: both factories' declined
+non-`Flux` return type, `FluxListCallAdapterFactory`'s
+`CompletionException`-unwrapping branches, a genuine test race in the
+core backpressure test itself (the two `request(n)` deliveries could land
+before either `drain()` call observed a demand of exactly zero - fixed
+with a `thenAwait` between them), and disposal genuinely interrupting an
+in-flight next-page fetch.
+
+`Kotlin coroutines`/RxJava remain out of scope, per §12/the ROADMAP note
+already covering that. This closes out every `Flux<T>` shape §7 describes;
+what's left in §14 (a compile-time codegen regression test locking in the
+E9 disqualification, `samples/reactor-consumer`, and the core README's own
+"Reactive (Project Reactor)" section) is chunk 5 onward.
 
 **Real deviation from §8.3's original sketch, caught during implementation,
 not after:** that sketch ("reject any unclaimed return type with type
@@ -46,8 +147,6 @@ unchanged. This resolves §13's "known built-in shapes whitelist" open
 question by sidestepping it rather than answering it as originally posed -
 no positive whitelist was needed once the rule became a narrow, explicit
 denylist instead.
-
-`Flux<T>` support (§7) is still design only, pending a later chunk.
 
 **A naming collision worth flagging immediately**, since this doc otherwise
 uses "reactor" constantly: Maven's own multi-module build unit is also
@@ -667,9 +766,16 @@ logic.
 
 ### 8.2 Compile-time codegen path: already correct (§4.2), gains only a regression test
 
-No production code change to `RestClientProcessor`. §14's rollout plan adds
-a fixture test (a `@RestClient` interface with one `Mono<User>`-returning
-method alongside ordinary codegen-supported methods) asserting: (a) the
+Superseded by chunk 4 for the `@Paginated`/`PaginationStrategy<T>` case
+specifically: `RestClientProcessor.toSupportedMethodModel` gained an
+explicit, unconditional check disqualifying any such method from codegen
+regardless of return type (§8.1 above has the details and the latent bug
+it closes) - "no production code change" was true when this section was
+written but no longer is. For the plain `Mono<T>`/`Flux<T>` case this
+section originally described, the claim still holds: no change was needed,
+only §14's rollout plan adding a fixture test (a `@RestClient` interface
+with one `Mono<User>`-returning method alongside ordinary codegen-supported
+methods) asserting: (a) the
 `Mono`-returning method lands in `fallbackMethods`, not `methods`; (b) the
 generated `_RipImpl` class still compiles and correctly generates every
 other method; (c) `RIP.getClient(...)` against that interface answers the
