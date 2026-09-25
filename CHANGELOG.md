@@ -61,6 +61,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   accident" - closing a real bug where a `@Paginated` method returning a
   plain, non-generic type would previously have been silently codegen'd
   into a broken, non-paginating method.
+- No behavior change, but chunk 5 of the same `CallAdapter` rollout plan
+  locks in something chunks 3 and 4 already relied on implicitly: a
+  regression test (`rest-in-peace-reactor`'s `MixedSupportedAndMonoTestApi`/
+  `CompileTimeCodegenFallbackTest`) proving `RestClientProcessor` correctly
+  disqualifies a `Mono<T>`/`Flux<T>`-returning method into the reflective
+  fallback while still generating a real implementation for every other
+  method on the same interface - the same "partial fallback, not
+  whole-interface fallback" guarantee already proven for a raw `List<T>`.
 
 - `@Paginated` follows a next-page pointer automatically instead of
   hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for

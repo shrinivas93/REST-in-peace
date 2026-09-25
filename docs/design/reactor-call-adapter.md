@@ -1,6 +1,6 @@
 # Design: pluggable `CallAdapter` return types, with Project Reactor as the first consumer
 
-Status: **chunks 2, 3, and 4 of the rollout plan (§14) have landed.** The general
+Status: **chunks 2, 3, 4, and 5 of the rollout plan (§14) have landed.** The general
 `CallAdapter`/`CallAdapterFactory` SPI (§5) is real code in `core`, with
 global registration (`RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
 `clearCallAdapterFactories`, §5.2) and the dispatch hook in
@@ -125,9 +125,23 @@ in-flight next-page fetch.
 
 `Kotlin coroutines`/RxJava remain out of scope, per §12/the ROADMAP note
 already covering that. This closes out every `Flux<T>` shape §7 describes;
-what's left in §14 (a compile-time codegen regression test locking in the
-E9 disqualification, `samples/reactor-consumer`, and the core README's own
-"Reactive (Project Reactor)" section) is chunk 5 onward.
+what's left in §14 (`samples/reactor-consumer` and the core README's own
+"Reactive (Project Reactor)" section) is chunk 6 onward.
+
+**Chunk 5 (compile-time codegen regression test, §8.2) is also real code
+now.** `RestClientProcessor` needed no production change - it already
+disqualified `Mono<T>`/`Flux<T>` into `fallbackMethods` correctly for
+chunks 3 and 4 alike - but nothing pinned that boundary down against a
+future refactor. `rest-in-peace-reactor`'s `MixedSupportedAndMonoTestApi`
+fixture, mixing one ordinary codegen-supported method with a real
+`Mono<T>`-returning one, now proves all three things §8.2 called out:
+compilation succeeds and `_RipImpl` is still generated, the ordinary
+method dispatches through it, and the `Mono` method resolves correctly via
+the lazily-built reflective sub-proxy - self-verified by temporarily
+widening `toSupportedMethodModel`'s generic-type-argument check to accept
+`Mono<T>` and confirming the resulting generated source fails to compile
+(both here and in `core`'s own pre-existing `CallAdapterMonoTestApi`
+fixture), then reverting.
 
 **Real deviation from §8.3's original sketch, caught during implementation,
 not after:** that sketch ("reject any unclaimed return type with type
@@ -764,7 +778,7 @@ it from the method) is the concrete, minimal-diff way to share the
 existing implementation - not a parallel copy of `processAsync`'s dispatch
 logic.
 
-### 8.2 Compile-time codegen path: already correct (§4.2), gains only a regression test
+### 8.2 Compile-time codegen path: already correct (§4.2), locked in by a regression test (chunk 5)
 
 Superseded by chunk 4 for the `@Paginated`/`PaginationStrategy<T>` case
 specifically: `RestClientProcessor.toSupportedMethodModel` gained an
@@ -772,17 +786,25 @@ explicit, unconditional check disqualifying any such method from codegen
 regardless of return type (§8.1 above has the details and the latent bug
 it closes) - "no production code change" was true when this section was
 written but no longer is. For the plain `Mono<T>`/`Flux<T>` case this
-section originally described, the claim still holds: no change was needed,
-only §14's rollout plan adding a fixture test (a `@RestClient` interface
-with one `Mono<User>`-returning method alongside ordinary codegen-supported
-methods) asserting: (a) the
+section originally described, the claim still holds: no change was needed.
+Chunk 5 (§14) added the fixture test instead - `rest-in-peace-reactor`'s
+`MixedSupportedAndMonoTestApi` (a `@RestClient` interface with one ordinary
+codegen-supported method alongside one real `Mono<String>`-returning one)
+plus `CompileTimeCodegenFallbackTest`, asserting: (a) the
 `Mono`-returning method lands in `fallbackMethods`, not `methods`; (b) the
 generated `_RipImpl` class still compiles and correctly generates every
 other method; (c) `RIP.getClient(...)` against that interface answers the
 `Mono`-returning method correctly via the reflective proxy while every
 other method still uses the generated implementation - proving E9's
 "partial fallback, not whole-interface fallback" guarantee holds for this
-new shape too, not just for a raw `List<User>`.
+new shape too, not just for a raw `List<User>`. Self-verified by
+temporarily widening `toSupportedMethodModel`'s generic-type-argument
+check to also accept `Mono<T>`: the resulting generated source fails to
+compile, both for this new fixture and for `core`'s own pre-existing
+`CallAdapterMonoTestApi` (its `Mono<String>` return type is a test-only
+stand-in for the real type - see that class's own javadoc - which the
+widened check matched too), confirming the regression test's teeth before
+reverting.
 
 ### 8.3 Validation: reject an unclaimed, unrecognized return type by name
 
