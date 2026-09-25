@@ -257,24 +257,33 @@ public class RequestExecutor {
 	private static final CopyOnWriteArrayList<CallAdapterFactory> CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
 
 	/**
-	 * Registers a global {@link CallAdapterFactory}. See
+	 * Registers a global {@link CallAdapterFactory}, unless this exact
+	 * instance (by reference, not {@code equals}) is already registered. See
 	 * {@link com.shri.restinpeace.RIP#addCallAdapterFactory(CallAdapterFactory)}.
+	 * Deliberately identity-based, not {@code equals}-based like
+	 * {@link java.util.concurrent.CopyOnWriteArrayList#addIfAbsent}: two
+	 * distinct factory instances that happen to compare equal (a factory
+	 * class overriding {@code equals}) must both still be registered, or
+	 * the second one's claims would be silently lost.
 	 *
 	 * @param factory the factory to register
 	 */
 	public static void addCallAdapterFactory(CallAdapterFactory factory) {
-		CALL_ADAPTER_FACTORIES.addIfAbsent(factory);
+		if (CALL_ADAPTER_FACTORIES.stream().noneMatch(existing -> existing == factory)) {
+			CALL_ADAPTER_FACTORIES.add(factory);
+		}
 	}
 
 	/**
 	 * Removes one previously registered {@link CallAdapterFactory} by
-	 * identity. See
+	 * identity, not {@code equals} - see {@link #addCallAdapterFactory}'s own
+	 * reasoning for why. See
 	 * {@link com.shri.restinpeace.RIP#removeCallAdapterFactory(CallAdapterFactory)}.
 	 *
 	 * @param factory the factory to remove
 	 */
 	public static void removeCallAdapterFactory(CallAdapterFactory factory) {
-		CALL_ADAPTER_FACTORIES.remove(factory);
+		CALL_ADAPTER_FACTORIES.removeIf(existing -> existing == factory);
 	}
 
 	/** Removes all registered {@link CallAdapterFactory}s. */
@@ -315,13 +324,18 @@ public class RequestExecutor {
 	private static final CopyOnWriteArrayList<PaginatedCallAdapterFactory> PAGINATED_CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
 
 	/**
-	 * Registers a global {@link PaginatedCallAdapterFactory}. See
+	 * Registers a global {@link PaginatedCallAdapterFactory}, unless this
+	 * exact instance is already registered - identity-based, not
+	 * {@code equals}-based, for the same reason
+	 * {@link #addCallAdapterFactory} is. See
 	 * {@link com.shri.restinpeace.RIP#addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory)}.
 	 *
 	 * @param factory the factory to register
 	 */
 	public static void addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
-		PAGINATED_CALL_ADAPTER_FACTORIES.addIfAbsent(factory);
+		if (PAGINATED_CALL_ADAPTER_FACTORIES.stream().noneMatch(existing -> existing == factory)) {
+			PAGINATED_CALL_ADAPTER_FACTORIES.add(factory);
+		}
 	}
 
 	/**
@@ -332,7 +346,7 @@ public class RequestExecutor {
 	 * @param factory the factory to remove
 	 */
 	public static void removePaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
-		PAGINATED_CALL_ADAPTER_FACTORIES.remove(factory);
+		PAGINATED_CALL_ADAPTER_FACTORIES.removeIf(existing -> existing == factory);
 	}
 
 	/** Removes all registered {@link PaginatedCallAdapterFactory}s. */

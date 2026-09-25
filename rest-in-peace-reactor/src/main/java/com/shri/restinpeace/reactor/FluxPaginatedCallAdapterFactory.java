@@ -46,7 +46,10 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 		return Optional.of(new FluxPaginatedCallAdapter());
 	}
 
-	private static final class FluxPaginatedCallAdapter implements PaginatedCallAdapter<Flux<Object>> {
+	// Package-private, not private: FluxPaginatedCallAdapterFactoryTest needs
+	// to name PageDrain (nested inside this), which Java requires every
+	// enclosing level's access to allow.
+	static final class FluxPaginatedCallAdapter implements PaginatedCallAdapter<Flux<Object>> {
 
 		/**
 		 * The first page is fetched eagerly, right here - before this method
@@ -88,10 +91,19 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 		 * in-hand, buffered items are never emitted past cancellation either
 		 * way.
 		 */
-		private static final class PageDrain {
+		// Package-private, not private: FluxPaginatedCallAdapterFactoryTest (same
+		// package) calls the constructor, addCapped, and onRequest directly, and
+		// reads requested - exercising this drain-loop arithmetic in isolation
+		// from the Flux subscription lifecycle, whose own timing/completion races
+		// would make driving these same code paths through it non-deterministic
+		// (see that test's own class javadoc). Compile-time-checked direct calls
+		// beat reflection here purely because this class already shares a package
+		// with its test; the class and its members otherwise stay as narrowly
+		// scoped as they can.
+		static final class PageDrain {
 
 			private final FluxSink<Object> sink;
-			private final AtomicLong requested = new AtomicLong();
+			final AtomicLong requested = new AtomicLong();
 			private final AtomicBoolean fetchingNextPage = new AtomicBoolean();
 			private final AtomicInteger wip = new AtomicInteger();
 			private volatile boolean cancelled;
@@ -111,7 +123,7 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 				sink.onDispose(this::cancel);
 			}
 
-			private void onRequest(long n) {
+			void onRequest(long n) {
 				if (n <= 0 || cancelled) {
 					return;
 				}
@@ -126,7 +138,7 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			 * overflows {@code current + n} to a negative value in two's-complement,
 			 * which the overflow check below already saturates correctly.
 			 */
-			private void addCapped(long n) {
+			void addCapped(long n) {
 				while (true) {
 					long current = requested.get();
 					long next = current + n;

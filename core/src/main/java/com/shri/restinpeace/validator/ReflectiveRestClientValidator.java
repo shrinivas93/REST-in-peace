@@ -558,10 +558,23 @@ public class ReflectiveRestClientValidator {
 			// resolvePaginatedCallAdapter is only ever consulted above when
 			// @Paginated is actually present - a PaginationStrategy<T>-parameter
 			// method never reaches it, so the message only mentions factory
-			// consultation for the @Paginated case, where it's actually true.
-			String reason = paginated != null
-					? String.format("and no registered PaginatedCallAdapterFactory claims %s", returnType.getName())
-					: "and PaginatedCallAdapterFactory resolution only applies to a @Paginated method";
+			// consultation for the @Paginated case, where it's actually true. And
+			// when a factory DOES claim the method but returnsAdaptedType is still
+			// false, that's only because the void/RipResponse/CompletableFuture
+			// exclusion above overrode it - "no factory claims it" would be false
+			// in that case, so the message says the return type itself is excluded
+			// instead.
+			String reason;
+			if (paginated == null) {
+				reason = "and PaginatedCallAdapterFactory resolution only applies to a @Paginated method";
+			} else if (paginatedCallAdapter.isPresent()) {
+				reason = String.format(
+						"and %s is excluded from adapter-based pagination regardless - a single-value "
+								+ "wrapper/future is incompatible with an unknown number of underlying calls",
+						returnType.getSimpleName());
+			} else {
+				reason = String.format("and no registered PaginatedCallAdapterFactory claims %s", returnType.getName());
+			}
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with @Paginated or has a PaginationStrategy<T> parameter but "
 							+ "does not return Page<T>, Stream<T>, or Iterator<T>, %s - wrapping in "

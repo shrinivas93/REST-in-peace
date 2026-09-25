@@ -47,10 +47,10 @@ public final class RestInPeaceReactor {
 	 * Registers this module's {@link com.shri.restinpeace.CallAdapterFactory}/
 	 * {@link com.shri.restinpeace.PaginatedCallAdapterFactory} instances with
 	 * {@link RIP#addCallAdapterFactory}/{@link RIP#addPaginatedCallAdapterFactory}.
-	 * Idempotent by identity - calling this more than once registers the same
-	 * singleton factory instances again, which resolution would simply find
-	 * twice in a row with the same answer either time; harmless, but there's
-	 * no reason to call it more than once.
+	 * Idempotent by identity - {@code RequestExecutor}'s registries only ever
+	 * add an instance that isn't already present by reference, so calling
+	 * this more than once is a no-op for these singletons; harmless, but
+	 * there's no reason to call it more than once.
 	 */
 	public static void register() {
 		RIP.addCallAdapterFactory(MONO_FACTORY);

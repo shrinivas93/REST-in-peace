@@ -3,16 +3,12 @@ package com.shri.restinpeace.reactor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.FluxSink;
 
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.RipResponse;
@@ -21,17 +17,18 @@ import com.shri.restinpeace.RipResponse;
  * Unit-level tests against {@link FluxPaginatedCallAdapterFactory} directly -
  * no MockRestServer/HTTP dispatch involved - for
  * {@link FluxPaginatedCallAdapterFactory#get(Method)}'s claiming logic, and
- * for the private {@code PageDrain.addCapped}/{@code onRequest} demand
- * bookkeeping, which {@link FluxPaginatedCallAdapterIntegrationTest} can't
- * exercise deterministically: driving two back-to-back demand updates
- * through the real {@code Flux} subscription races the async
- * {@code boundedElastic} page fetch that same demand triggers - if that
- * fetch's eventual {@code sink.complete()} lands before the test's second
- * call, the subscription is already terminated and silently drops it,
- * so nothing is actually proven either way. These tests instead invoke
- * {@code PageDrain}'s package-private arithmetic directly via reflection,
- * bypassing the {@code Flux} subscription (and that race) entirely, and
- * assert on the resulting {@code requested} value.
+ * for {@code PageDrain.addCapped}/{@code onRequest}'s demand bookkeeping,
+ * which {@link FluxPaginatedCallAdapterIntegrationTest} can't exercise
+ * deterministically: driving two back-to-back demand updates through the
+ * real {@code Flux} subscription races the async {@code boundedElastic}
+ * page fetch that same demand triggers - if that fetch's eventual
+ * {@code sink.complete()} lands before the test's second call, the
+ * subscription is already terminated and silently drops it, so nothing is
+ * actually proven either way. These tests instead construct a
+ * {@code PageDrain} directly and call its (package-private, precisely for
+ * this test's benefit - see that class's own comment) {@code addCapped}/
+ * {@code onRequest} methods, bypassing the {@code Flux} subscription (and
+ * that race) entirely, and assert on the resulting {@code requested} value.
  */
 class FluxPaginatedCallAdapterFactoryTest {
 
@@ -51,62 +48,43 @@ class FluxPaginatedCallAdapterFactoryTest {
 	 * exercise the exact same saturation branch.
 	 */
 	@Test
-	void addCapped_aSecondUnboundedRequestSaturatesAtMaxValue() throws ReflectiveOperationException {
-		Object pageDrain = newPageDrain();
-		invokeAddCapped(pageDrain, Long.MAX_VALUE);
-		invokeAddCapped(pageDrain, Long.MAX_VALUE); // MAX_VALUE + MAX_VALUE overflows a signed long if summed naively
-		assertEquals(Long.MAX_VALUE, readRequested(pageDrain));
+	void addCapped_aSecondUnboundedRequestSaturatesAtMaxValue() {
+		FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain pageDrain = newPageDrain();
+		pageDrain.addCapped(Long.MAX_VALUE);
+		pageDrain.addCapped(Long.MAX_VALUE); // MAX_VALUE + MAX_VALUE overflows a signed long if summed naively
+		assertEquals(Long.MAX_VALUE, pageDrain.requested.get());
 	}
 
 	@Test
-	void addCapped_aRequestThatWouldOverflowSaturatesInstead() throws ReflectiveOperationException {
-		Object pageDrain = newPageDrain();
-		invokeAddCapped(pageDrain, Long.MAX_VALUE - 5);
-		invokeAddCapped(pageDrain, 10); // (MAX_VALUE - 5) + 10 overflows a signed long if summed naively
-		assertEquals(Long.MAX_VALUE, readRequested(pageDrain));
+	void addCapped_aRequestThatWouldOverflowSaturatesInstead() {
+		FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain pageDrain = newPageDrain();
+		pageDrain.addCapped(Long.MAX_VALUE - 5);
+		pageDrain.addCapped(10); // (MAX_VALUE - 5) + 10 overflows a signed long if summed naively
+		assertEquals(Long.MAX_VALUE, pageDrain.requested.get());
 	}
 
 	/**
-	 * Reactive Streams Rule 3.9 says a compliant Publisher must reject a
-	 * non-positive {@code request()} with {@code onError} before it ever
-	 * reaches a registered consumer like this adapter's own
-	 * {@code onRequest} - empirically, {@code Flux.create}'s own
-	 * subscription does not enforce that and forwards it through, making
-	 * the {@code n <= 0} half of {@code onRequest}'s guard genuinely live
-	 * code, not unreachable defensive code.
+	 * Exercises the {@code n <= 0} half of {@code onRequest}'s guard
+	 * directly. Reactive Streams Rule 3.9 says a compliant Publisher must
+	 * reject a non-positive {@code request()} with {@code onError} before it
+	 * ever reaches a registered consumer like this adapter's own
+	 * {@code onRequest} - whether {@code Flux.create}'s own subscription
+	 * actually enforces that isn't what this test verifies (it calls
+	 * {@code onRequest} straight, with no subscription involved); it only
+	 * confirms the guard itself does the right thing if reached, which the
+	 * class javadoc's empirical note explains {@code Flux.create} needs.
 	 */
 	@Test
-	void onRequest_aNonPositiveRequestIsIgnored() throws ReflectiveOperationException {
-		Object pageDrain = newPageDrain();
-		invokeOnRequest(pageDrain, 0);
-		invokeOnRequest(pageDrain, -1);
-		assertEquals(0, readRequested(pageDrain));
+	void onRequest_aNonPositiveRequestIsIgnored() {
+		FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain pageDrain = newPageDrain();
+		pageDrain.onRequest(0);
+		pageDrain.onRequest(-1);
+		assertEquals(0, pageDrain.requested.get());
 	}
 
-	private static Object newPageDrain() throws ReflectiveOperationException {
-		Class<?> pageDrainClass = Class
-				.forName("com.shri.restinpeace.reactor.FluxPaginatedCallAdapterFactory$FluxPaginatedCallAdapter$PageDrain");
-		Constructor<?> constructor = pageDrainClass.getDeclaredConstructor(FluxSink.class, Page.class);
-		constructor.setAccessible(true);
-		return constructor.newInstance(null, fakePage(Collections.emptyList(), false, null));
-	}
-
-	private static void invokeAddCapped(Object pageDrain, long n) throws ReflectiveOperationException {
-		Method addCapped = pageDrain.getClass().getDeclaredMethod("addCapped", long.class);
-		addCapped.setAccessible(true);
-		addCapped.invoke(pageDrain, n);
-	}
-
-	private static void invokeOnRequest(Object pageDrain, long n) throws ReflectiveOperationException {
-		Method onRequest = pageDrain.getClass().getDeclaredMethod("onRequest", long.class);
-		onRequest.setAccessible(true);
-		onRequest.invoke(pageDrain, n);
-	}
-
-	private static long readRequested(Object pageDrain) throws ReflectiveOperationException {
-		Field requestedField = pageDrain.getClass().getDeclaredField("requested");
-		requestedField.setAccessible(true);
-		return ((AtomicLong) requestedField.get(pageDrain)).get();
+	private static FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain newPageDrain() {
+		return new FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain(null,
+				fakePage(Collections.emptyList(), false, null));
 	}
 
 	private static Page<Object> fakePage(List<Object> items, boolean hasNext, Supplier<Page<Object>> next) {
