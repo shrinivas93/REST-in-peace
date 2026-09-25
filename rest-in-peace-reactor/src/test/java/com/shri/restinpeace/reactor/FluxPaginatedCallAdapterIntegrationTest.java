@@ -132,6 +132,21 @@ class FluxPaginatedCallAdapterIntegrationTest {
 	}
 
 	@Test
+	void disposingBeforeAnInFlightFetchFails_suppressesTheErrorInstead() throws InterruptedException {
+		server.onPages(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}],\"next_cursor\":\"c2\"}"),
+				MockResponse.status(500, "boom").delay(300));
+		AtomicBoolean errorReceived = new AtomicBoolean(false);
+
+		Disposable disposable = api.fluxOrders(null).doOnError(error -> errorReceived.set(true)).subscribe();
+
+		Thread.sleep(100); // item "1" already delivered; page 2's (failing) fetch is now genuinely in flight
+		disposable.dispose();
+
+		Thread.sleep(400); // past page 2's delay - if disposal hadn't suppressed it, the error would have arrived by now
+		assertFalse(errorReceived.get());
+	}
+
+	@Test
 	void validate_rawPaginatedFlux_reportsUnsupportedReturnType() {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(RawPaginatedFluxTestApi.class, server.baseUrl()));

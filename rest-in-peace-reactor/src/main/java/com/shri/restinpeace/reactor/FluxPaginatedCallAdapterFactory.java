@@ -117,12 +117,16 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 				drain();
 			}
 
+			/**
+			 * No separate "already at {@code MAX_VALUE}" fast path is needed:
+			 * {@code n} is always positive here ({@link #onRequest} already
+			 * filters {@code n <= 0}), so {@code current == Long.MAX_VALUE} always
+			 * overflows {@code current + n} to a negative value in two's-complement,
+			 * which the overflow check below already saturates correctly.
+			 */
 			private void addCapped(long n) {
 				while (true) {
 					long current = requested.get();
-					if (current == Long.MAX_VALUE) {
-						return;
-					}
 					long next = current + n;
 					if (next < 0L) {
 						next = Long.MAX_VALUE;
