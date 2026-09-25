@@ -847,7 +847,25 @@ up.
       used to fail compilation outright, so it never reached codegen at
       all; only this chunk's own validator loosening (letting an
       adapter-eligible return type through) exposed the gap, which this
-      same `toSupportedMethodModel` check closes in the same breath. RxJava
+      same `toSupportedMethodModel` check closes in the same breath.
+      **Chunk 5 (compile-time codegen regression test) has also landed**:
+      `RestClientProcessor` already disqualified `Mono<T>`/`Flux<T>`
+      methods into the reflective fallback correctly, unconditionally, with
+      no code change needed for chunks 3/4 - but nothing had locked that
+      down against a future refactor accidentally narrowing or widening the
+      disqualification boundary for either shape. A new
+      `rest-in-peace-reactor` fixture (`MixedSupportedMonoAndFluxTestApi`,
+      mixing one ordinary codegen-supported method with one real
+      `Mono<T>`-returning one and one real `Flux<T>`-returning one) now
+      proves all three things such a regression could break, for both
+      reactive shapes: each reactive method lands in `fallbackMethods`,
+      not `methods`; the generated `_RipImpl` class still compiles and
+      generates the ordinary method correctly; and `RIP.getClient(...)`
+      answers each reactive method via the lazily-built reflective
+      sub-proxy while the ordinary method still dispatches through the
+      generated implementation - the same E9 "partial fallback, not
+      whole-interface fallback" guarantee already proven for a
+      parameterized `List<T>`, now pinned down for both shapes too. RxJava
       remains an explicit non-goal of
       this rollout (the SPI itself is library-agnostic, but a second
       reactive library needs its own concrete consumer to build against,
