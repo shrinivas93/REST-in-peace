@@ -1,0 +1,57 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+	<modelVersion>4.0.0</modelVersion>
+
+	<!--
+	A standalone Maven project - deliberately NOT a module of the parent
+	rest-in-peace build (core and rest-in-peace-reactor are sibling modules
+	of it, but this sample isn't) - showing how a real downstream consumer
+	sees Project Reactor support
+	(../../docs/design/reactor-call-adapter.md): add rest-in-peace-reactor
+	as an ordinary dependency alongside the core library, call
+	RestInPeaceReactor.register() once, and get working Mono<T>/Flux<T>
+	return types on an ordinary @RestClient interface with no other
+	configuration. See this directory's README.md to build and run it.
+	-->
+	<groupId>com.example</groupId>
+	<artifactId>reactor-consumer</artifactId>
+	<version>1.0.0</version>
+	<packaging>jar</packaging>
+
+	<properties>
+		<maven.compiler.source>1.8</maven.compiler.source>
+		<maven.compiler.target>1.8</maven.compiler.target>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- Must match core and rest-in-peace-reactor's own shared parent
+		     <version> - see README.md. Both always match each other by
+		     construction. -->
+		<rest-in-peace.version>1.0.0.52-SNAPSHOT</rest-in-peace.version>
+		<rest-in-peace-reactor.version>1.0.0.52-SNAPSHOT</rest-in-peace-reactor.version>
+	</properties>
+
+	<dependencies>
+		<!-- Ordinary dependencies - reactor-core itself is never declared here
+		     directly, it arrives transitively via rest-in-peace-reactor's own
+		     dependency on it, exactly as a real consumer would experience it. -->
+		<dependency>
+			<groupId>io.github.shrinivas93</groupId>
+			<artifactId>rest-in-peace</artifactId>
+			<version>${rest-in-peace.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>io.github.shrinivas93</groupId>
+			<artifactId>rest-in-peace-reactor</artifactId>
+			<version>${rest-in-peace-reactor.version}</version>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.16.0</version>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>

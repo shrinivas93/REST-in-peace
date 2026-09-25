@@ -1,6 +1,6 @@
 # Design: pluggable `CallAdapter` return types, with Project Reactor as the first consumer
 
-Status: **chunks 2, 3, 4, and 5 of the rollout plan (§14) have landed.** The general
+Status: **every chunk of the rollout plan (§14) has landed - this design is complete.** The general
 `CallAdapter`/`CallAdapterFactory` SPI (§5) is real code in `core`, with
 global registration (`RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
 `clearCallAdapterFactories`, §5.2) and the dispatch hook in
@@ -124,9 +124,7 @@ with a `thenAwait` between them), and disposal genuinely interrupting an
 in-flight next-page fetch.
 
 `Kotlin coroutines`/RxJava remain out of scope, per §12/the ROADMAP note
-already covering that. This closes out every `Flux<T>` shape §7 describes;
-what's left in §14 (`samples/reactor-consumer` and the core README's own
-"Reactive (Project Reactor)" section) is chunk 6 onward.
+already covering that. This closes out every `Flux<T>` shape §7 describes.
 
 **Chunk 5 (compile-time codegen regression test, §8.2) is also real code
 now.** `RestClientProcessor` needed no production change - it already
@@ -149,6 +147,23 @@ nothing else could resolve that import - which the widened check matched
 by name too, same as it always does regardless of which class actually
 answers to `reactor.core.publisher.Mono`), then
 reverting.
+
+**Chunk 6 (§10's `samples/reactor-consumer` plus documentation) is also
+real code now - the last chunk of this rollout.** `samples/reactor-consumer`
+is a standalone Maven project (mirroring `samples/spring-boot-consumer`'s
+own precedent) depending on the published `rest-in-peace`/
+`rest-in-peace-reactor` artifacts like a real downstream consumer, with an
+`OrderApi` interface exercising all three shapes (`Mono<T>`, plain
+`Flux<T>`, `@Paginated Flux<T>`) against a throwaway local HTTP server -
+verified by actually building and running it against locally-installed
+artifacts, not just reading as plausible. The core README gained its own
+top-level "Reactive (Project Reactor)" section (promoted out of the more
+general "Pluggable return types (`CallAdapter`)" section, which now just
+forward-references it), and `docs/getting-started.html`'s field guide
+gained a "Reactive — `Mono<T>` / `Flux<T>`" entry alongside "Async —
+`CompletableFuture`" in its Return types group - closing the exact
+documentation gap the pagination feature's own history already illustrated
+the cost of leaving open.
 
 **Real deviation from §8.3's original sketch, caught during implementation,
 not after:** that sketch ("reject any unclaimed return type with type

@@ -74,6 +74,7 @@ test server for unit tests.
 - [Error handling](#error-handling)
 - [Async](#async)
 - [Pluggable return types (`CallAdapter`)](#pluggable-return-types-calladapter)
+- [Reactive (Project Reactor)](#reactive-project-reactor)
 - [Retries](#retries)
   - [Retry budget](#retry-budget)
   - [Circuit breaker](#circuit-breaker)
@@ -1215,11 +1216,17 @@ name — pointing at registering a `CallAdapterFactory` — instead of
 attempting to decode the response body directly into that type and
 silently misbehaving.
 
-### `Mono<T>` via `rest-in-peace-reactor`
+Project Reactor is the first (and, so far, only) built-in consumer of this
+SPI, shipped as its own `rest-in-peace-reactor` module rather than folded
+into `core` — see [Reactive (Project Reactor)](#reactive-project-reactor)
+below.
 
-The `rest-in-peace-reactor` module ships a real `CallAdapterFactory` for
-Project Reactor's `Mono<T>` — add the dependency, register it once at
-startup, and any `@RestClient` method can return a `Mono<T>` directly:
+## Reactive (Project Reactor)
+
+The `rest-in-peace-reactor` module ships real `CallAdapterFactory`
+implementations for Project Reactor's `Mono<T>` and `Flux<T>` — add the
+dependency, register once at startup, and any `@RestClient` method can
+return either directly, with no other configuration:
 
 ```xml
 <dependency>
@@ -1230,8 +1237,17 @@ startup, and any `@RestClient` method can return a `Mono<T>` directly:
 ```
 
 ```java
-RestInPeaceReactor.register();   // once, at startup, before building any client
+RestInPeaceReactor.register();   // once, at startup, before building any client - covers both Mono<T> and Flux<T>
+```
 
+[`samples/reactor-consumer`](samples/reactor-consumer) is a standalone,
+runnable project exercising every shape below against a real HTTP server -
+see its own [README](samples/reactor-consumer/README.md) to build and run
+it.
+
+### `Mono<T>`
+
+```java
 @RestClient
 @BaseUrl("https://api.example.com")
 interface UserApi {
@@ -1269,7 +1285,7 @@ explicitly:
 A raw `Mono` (no type argument) fails validation by name, the same as an
 unclaimed `Mono<T>` with no factory registered.
 
-### `Flux<T>` — two flavors, same module
+### `Flux<T>`
 
 `rest-in-peace-reactor` also registers `Flux<T>` support, in two genuinely
 different flavors distinguished by `@Paginated`'s presence — the same
@@ -1299,7 +1315,7 @@ interface OrderApi {
   backpressure-aware stream.** `fluxOrders(cursor)` is a third
   return-type-driven flattening mode on `@Paginated`, alongside `Page<T>`
   (manual) and `Stream<T>`/`Iterator<T>` (see
-  [Pagination](#pagination) below) — the next page is only fetched once
+  [Pagination](#pagination) above) — the next page is only fetched once
   the subscriber's own demand (`request(n)`) genuinely exceeds what's
   already buffered, so `.take(2)` or an explicit `request(2)` fetches at
   most as many pages as needed to satisfy it, never the whole result set
@@ -1316,6 +1332,15 @@ interface OrderApi {
 Both flavors decline a raw `Flux` (no type argument). The plain flavor then
 falls through to the by-name validation error; a raw `@Paginated Flux` is
 rejected by pagination validation as an unsupported paginated return type.
+
+Every numbered chunk of the rollout plan has now landed — see
+[`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
+for the full design, the reasoning behind each real deviation from its
+original sketch, and the exhaustive usage-example catalogue every shape
+above is drawn from. `Kotlin coroutines` and RxJava remain deliberately out
+of scope: the `CallAdapterFactory` SPI itself is library-agnostic, but a
+second reactive library needs its own concrete consumer built against real
+usage, not built ahead of one.
 
 ## Retries
 
@@ -2416,12 +2441,21 @@ zero hand-written `@Bean` method. See its own
 [README](samples/spring-boot-consumer/README.md) for how to build and run
 it.
 
+[`samples/reactor-consumer`](samples/reactor-consumer) is a standalone
+project showing what a real downstream consumer sees from
+[Project Reactor support](#reactive-project-reactor) - add
+`rest-in-peace-reactor` as an ordinary dependency alongside the core
+library, call `RestInPeaceReactor.register()` once, and every
+`Mono<T>`/`Flux<T>`-returning method (both `Flux<T>` flavors included)
+just works. See its own [README](samples/reactor-consumer/README.md) for
+how to build and run it.
+
 ## Project structure
 
 ```text
 REST-in-peace/
-├── pom.xml                               # parent of core/ and spring-boot-starter/ - both inherit
-│                                          # its version, so a single release bumps them together
+├── pom.xml                               # parent of core/, spring-boot-starter/, rest-in-peace-reactor/ -
+│                                          # all three inherit its version, so a single release bumps them together
 ├── core/                                 # the rest-in-peace artifact
 │   ├── pom.xml
 │   ├── src/main/java/com/shri/restinpeace/
@@ -2458,17 +2492,21 @@ REST-in-peace/
 │       └── Rip*IntegrationTest.java          # one class per feature area
 ├── spring-boot-starter/                  # optional Spring Boot 4.x/Java 17 auto-configuration -
 │                                          # sibling module of core/, same version, own pom.xml
+├── rest-in-peace-reactor/                # optional Project Reactor Mono<T>/Flux<T> CallAdapters -
+│                                          # sibling module of core/, same version, own pom.xml
 ├── samples/compile-time-proxy-consumer/  # standalone downstream-consumer sample
 ├── samples/spring-boot-consumer/         # standalone downstream-consumer sample (Spring Boot)
+├── samples/reactor-consumer/             # standalone downstream-consumer sample (Project Reactor)
 ├── docs/design/                          # design write-ups (compile-time codegen, ...)
 ├── .github/workflows/                    # CI, release, javadoc, publish pipelines
 ├── CONTRIBUTING.md, CHANGELOG.md, ROADMAP.md, LICENSE
 └── README.md
 ```
 
-`core/` and `spring-boot-starter/` are sibling Maven modules under the root
-`pom.xml` - both inherit their version from it, so they're always released
-and published together as one version, never independently. `samples/*`
+`core/`, `spring-boot-starter/`, and `rest-in-peace-reactor/` are sibling
+Maven modules under the root `pom.xml` - all three inherit their version
+from it, so they're always released and published together as one version,
+never independently. `samples/*`
 are deliberately **not** modules — each resolves the artifacts it needs as
 an ordinary external Maven dependency, the same way a real downstream
 consumer would, rather than through reactor resolution. See
