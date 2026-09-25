@@ -1507,12 +1507,14 @@ class CompileTimeValidationTest {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("PaginatedWrongReturnType", "" //
 				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
 				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.pagination.PaginationCursor;\n" //
 				+ "import com.shri.restinpeace.annotation.pagination.Paginated;\n" //
+				+ "import com.shri.restinpeace.annotation.request.QueryParam;\n" //
 				+ "@RestClient\n" //
 				+ "public interface PaginatedWrongReturnType {\n" //
 				+ "  @GET(\"http://localhost/orders\")\n" //
 				+ "  @Paginated(itemsField = \"orders\", pointerField = \"next\")\n" //
-				+ "  String listOrders();\n" //
+				+ "  String listOrders(@QueryParam(\"cursor\") @PaginationCursor String cursor);\n" //
 				+ "}\n");
 
 		// No longer a compile error (chunk 4 of docs/design/reactor-call-adapter.md,

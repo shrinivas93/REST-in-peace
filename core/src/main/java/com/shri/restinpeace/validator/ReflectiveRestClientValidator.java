@@ -555,12 +555,18 @@ public class ReflectiveRestClientValidator {
 			return;
 		}
 		if (!returnsSupportedType) {
+			// resolvePaginatedCallAdapter is only ever consulted above when
+			// @Paginated is actually present - a PaginationStrategy<T>-parameter
+			// method never reaches it, so the message only mentions factory
+			// consultation for the @Paginated case, where it's actually true.
+			String reason = paginated != null
+					? String.format("and no registered PaginatedCallAdapterFactory claims %s", returnType.getName())
+					: "and PaginatedCallAdapterFactory resolution only applies to a @Paginated method";
 			validationResult.addError(String.format(
 					"The method %s.%s is annotated with @Paginated or has a PaginationStrategy<T> parameter but "
-							+ "does not return Page<T>, Stream<T>, or Iterator<T>, and no registered "
-							+ "PaginatedCallAdapterFactory claims %s - wrapping in CompletableFuture is not "
-							+ "implemented yet.",
-					method.getDeclaringClass().getName(), method.getName(), returnType.getName()));
+							+ "does not return Page<T>, Stream<T>, or Iterator<T>, %s - wrapping in "
+							+ "CompletableFuture is not implemented yet.",
+					method.getDeclaringClass().getName(), method.getName(), reason));
 			return;
 		}
 		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : returnsIterator ? "Iterator"

@@ -841,9 +841,14 @@ up.
       `@Paginated`/`PaginationStrategy<T>` method from compile-time codegen
       regardless of return type, instead of relying on `Page`/`Stream`/
       `Iterator`'s own generic type arguments to do so "by accident" -
-      closing a real bug where a `@Paginated` method returning a plain,
-      non-generic type would previously have been silently codegen'd into a
-      broken, non-paginating method. RxJava remains an explicit non-goal of
+      closing a latent codegen-eligibility bug that the compile-time
+      validator's own (now-loosened) hard error had always masked before
+      this chunk: a `@Paginated` method returning a plain, non-generic type
+      used to fail compilation outright, so it never reached codegen at
+      all; only this chunk's own validator loosening (letting an
+      adapter-eligible return type through) exposed the gap, which this
+      same `toSupportedMethodModel` check closes in the same breath. RxJava
+      remains an explicit non-goal of
       this rollout (the SPI itself is library-agnostic, but a second
       reactive library needs its own concrete consumer to build against,
       the same "don't guess ahead of a real user" instinct that governed

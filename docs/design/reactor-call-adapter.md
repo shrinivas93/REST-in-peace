@@ -96,17 +96,25 @@ in the compile-time path, both fixed as part of this chunk:
   `CompileTimeValidationTest.paginatedMethodNotReturningPage_compilesCleanAndFallsBackReflectively`
   locks this in.
 
-**An honest coverage caveat, disclosed rather than chased:** several
+**An honest coverage caveat, disclosed rather than chased:** a few
 defensive branches inside `FluxPaginatedCallAdapterFactory`'s internal
-drain loop (a Reactive-Streams-spec-invariant guard against a
-non-positive `request(n)`, `AtomicLong` overflow saturation at
-`Long.MAX_VALUE`, and a handful of narrow windows where a
-cancellation flag flips exactly between an already-in-progress check and
-the code path it guards) remain uncovered after a genuine, thorough
-attempt. Each is either unreachable through any spec-compliant Reactor
-caller (built-in operators and `StepVerifier` never violate Rule 3.9) or
+drain loop - a handful of narrow windows where a cancellation flag flips
+exactly between an already-in-progress check and the code path it guards,
+and `addCapped`'s CAS-retry-loop path (needs genuine concurrent
+contention) - remain uncovered after a genuine, thorough attempt; each
 would need a deliberately engineered thread race to hit deterministically,
-which would trade a real test for a flaky one. Five real, meaningful gaps
+which would trade a real test for a flaky one. `AtomicLong` overflow
+saturation at `Long.MAX_VALUE` is *not* one of these gaps - it's
+genuinely reachable through two ordinary, spec-compliant `request(n)`
+calls (nothing to do with Rule 3.9), so it's covered by dedicated,
+deterministic reflection-based unit tests against `addCapped` directly
+instead, bypassing the `Flux` subscription lifecycle's own inherent
+raciness. The Reactive-Streams-spec-invariant guard against a
+non-positive `request(n)` genuinely is Rule-3.9-adjacent, but empirically
+*not* unreachable: `Flux.create`'s own subscription does not enforce Rule
+3.9 pre-validation and forwards a non-positive request through, so that
+guard is live code too, and is likewise covered directly. Five real,
+meaningful gaps
 this same investigation *did* find and close: both factories' declined
 non-`Flux` return type, `FluxListCallAdapterFactory`'s
 `CompletionException`-unwrapping branches, a genuine test race in the
@@ -758,9 +766,16 @@ logic.
 
 ### 8.2 Compile-time codegen path: already correct (§4.2), gains only a regression test
 
-No production code change to `RestClientProcessor`. §14's rollout plan adds
-a fixture test (a `@RestClient` interface with one `Mono<User>`-returning
-method alongside ordinary codegen-supported methods) asserting: (a) the
+Superseded by chunk 4 for the `@Paginated`/`PaginationStrategy<T>` case
+specifically: `RestClientProcessor.toSupportedMethodModel` gained an
+explicit, unconditional check disqualifying any such method from codegen
+regardless of return type (§8.1 above has the details and the latent bug
+it closes) - "no production code change" was true when this section was
+written but no longer is. For the plain `Mono<T>`/`Flux<T>` case this
+section originally described, the claim still holds: no change was needed,
+only §14's rollout plan adding a fixture test (a `@RestClient` interface
+with one `Mono<User>`-returning method alongside ordinary codegen-supported
+methods) asserting: (a) the
 `Mono`-returning method lands in `fallbackMethods`, not `methods`; (b) the
 generated `_RipImpl` class still compiles and correctly generates every
 other method; (c) `RIP.getClient(...)` against that interface answers the

@@ -69,6 +69,25 @@ class FluxListCallAdapterFactoryTest {
 		StepVerifier.create(flux).expectErrorMatches(e -> e == error).verify();
 	}
 
+	/**
+	 * {@link FluxListCallAdapterIntegrationTest}'s own disposal test proves
+	 * downstream stops seeing signals after disposal - true regardless of
+	 * this wiring, since a cancelled {@code Mono.create} sink drops a late
+	 * {@code success}/{@code error} on its own. This test instead asserts
+	 * directly on {@code delegate} itself (never completed here) that
+	 * disposing genuinely propagates to {@code CompletableFuture#cancel(true)}
+	 * - the actual behavior {@code sink.onCancel(...)} exists to provide.
+	 */
+	@Test
+	void disposing_cancelsTheUnderlyingDelegateFuture() throws NoSuchMethodException {
+		CompletableFuture<Object> delegate = new CompletableFuture<>();
+		Flux<Object> flux = adapt(delegate);
+
+		flux.subscribe().dispose();
+
+		assertTrue(delegate.isCancelled());
+	}
+
 	@SuppressWarnings("unchecked")
 	private Flux<Object> adapt(CompletableFuture<Object> delegate) throws NoSuchMethodException {
 		Method method = FluxTestApi.class.getMethod("listOrders");

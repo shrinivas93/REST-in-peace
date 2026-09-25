@@ -6,6 +6,7 @@ import java.lang.reflect.Type;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -92,8 +93,9 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			private final FluxSink<Object> sink;
 			private final AtomicLong requested = new AtomicLong();
 			private final AtomicBoolean fetchingNextPage = new AtomicBoolean();
+			private final AtomicInteger wip = new AtomicInteger();
 			private volatile boolean cancelled;
-			private volatile Disposable inFlightNextPageFetch;
+			private Disposable inFlightNextPageFetch;
 			private Page<Object> currentPage;
 			private Iterator<Object> currentPageItems;
 
@@ -138,14 +140,41 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			}
 
 			/**
-			 * Synchronized because this can genuinely be re-entered from two
-			 * different threads - the downstream's own {@code request(n)} call
-			 * (via {@link FluxSink#onRequest}) and the {@code boundedElastic}
-			 * worker finishing a background page fetch ({@link #fetchNextPageAsync}) -
-			 * and {@link FluxSink#next}/{@code complete}/{@code error} are not
-			 * safe to call concurrently from more than one thread at a time.
+			 * Guarded by {@code wip} (the standard RxJava/Reactor "drain loop"
+			 * idiom) rather than {@code synchronized}, specifically because this
+			 * can genuinely be re-entered from the SAME thread, not just raced
+			 * from a different one: {@link FluxSink#next} synchronously invoking
+			 * a downstream subscriber's {@code onNext}, which itself calls
+			 * {@code request(n)} again (a common flow-controlled consumption
+			 * pattern) before returning, reaches {@link #onRequest} and this
+			 * method again while the outer call is still on the stack. A plain
+			 * {@code synchronized} method would let that reentrant call execute
+			 * the whole body a second time concurrently with the outer call's
+			 * own in-progress loop, corrupting {@code requested} (e.g. a second,
+			 * nested drain fully consuming the newly-added demand, then the
+			 * outer call's own pending {@code requested.decrementAndGet()} - for
+			 * an item the nested call already accounted for - driving it
+			 * negative). Incrementing {@code wip} first and only ever running
+			 * {@link #drainOnce} while holding "the right" to do so (the thread
+			 * that took it from 0) means a reentrant or concurrent call instead
+			 * just registers a missed run for the loop below to pick up,
+			 * guaranteeing exactly one {@link #drainOnce} execution at a time
+			 * with no reentrancy - which is what actually needs to be true for
+			 * {@link FluxSink#next}/{@code complete}/{@code error} to be safe to
+			 * call here, not merely mutual exclusion between two threads.
 			 */
-			private synchronized void drain() {
+			private void drain() {
+				if (wip.getAndIncrement() != 0) {
+					return;
+				}
+				int missed = 1;
+				do {
+					drainOnce();
+					missed = wip.addAndGet(-missed);
+				} while (missed != 0);
+			}
+
+			private void drainOnce() {
 				if (cancelled) {
 					return;
 				}
@@ -172,24 +201,22 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			}
 
 			private void fetchNextPageAsync() {
-				inFlightNextPageFetch = Schedulers.boundedElastic().schedule(() -> {
+				Disposable fetch = Schedulers.boundedElastic().schedule(() -> {
 					try {
 						Page<Object> nextPage = currentPage.next();
 						if (cancelled) {
 							return;
 						}
-						// Published under drain()'s own monitor, not just the
-						// fetchingNextPage flag's volatile write - otherwise a
-						// concurrent drain() call on another thread (triggered by
-						// the subscriber's own request(n)) has no guaranteed
-						// happens-before edge to these writes, and could read a
-						// stale currentPage/currentPageItems despite observing
-						// fetchingNextPage already flipped back to false.
-						synchronized (this) {
-							currentPage = nextPage;
-							currentPageItems = nextPage.items().iterator();
-							fetchingNextPage.set(false);
-						}
+						// currentPage/currentPageItems are safely published to
+						// whichever thread's drainOnce() runs next by wip's own
+						// atomic read-modify-write ordering in drain() below - the
+						// same "safe publication via a shared atomic" guarantee
+						// fetchingNextPage's volatile write alone can't provide on
+						// its own, since drainOnce() reads currentPageItems before
+						// it ever touches fetchingNextPage.
+						currentPage = nextPage;
+						currentPageItems = nextPage.items().iterator();
+						fetchingNextPage.set(false);
 						drain();
 					} catch (Throwable error) {
 						if (!cancelled) {
@@ -197,11 +224,27 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 						}
 					}
 				});
+				// Published under the same lock cancel() uses, and disposed
+				// immediately if cancellation already won that race - otherwise a
+				// fetch scheduled just as/after disposal could sit unpublished
+				// past cancel()'s own read of inFlightNextPageFetch, leaving it
+				// running (and its result silently ignored) instead of interrupted.
+				synchronized (this) {
+					if (cancelled) {
+						fetch.dispose();
+					} else {
+						inFlightNextPageFetch = fetch;
+					}
+				}
 			}
 
 			private void cancel() {
-				cancelled = true;
-				Disposable fetch = inFlightNextPageFetch;
+				Disposable fetch;
+				synchronized (this) {
+					cancelled = true;
+					fetch = inFlightNextPageFetch;
+					inFlightNextPageFetch = null;
+				}
 				if (fetch != null) {
 					fetch.dispose();
 				}

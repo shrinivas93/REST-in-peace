@@ -512,19 +512,25 @@ final class CompileTimeRestClientValidator {
 			// number of underlying calls" (the exact reasoning the
 			// RipResponse<Stream/Iterator<T>> check above already uses), so no future
 			// pagination adapter could ever legitimately claim one either.
-			if (paginated != null && isDeclared && !"com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
-					&& !"java.util.concurrent.CompletableFuture".equals(rawReturnTypeName)) {
+			//
+			// Falls through rather than returning outright: deferring the *return
+			// type* check to the reflective validator doesn't mean @Paginated's own
+			// attribute/parameter checks below (URL conflict, advance/pointerSource,
+			// pageSize, pointerKind/cursor params, hasMore/total signals) stop
+			// applying - those are independent of what the return type actually is.
+			if (!(paginated != null && isDeclared && !"com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+					&& !"java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))) {
+				reporter.error(String.format(
+						"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
+								+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
+								+ "implemented yet.",
+						qualifiedName(method)), method);
 				return;
 			}
-			reporter.error(String.format(
-					"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
-							+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
-							+ "implemented yet.",
-					qualifiedName(method)), method);
-			return;
+		} else {
+			String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+			validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 		}
-		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
-		validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 
 		// Only reported when there's no static URL - validateUrlParam already reports
 		// a more specific "has both a @Url parameter and a static URL" error for that
