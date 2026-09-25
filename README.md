@@ -266,13 +266,15 @@ for what actually happens under `getUser(...)`.
 ## Installation
 
 Published to [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace)
-under `io.github.shrinivas93:rest-in-peace` (core),
+under `io.github.shrinivas93:rest-in-peace` (core) and
 `io.github.shrinivas93:rest-in-peace-spring-boot-starter` (the
-[Spring Boot starter](#spring--spring-boot)), and
+[Spring Boot starter](#spring--spring-boot)) — no repository declaration or
+credentials needed, just add the dependency.
 `io.github.shrinivas93:rest-in-peace-reactor` (the
-[`Mono<T>` `CallAdapter`](#pluggable-return-types-calladapter)) — no
-repository declaration or credentials needed, just add the dependency. The
-same coordinates are also
+[`Mono<T>`/`Flux<T>` `CallAdapter`s](#reactive-project-reactor)) isn't
+published yet - see [`ROADMAP.md`](ROADMAP.md) for status; build it locally
+in the meantime, per [Reactive (Project Reactor)](#reactive-project-reactor)
+below. The other two coordinates are also
 published to GitHub Packages, which does require authentication even for
 public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
@@ -1243,9 +1245,9 @@ RestInPeaceReactor.register();   // once, at startup, before building any client
 ```
 
 [`samples/reactor-consumer`](samples/reactor-consumer) is a standalone,
-runnable project exercising every shape below against a real HTTP server -
-see its own [README](samples/reactor-consumer/README.md) to build and run
-it.
+runnable project exercising `Mono<T>` and both `Flux<T>` flavors against a
+real HTTP server - see its own [README](samples/reactor-consumer/README.md)
+to build and run it.
 
 ### `Mono<T>`
 

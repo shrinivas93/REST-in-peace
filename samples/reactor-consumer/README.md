@@ -49,8 +49,7 @@ mvn install -DskipTests -pl core,rest-in-peace-reactor
 cd samples/reactor-consumer
 VERSION=$(awk '/<artifactId>rest-in-peace-parent<\/artifactId>/{getline; sub(/.*<version>/, ""); sub(/<\/version>.*/, ""); print}' ../../pom.xml)
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-  -Drest-in-peace.version="$VERSION" \
-  -Drest-in-peace-reactor.version="$VERSION"
+  -Drest-in-peace.version="$VERSION"
 java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
 ```
 
@@ -60,13 +59,15 @@ A successful run prints each call's result and ends with:
 VERIFICATION PASSED: rest-in-peace-reactor works for a real downstream consumer.
 ```
 
-The two `-D...version=...` flags override this `pom.xml`'s own hardcoded
-defaults with whatever core and `rest-in-peace-reactor`'s shared version
-actually is right now - both always match each other (they inherit one
-version from their common parent), but this sample is still a separate,
-non-reactor project, so its own defaults still drift the moment that shared
-version changes. Omitting either flag falls back to its hardcoded default,
-which will fail to resolve once it drifts from whatever you just installed.
+The `-Drest-in-peace.version=...` flag (this `pom.xml`'s single version
+property, referenced by both the `rest-in-peace` and `rest-in-peace-reactor`
+dependencies below) overrides its hardcoded default with whatever core and
+`rest-in-peace-reactor`'s shared version actually is right now - they always
+match each other (both inherit one version from their common parent), but
+this sample is still a separate, non-reactor project, so its own default
+still drifts the moment that shared version changes. Omitting the flag
+falls back to that hardcoded default, which will fail to resolve once it
+drifts from whatever you just installed.
 
 ## Try it yourself
 

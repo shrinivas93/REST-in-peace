@@ -694,7 +694,7 @@ Flux&lt;Order&gt; listOrders();</code></pre>
           </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · Flux&lt;T&gt; over @Paginated</span>
-              <span class="snippet-caption">flavor 2 — auto-flattens every page with real backpressure; next page fetched only once demand exceeds what's buffered</span></div>
+              <span class="snippet-caption">flavor 2 — first page fetched eagerly at method call; later pages use real backpressure and are fetched only when demand exceeds what's buffered</span></div>
             <pre><code class="language-java">@GET("https://api.example.com/orders")
 @Paginated(itemsField = "orders", pointerField = "next_cursor")
 Flux&lt;Order&gt; streamOrders(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>

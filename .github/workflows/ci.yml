@@ -377,6 +377,5 @@ jobs:
         working-directory: samples/reactor-consumer
         run: |
           mvn -B compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
-            -Drest-in-peace.version=${{ steps.rip-version.outputs.version }} \
-            -Drest-in-peace-reactor.version=${{ steps.rip-version.outputs.version }}
+            -Drest-in-peace.version=${{ steps.rip-version.outputs.version }}
           java -cp "target/classes:$(cat cp.txt)" com.example.consumer.Main
