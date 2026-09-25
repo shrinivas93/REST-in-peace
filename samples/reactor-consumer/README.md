@@ -69,10 +69,11 @@ which will fail to resolve once it drifts from whatever you just installed.
 
 ## Try it yourself
 
-Add a `Mono<Void>` fire-and-forget method, or a `Flux<RipResponse<Order>>`
-(wrapping each item's own status/headers), alongside the three already
-here - no other change needed for `RestInPeaceReactor.register()` to
-handle it, since both `MonoCallAdapterFactory` and
-`FluxListCallAdapterFactory`/`FluxPaginatedCallAdapterFactory` claim every
-method of their respective shape, not just the ones this sample happens to
-use.
+Add a `Mono<Void> deleteOrder(String id)` fire-and-forget method (a `DELETE`
+that returns no body) alongside the three already here - no other change
+needed for `RestInPeaceReactor.register()` to handle it, since
+`MonoCallAdapterFactory` claims every `Mono<T>`-returning method, not just
+the ones this sample happens to use. (`RipResponse<T>` wraps a *single*
+response's status/headers, so it pairs naturally with `Mono<RipResponse<T>>`
+- there's no `Flux<RipResponse<T>>` equivalent, since a `Flux<T>` here can
+flatten items from more than one underlying HTTP response.)

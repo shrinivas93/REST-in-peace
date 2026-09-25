@@ -71,11 +71,15 @@ public final class Main {
 			System.out.println("listOrders() emitted " + orders.size() + " items");
 
 			// 3. Flux<T> flavor 2 (§7.2): a @Paginated method auto-flattened across
-			// pages, fetching the next page only once demand exceeds what's already
-			// buffered - collectList()'s own unbounded initial request drains every
-			// page in this small example.
+			// pages. The real backpressure-driven fetch-on-demand behavior (next page
+			// requested only once buffered demand is exceeded) isn't exercised here,
+			// since collectList() issues an unbounded initial request that drains
+			// every page up front - this just confirms both pages' items arrive, in
+			// page order.
 			List<Order> allOrders = api.streamAllOrders(null).collectList().block();
 			requireEquals(2, allOrders.size(), "Flux<Order> streamAllOrders(...) item count across both pages");
+			requireEquals("p1", allOrders.get(0).id, "Flux<Order> streamAllOrders(...) item 0 (page 1)");
+			requireEquals("p2", allOrders.get(1).id, "Flux<Order> streamAllOrders(...) item 1 (page 2)");
 			System.out.println("streamAllOrders(...) emitted " + allOrders.size() + " items across 2 pages: "
 					+ allOrders.get(0).id + ", " + allOrders.get(1).id);
 
