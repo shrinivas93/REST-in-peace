@@ -121,18 +121,25 @@ class PaginatedCallAdapterIntegrationTest {
 
 	@Test
 	void removePaginatedCallAdapterFactory_removesOnlyTheInstanceByReferenceNotByEquals() {
-		EqualByTagPaginatedCallAdapterFactory first = new EqualByTagPaginatedCallAdapterFactory("shared-tag");
-		EqualByTagPaginatedCallAdapterFactory second = new EqualByTagPaginatedCallAdapterFactory("shared-tag");
+		EqualByTagPaginatedCallAdapterFactory first = new EqualByTagPaginatedCallAdapterFactory("shared-tag", "first");
+		EqualByTagPaginatedCallAdapterFactory second = new EqualByTagPaginatedCallAdapterFactory("shared-tag", "second");
 		assertEquals(first, second); // distinct instances, but .equals() by tag
 		RIP.addPaginatedCallAdapterFactory(first);
 		RIP.addPaginatedCallAdapterFactory(second);
+		PaginatedCallAdapterTestApi api = RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl());
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
 
-		RIP.removePaginatedCallAdapterFactory(first);
+		// Removing the SECOND-registered instance, not the first, is the
+		// discriminating case: List.remove(Object)'s equals()-based scan
+		// would find "first" (registered earlier, so encountered first) and
+		// remove that one instead, leaving "second" behind - the marker in
+		// the decoded value is how the test tells which one actually
+		// survived.
+		RIP.removePaginatedCallAdapterFactory(second);
 
-		// second is still registered by reference - equals()-based removal
-		// would have removed whichever of the two a List.remove(Object) scan
-		// happened to find first, which could have been either one.
-		assertDoesNotThrow(() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
+		@SuppressWarnings("unchecked")
+		TestBox<String> result = (TestBox<String>) (TestBox<?>) api.fluxOrders(null);
+		assertEquals("first", result.get());
 	}
 
 	/**
@@ -141,14 +148,19 @@ class PaginatedCallAdapterIntegrationTest {
 	 * {@code equals()}/{@code hashCode()} by {@code tag} alone, so two
 	 * distinct instances constructed with the same tag compare equal despite
 	 * being different objects - proving factory registration/removal is
-	 * identity-based, not {@code equals()}-based.
+	 * identity-based, not {@code equals()}-based. {@code marker} plays no
+	 * part in equality - it's returned as the decoded value purely so a test
+	 * can observe which of two equal-but-distinct instances actually
+	 * answered.
 	 */
 	private static final class EqualByTagPaginatedCallAdapterFactory implements PaginatedCallAdapterFactory {
 
 		private final String tag;
+		private final String marker;
 
-		EqualByTagPaginatedCallAdapterFactory(String tag) {
+		EqualByTagPaginatedCallAdapterFactory(String tag, String marker) {
 			this.tag = tag;
+			this.marker = marker;
 		}
 
 		@Override
@@ -158,7 +170,7 @@ class PaginatedCallAdapterIntegrationTest {
 			}
 			PaginatedCallAdapter<TestBox<String>> adapter = (Supplier<Page<Object>> firstPageSupplier) -> {
 				firstPageSupplier.get();
-				return TestBox.of(tag);
+				return TestBox.of(marker);
 			};
 			return Optional.of(adapter);
 		}

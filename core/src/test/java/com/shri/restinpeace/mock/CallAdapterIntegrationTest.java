@@ -160,20 +160,23 @@ class CallAdapterIntegrationTest {
 
 	@Test
 	void removeCallAdapterFactory_removesOnlyTheInstanceByReferenceNotByEquals() {
-		EqualByTagCallAdapterFactory first = new EqualByTagCallAdapterFactory("shared-tag");
-		EqualByTagCallAdapterFactory second = new EqualByTagCallAdapterFactory("shared-tag");
+		EqualByTagCallAdapterFactory first = new EqualByTagCallAdapterFactory("shared-tag", "first");
+		EqualByTagCallAdapterFactory second = new EqualByTagCallAdapterFactory("shared-tag", "second");
 		assertEquals(first, second); // distinct instances, but .equals() by tag
 		RIP.addCallAdapterFactory(first);
 		RIP.addCallAdapterFactory(second);
 		CallAdapterTestApi api = RIP.getClient(CallAdapterTestApi.class, server.baseUrl());
 		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("shipped"));
 
-		RIP.removeCallAdapterFactory(first);
+		// Removing the SECOND-registered instance, not the first, is the
+		// discriminating case: List.remove(Object)'s equals()-based scan
+		// would find "first" (registered earlier, so encountered first) and
+		// remove that one instead, leaving "second" behind - the marker in
+		// the decoded value is how the test tells which one actually
+		// survived.
+		RIP.removeCallAdapterFactory(second);
 
-		// second is still registered by reference - equals()-based removal
-		// would have removed whichever of the two a List.remove(Object) scan
-		// happened to find first, which could have been either one.
-		assertEquals("shipped", api.getOrder("42").get());
+		assertEquals("first:shipped", api.getOrder("42").get());
 	}
 
 	/**
@@ -182,14 +185,19 @@ class CallAdapterIntegrationTest {
 	 * {@code equals()}/{@code hashCode()} by {@code tag} alone, so two
 	 * distinct instances constructed with the same tag compare equal despite
 	 * being different objects - proving factory registration/removal is
-	 * identity-based, not {@code equals()}-based.
+	 * identity-based, not {@code equals()}-based. {@code marker} plays no
+	 * part in equality - it's stamped onto the decoded value purely so a
+	 * test can observe which of two equal-but-distinct instances actually
+	 * answered.
 	 */
 	private static final class EqualByTagCallAdapterFactory implements CallAdapterFactory {
 
 		private final String tag;
+		private final String marker;
 
-		EqualByTagCallAdapterFactory(String tag) {
+		EqualByTagCallAdapterFactory(String tag, String marker) {
 			this.tag = tag;
+			this.marker = marker;
 		}
 
 		@Override
@@ -205,7 +213,7 @@ class CallAdapterIntegrationTest {
 
 				@Override
 				public TestBox<Object> adapt(CompletableFuture<Object> delegate) {
-					return TestBox.of(delegate.join());
+					return TestBox.of(marker + ":" + delegate.join());
 				}
 			});
 		}
