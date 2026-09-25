@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -102,6 +103,77 @@ class PaginatedCallAdapterIntegrationTest {
 
 		assertThrows(RestInPeaceException.class,
 				() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
+	}
+
+	@Test
+	void addPaginatedCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() {
+		RIP.addPaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
+		RIP.addPaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
+
+		// A single remove() fully unregisters it - if the second add() had
+		// appended a duplicate entry, one remove() would leave the other
+		// behind and dispatch would still succeed instead of falling back.
+		RIP.removePaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
+
+		assertThrows(RestInPeaceException.class,
+				() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
+	}
+
+	@Test
+	void removePaginatedCallAdapterFactory_removesOnlyTheInstanceByReferenceNotByEquals() {
+		EqualByTagPaginatedCallAdapterFactory first = new EqualByTagPaginatedCallAdapterFactory("shared-tag");
+		EqualByTagPaginatedCallAdapterFactory second = new EqualByTagPaginatedCallAdapterFactory("shared-tag");
+		assertEquals(first, second); // distinct instances, but .equals() by tag
+		RIP.addPaginatedCallAdapterFactory(first);
+		RIP.addPaginatedCallAdapterFactory(second);
+
+		RIP.removePaginatedCallAdapterFactory(first);
+
+		// second is still registered by reference - equals()-based removal
+		// would have removed whichever of the two a List.remove(Object) scan
+		// happened to find first, which could have been either one.
+		assertDoesNotThrow(() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
+	}
+
+	/**
+	 * A {@link PaginatedCallAdapterFactory} that claims every {@link TestBox}-returning
+	 * method like {@link TestPaginatedCallAdapterFactory}, but overrides
+	 * {@code equals()}/{@code hashCode()} by {@code tag} alone, so two
+	 * distinct instances constructed with the same tag compare equal despite
+	 * being different objects - proving factory registration/removal is
+	 * identity-based, not {@code equals()}-based.
+	 */
+	private static final class EqualByTagPaginatedCallAdapterFactory implements PaginatedCallAdapterFactory {
+
+		private final String tag;
+
+		EqualByTagPaginatedCallAdapterFactory(String tag) {
+			this.tag = tag;
+		}
+
+		@Override
+		public Optional<PaginatedCallAdapter<?>> get(Method method) {
+			if (method.getReturnType() != TestBox.class) {
+				return Optional.empty();
+			}
+			PaginatedCallAdapter<TestBox<String>> adapter = (Supplier<Page<Object>> firstPageSupplier) -> {
+				firstPageSupplier.get();
+				return TestBox.of(tag);
+			};
+			return Optional.of(adapter);
+		}
+
+		@Override
+		public boolean equals(Object other) {
+			return other instanceof EqualByTagPaginatedCallAdapterFactory
+					&& tag.equals(((EqualByTagPaginatedCallAdapterFactory) other).tag);
+		}
+
+		@Override
+		public int hashCode() {
+			return tag.hashCode();
+		}
+
 	}
 
 	/**

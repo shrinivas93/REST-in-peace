@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,8 @@ import reactor.core.publisher.Mono;
 
 import com.shri.restinpeace.CallAdapter;
 import com.shri.restinpeace.CallAdapterFactory;
+import com.shri.restinpeace.Page;
+import com.shri.restinpeace.PaginatedCallAdapterFactory;
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.RipResponse;
 import com.shri.restinpeace.annotation.marker.BaseUrl;
@@ -205,6 +208,13 @@ class ReflectiveRestClientValidatorTest {
 		@GET("http://example.com")
 		@Paginated(itemsField = "items", pointerField = "next")
 		Mono<String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface PaginatedExcludedTypeClaimedByFactory {
+		@GET("http://example.com")
+		@Paginated(itemsField = "items", pointerField = "next")
+		CompletableFuture<String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
 	}
 
 	@RestClient
@@ -644,6 +654,7 @@ class ReflectiveRestClientValidatorTest {
 	@AfterEach
 	void clearCallAdapterFactories() {
 		RIP.clearCallAdapterFactories();
+		RIP.clearPaginatedCallAdapterFactories();
 	}
 
 	@Test
@@ -771,6 +782,25 @@ class ReflectiveRestClientValidatorTest {
 				exception.getValidationResult().getAllErrors().contains("no registered CallAdapterFactory claims"));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("does not return Page<T>, Stream<T>, or Iterator<T>"));
+	}
+
+	@Test
+	void validate_paginatedExcludedTypeClaimedByFactory_reportsExclusionNotUnclaimed() {
+		// A hypothetical adapter claiming CompletableFuture<T> despite the
+		// void/RipResponse/CompletableFuture exclusion - the resulting error
+		// must say the return type itself is excluded, not (incorrectly) that
+		// no factory claims it, since one genuinely does here.
+		PaginatedCallAdapterFactory factory = method -> method.getReturnType() == CompletableFuture.class
+				? Optional.of((Supplier<Page<Object>> firstPageSupplier) -> CompletableFuture.completedFuture(null))
+				: Optional.empty();
+		RIP.addPaginatedCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(PaginatedExcludedTypeClaimedByFactory.class));
+		assertFalse(exception.getValidationResult().getAllErrors()
+				.contains("no registered PaginatedCallAdapterFactory claims"));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("is excluded from adapter-based pagination"));
 	}
 
 	@Test
