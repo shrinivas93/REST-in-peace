@@ -511,7 +511,13 @@ public class ReflectiveRestClientValidator {
 		// the declarative path only.
 		Optional<PaginatedCallAdapter<?>> paginatedCallAdapter = paginated != null
 				? RequestExecutor.resolvePaginatedCallAdapter(method) : Optional.empty();
-		boolean returnsAdaptedType = paginatedCallAdapter.isPresent();
+		// void/RipResponse<T>/CompletableFuture<T> are excluded here too, mirroring
+		// CompileTimeRestClientValidator's own unconditional hard error for them -
+		// each is a single-value wrapper/future concept fundamentally incompatible
+		// with "an unknown number of underlying calls", so no adapter could ever
+		// legitimately claim one either.
+		boolean returnsAdaptedType = paginatedCallAdapter.isPresent() && returnType != void.class
+				&& returnType != RipResponse.class && returnType != CompletableFuture.class;
 		boolean returnsSupportedType = returnsPage || returnsStream || returnsIterator || returnsAdaptedType;
 
 		if (paginated != null && !strategyParams.isEmpty()) {

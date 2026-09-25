@@ -76,7 +76,7 @@ class FluxListCallAdapterIntegrationTest {
 
 	@Test
 	void disposing_stopsDeliveryOfAnySignalThatArrivesAfter() throws InterruptedException {
-		server.on(HTTPMethod.GET, "/orders", MockResponse.json("[{\"id\":\"1\"}]").delay(300));
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("[{\"id\":\"1\"}]").delay(300));
 		AtomicBoolean signalReceivedAfterDispose = new AtomicBoolean(false);
 
 		Disposable disposable = api.listOrders().doOnNext(order -> signalReceivedAfterDispose.set(true))

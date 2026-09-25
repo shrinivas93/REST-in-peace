@@ -254,7 +254,7 @@ public class RequestExecutor {
 	 * cache/circuit-breaker/bulkhead. See
 	 * {@code docs/design/reactor-call-adapter.md} §5.2.
 	 */
-	private static final List<CallAdapterFactory> CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
+	private static final CopyOnWriteArrayList<CallAdapterFactory> CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
 
 	/**
 	 * Registers a global {@link CallAdapterFactory}. See
@@ -263,7 +263,7 @@ public class RequestExecutor {
 	 * @param factory the factory to register
 	 */
 	public static void addCallAdapterFactory(CallAdapterFactory factory) {
-		CALL_ADAPTER_FACTORIES.add(factory);
+		CALL_ADAPTER_FACTORIES.addIfAbsent(factory);
 	}
 
 	/**
@@ -312,7 +312,7 @@ public class RequestExecutor {
 	 * process-wide registration scope. See
 	 * {@code docs/design/reactor-call-adapter.md} §7.2.
 	 */
-	private static final List<PaginatedCallAdapterFactory> PAGINATED_CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
+	private static final CopyOnWriteArrayList<PaginatedCallAdapterFactory> PAGINATED_CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
 
 	/**
 	 * Registers a global {@link PaginatedCallAdapterFactory}. See
@@ -321,7 +321,7 @@ public class RequestExecutor {
 	 * @param factory the factory to register
 	 */
 	public static void addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
-		PAGINATED_CALL_ADAPTER_FACTORIES.add(factory);
+		PAGINATED_CALL_ADAPTER_FACTORIES.addIfAbsent(factory);
 	}
 
 	/**

@@ -832,9 +832,11 @@ up.
       itself a real deviation from the design doc's original "no new
       coordinator logic" assumption. Its existence also exposed two latent
       compile-time gaps, both fixed as part of this chunk: a `@Paginated`
-      method returning something other than `Page`/`Stream`/`Iterator` no
-      longer unconditionally fails compilation (a registered adapter might
-      legitimately claim it, invisibly to the compile-time processor); and
+      method returning an adapter-claimable declared type other than
+      `Page`/`Stream`/`Iterator` no longer unconditionally fails compilation
+      (`void`, `RipResponse<T>`, and `CompletableFuture<T>` remain hard errors;
+      a registered adapter might legitimately claim it, invisibly to the
+      compile-time processor); and
       `RestClientProcessor` now explicitly disqualifies every
       `@Paginated`/`PaginationStrategy<T>` method from compile-time codegen
       regardless of return type, instead of relying on `Page`/`Stream`/

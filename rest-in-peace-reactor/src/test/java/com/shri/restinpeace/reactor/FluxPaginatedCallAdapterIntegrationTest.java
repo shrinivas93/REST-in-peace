@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -123,7 +124,7 @@ class FluxPaginatedCallAdapterIntegrationTest {
 			}
 		}).subscribe();
 
-		Thread.sleep(100); // item "1" already delivered; page 2's fetch is now genuinely in flight (300ms delay)
+		awaitRequestCount(HTTPMethod.GET, "/orders", 2); // page 2's fetch has genuinely reached the server
 		disposable.dispose();
 
 		Thread.sleep(400); // past page 2's delay - if disposal hadn't discarded it, item "2" would have arrived by now
@@ -139,11 +140,32 @@ class FluxPaginatedCallAdapterIntegrationTest {
 
 		Disposable disposable = api.fluxOrders(null).doOnError(error -> errorReceived.set(true)).subscribe();
 
-		Thread.sleep(100); // item "1" already delivered; page 2's (failing) fetch is now genuinely in flight
+		awaitRequestCount(HTTPMethod.GET, "/orders", 2); // page 2's (failing) fetch has genuinely reached the server
 		disposable.dispose();
 
 		Thread.sleep(400); // past page 2's delay - if disposal hadn't suppressed it, the error would have arrived by now
 		assertFalse(errorReceived.get());
+		assertEquals(2, server.countOf(HTTPMethod.GET, "/orders")); // no request retried/repeated after disposal
+	}
+
+	/**
+	 * Polls {@link MockRestServer#countOf} instead of a fixed sleep, so a test
+	 * proving "disposal during an in-flight fetch" only starts timing its
+	 * disposal once that fetch has genuinely reached the server - a fixed
+	 * sleep here would let a slow CI runner's scheduling delay make the test
+	 * pass vacuously (disposing before the fetch ever started) instead of
+	 * actually exercising the in-flight race it claims to.
+	 */
+	private void awaitRequestCount(HTTPMethod method, String pathTemplate, int expectedCount)
+			throws InterruptedException {
+		long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+		while (server.countOf(method, pathTemplate) < expectedCount) {
+			if (System.nanoTime() > deadline) {
+				fail("Timed out waiting for " + expectedCount + " requests to " + pathTemplate + "; observed "
+						+ server.countOf(method, pathTemplate));
+			}
+			Thread.sleep(10);
+		}
 	}
 
 	@Test

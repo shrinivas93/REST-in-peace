@@ -1313,8 +1313,9 @@ interface OrderApi {
   blocking HTTP call itself aborts mid-request the way `Mono<T>`'s
   `CompletableFuture#cancel(true)` does.
 
-Both flavors decline a raw `Flux` (no type argument), falling through to
-the same by-name validation failure an unclaimed `Flux<T>` already gets.
+Both flavors decline a raw `Flux` (no type argument). The plain flavor then
+falls through to the by-name validation error; a raw `@Paginated Flux` is
+rejected by pagination validation as an unsupported paginated return type.
 
 ## Retries
 

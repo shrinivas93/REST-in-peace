@@ -20,6 +20,13 @@ import com.shri.restinpeace.annotation.request.QueryParam;
 @RestClient
 public interface PaginatedCallAdapterTestApi {
 
+	// Declared as TestBox<Order>, not TestBox<List<Order>>, deliberately: the
+	// pagination coordinator decodes each "orders" element using this method's
+	// sole declared type argument as the item type, regardless of what
+	// TestPaginatedCallAdapterFactory's adapter actually hands back at
+	// runtime (a TestBox<List<Object>> boxing the whole first page) - so the
+	// declared type here must stay Order for decoding to work, even though
+	// callers then need an unchecked cast to use the real return shape.
 	@GET("/orders")
 	@Paginated(itemsField = "orders", pointerField = "next_cursor")
 	TestBox<PaginationTestApi.Order> fluxOrders(@QueryParam("cursor") @PaginationCursor String cursor);
