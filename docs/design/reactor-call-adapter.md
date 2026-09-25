@@ -151,8 +151,11 @@ reverting.
 **Chunk 6 (§10's `samples/reactor-consumer` plus documentation) is also
 real code now - the last chunk of this rollout.** `samples/reactor-consumer`
 is a standalone Maven project (mirroring `samples/spring-boot-consumer`'s
-own precedent) depending on the published `rest-in-peace`/
-`rest-in-peace-reactor` artifacts like a real downstream consumer, with an
+own precedent) depending on the `rest-in-peace`/`rest-in-peace-reactor`
+artifacts like a real downstream consumer (locally-installed for now -
+`core` is on Maven Central, but this sample pins the current
+`-SNAPSHOT` version and `rest-in-peace-reactor` isn't published yet), with
+an
 `OrderApi` interface exercising all three shapes (`Mono<T>`, plain
 `Flux<T>`, `@Paginated Flux<T>`) against a throwaway local HTTP server -
 verified by actually building and running it against locally-installed
@@ -988,11 +991,11 @@ rest-in-peace-reactor/
   keep this design's first landing minimal and reviewable.
 - **A `samples/reactor-consumer` sample module** (mirroring
   `samples/spring-boot-consumer`'s own precedent - a standalone Maven
-  project depending on the published artifacts like a real downstream
-  consumer, not a reactor-internal module) is planned as part of §14's
-  rollout, not before it - `samples/spring-boot-consumer` itself only
-  landed once the starter's own chunks were feature-complete (§8 of
-  `spring-boot-starter.md`), and this follows the same order.
+  project depending on the artifacts like a real downstream consumer, not
+  a reactor-internal module) landed as chunk 6 of §14's rollout, the same
+  order `samples/spring-boot-consumer` itself followed (only landing once
+  the starter's own chunks were feature-complete - §8 of
+  `spring-boot-starter.md`).
 
 ## 11. Exhaustive usage examples
 

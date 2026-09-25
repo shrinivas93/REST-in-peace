@@ -3,12 +3,18 @@ package com.example.consumer;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.shri.restinpeace.RIP;
 import com.shri.restinpeace.reactor.RestInPeaceReactor;
 
 import com.sun.net.httpserver.HttpServer;
+import org.reactivestreams.Subscription;
+import reactor.core.publisher.BaseSubscriber;
 
 import com.example.consumer.OrderApi.Order;
 
@@ -30,8 +36,10 @@ import com.example.consumer.OrderApi.Order;
 public final class Main {
 
 	public static void main(String[] args) throws Exception {
+		AtomicInteger pagedFetchCount = new AtomicInteger();
 		HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
 		server.createContext("/orders/paged", exchange -> {
+			pagedFetchCount.incrementAndGet();
 			String query = exchange.getRequestURI().getRawQuery();
 			// First page has no cursor query param at all; the second page's
 			// request carries the cursor the first page's own "next" pointed at.
@@ -68,18 +76,50 @@ public final class Main {
 			// item by item.
 			List<Order> orders = api.listOrders().collectList().block();
 			requireEquals(2, orders.size(), "Flux<Order> listOrders() item count");
+			requireEquals("1", orders.get(0).id, "Flux<Order> listOrders() item 0");
+			requireEquals("2", orders.get(1).id, "Flux<Order> listOrders() item 1");
 			System.out.println("listOrders() emitted " + orders.size() + " items");
 
 			// 3. Flux<T> flavor 2 (§7.2): a @Paginated method auto-flattened across
-			// pages. The real backpressure-driven fetch-on-demand behavior (next page
-			// requested only once buffered demand is exceeded) isn't exercised here,
-			// since collectList() issues an unbounded initial request that drains
-			// every page up front - this just confirms both pages' items arrive, in
-			// page order.
-			List<Order> allOrders = api.streamAllOrders(null).collectList().block();
+			// pages, fetching the next page only once demand exceeds what's already
+			// buffered. Subscribing with bounded, one-at-a-time demand (instead of
+			// collectList()'s unbounded request) actually exercises that: page 2
+			// must not be fetched until the first item is consumed and more demand
+			// is signaled.
+			List<Order> allOrders = new ArrayList<>();
+			CompletableFuture<Order> firstItemReceived = new CompletableFuture<>();
+			CompletableFuture<Void> streamCompleted = new CompletableFuture<>();
+			Subscription[] subscriptionHolder = new Subscription[1];
+			api.streamAllOrders(null).subscribe(new BaseSubscriber<Order>() {
+				@Override
+				protected void hookOnSubscribe(Subscription subscription) {
+					subscriptionHolder[0] = subscription;
+					subscription.request(1);
+				}
+
+				@Override
+				protected void hookOnNext(Order order) {
+					allOrders.add(order);
+					if (allOrders.size() == 1) {
+						firstItemReceived.complete(order);
+					}
+				}
+
+				@Override
+				protected void hookOnComplete() {
+					streamCompleted.complete(null);
+				}
+			});
+			firstItemReceived.get(10, TimeUnit.SECONDS);
+			requireEquals(1, pagedFetchCount.get(),
+					"paged fetch count after the first streamAllOrders(...) item (page 2 must not be fetched yet)");
+			subscriptionHolder[0].request(1);
+			streamCompleted.get(10, TimeUnit.SECONDS);
 			requireEquals(2, allOrders.size(), "Flux<Order> streamAllOrders(...) item count across both pages");
 			requireEquals("p1", allOrders.get(0).id, "Flux<Order> streamAllOrders(...) item 0 (page 1)");
 			requireEquals("p2", allOrders.get(1).id, "Flux<Order> streamAllOrders(...) item 1 (page 2)");
+			requireEquals(2, pagedFetchCount.get(),
+					"paged fetch count after the second streamAllOrders(...) item (page 2 fetched on demand)");
 			System.out.println("streamAllOrders(...) emitted " + allOrders.size() + " items across 2 pages: "
 					+ allOrders.get(0).id + ", " + allOrders.get(1).id);
 

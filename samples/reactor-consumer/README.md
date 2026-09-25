@@ -31,10 +31,11 @@ just works.
 
 ## Running it
 
-Neither `rest-in-peace` nor `rest-in-peace-reactor` is published anywhere
-`mvn` looks by default yet (see the "Maven Central publishing" item in
-[`ROADMAP.md`](../../ROADMAP.md)), so you need locally-installed builds of
-both first. core and `rest-in-peace-reactor` share a parent POM
+`core` is published on Maven Central (see the "Maven Central publishing"
+item in [`ROADMAP.md`](../../ROADMAP.md)), but this sample pins the
+repository's current `-SNAPSHOT` version, and `rest-in-peace-reactor` isn't
+published yet at all - so you need locally-installed builds of both first.
+core and `rest-in-peace-reactor` share a parent POM
 ([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
 non-recursive: just that one POM), since both of their published POMs
 reference it:
@@ -46,7 +47,7 @@ mvn install -DskipTests -pl core,rest-in-peace-reactor
 
 # Then, from this directory:
 cd samples/reactor-consumer
-VERSION=$(grep -A1 -F '<artifactId>rest-in-peace-parent</artifactId>' ../../pom.xml | grep -oP '(?<=<version>)[^<]+(?=</version>)')
+VERSION=$(awk '/<artifactId>rest-in-peace-parent<\/artifactId>/{getline; sub(/.*<version>/, ""); sub(/<\/version>.*/, ""); print}' ../../pom.xml)
 mvn compile dependency:build-classpath -Dmdep.outputFile=cp.txt \
   -Drest-in-peace.version="$VERSION" \
   -Drest-in-peace-reactor.version="$VERSION"

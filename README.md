@@ -1224,9 +1224,11 @@ below.
 ## Reactive (Project Reactor)
 
 The `rest-in-peace-reactor` module ships real `CallAdapterFactory`
-implementations for Project Reactor's `Mono<T>` and `Flux<T>` — add the
-dependency, register once at startup, and any `@RestClient` method can
-return either directly, with no other configuration:
+implementations for Project Reactor's `Mono<T>` and plain `Flux<T>`, plus a
+`PaginatedCallAdapterFactory` implementation for `@Paginated Flux<T>` (the
+pagination-aware counterpart SPI — see [Pagination](#pagination) above) —
+add the dependency, register once at startup, and any `@RestClient` method
+can return any of the three directly, with no other configuration:
 
 ```xml
 <dependency>
@@ -2527,14 +2529,15 @@ cd REST-in-peace
 mvn clean test
 ```
 
-`mvn` at the repo root cascades into every module — `core/` and
-`spring-boot-starter/` — so the command above builds and tests both. To
-work on just one, scope with `-pl` (`-am` also builds any reactor modules
-it depends on):
+`mvn` at the repo root cascades into every module — `core/`,
+`spring-boot-starter/`, and `rest-in-peace-reactor/` — so the command above
+builds and tests all three. To work on just one, scope with `-pl` (`-am`
+also builds any reactor modules it depends on):
 
 ```bash
-mvn test -pl core                    # core only
-mvn test -pl spring-boot-starter -am # the starter, and core since it depends on it
+mvn test -pl core                     # core only
+mvn test -pl spring-boot-starter -am  # the starter, and core since it depends on it
+mvn test -pl rest-in-peace-reactor -am # the reactor module, and core since it depends on it
 ```
 
 If your local JDK is newer than 8 (likely), also run this before pushing —

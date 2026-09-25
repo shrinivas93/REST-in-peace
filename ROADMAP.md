@@ -869,9 +869,9 @@ up.
       **Chunk 6 (`samples/reactor-consumer` plus documentation) has also
       landed - closing out this rollout entirely**: a standalone
       `samples/reactor-consumer` project (mirroring
-      `samples/spring-boot-consumer`'s own precedent) depends on the
-      published `rest-in-peace`/`rest-in-peace-reactor` artifacts like a
-      real downstream consumer, exercising `Mono<T>` and both `Flux<T>`
+      `samples/spring-boot-consumer`'s own precedent) depends on
+      locally-installed `rest-in-peace`/`rest-in-peace-reactor` artifacts
+      like a real downstream consumer, exercising `Mono<T>` and both `Flux<T>`
       flavors against a throwaway local HTTP server - built and actually
       run against locally-installed artifacts as part of landing this
       chunk, not just read as plausible. The core README gained its own
