@@ -107,6 +107,11 @@ public final class Main {
 
 				@Override
 				protected void hookOnComplete() {
+					// No-op if firstItemReceived is already completed (the normal case) -
+					// this only matters for an empty stream, where hookOnNext never ran
+					// and firstItemReceived.get(...) below would otherwise hang for its
+					// full timeout instead of failing fast on a clear terminal signal.
+					firstItemReceived.complete(null);
 					streamCompleted.complete(null);
 				}
 
