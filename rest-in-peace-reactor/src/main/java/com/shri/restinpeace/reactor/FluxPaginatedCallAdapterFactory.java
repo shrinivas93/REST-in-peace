@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import reactor.core.Disposable;
@@ -106,6 +107,7 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			final AtomicLong requested = new AtomicLong();
 			private final AtomicBoolean fetchingNextPage = new AtomicBoolean();
 			private final AtomicInteger wip = new AtomicInteger();
+			private final AtomicReference<Page<Object>> pendingNextPage = new AtomicReference<>();
 			private volatile boolean cancelled;
 			private Disposable inFlightNextPageFetch;
 			private Page<Object> currentPage;
@@ -190,6 +192,20 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 				if (cancelled) {
 					return;
 				}
+				// Consuming a fetched page here, under the wip gate, rather than in
+				// fetchNextPageAsync()'s callback the moment it lands, is what makes
+				// the swap safe: this is the only place currentPage/currentPageItems
+				// are ever written after construction, and wip guarantees at most one
+				// drainOnce() runs at a time, so there's no window where a
+				// concurrently-running drainOnce() can see fetchingNextPage flip back
+				// to false while still holding a currentPageItems it read before this
+				// swap.
+				Page<Object> pending = pendingNextPage.getAndSet(null);
+				if (pending != null) {
+					currentPage = pending;
+					currentPageItems = pending.items().iterator();
+					fetchingNextPage.set(false);
+				}
 				while (requested.get() > 0 && currentPageItems.hasNext()) {
 					sink.next(currentPageItems.next());
 					requested.decrementAndGet();
@@ -219,16 +235,20 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 						if (cancelled) {
 							return;
 						}
-						// currentPage/currentPageItems are safely published to
-						// whichever thread's drainOnce() runs next by wip's own
-						// atomic read-modify-write ordering in drain() below - the
-						// same "safe publication via a shared atomic" guarantee
-						// fetchingNextPage's volatile write alone can't provide on
-						// its own, since drainOnce() reads currentPageItems before
-						// it ever touches fetchingNextPage.
-						currentPage = nextPage;
-						currentPageItems = nextPage.items().iterator();
-						fetchingNextPage.set(false);
+						// Stashed for drainOnce() itself to consume, rather than
+						// swapped into currentPage/currentPageItems/fetchingNextPage
+						// right here: this callback runs on a boundedElastic thread
+						// with no wip protection of its own, so writing those fields
+						// directly could race a concurrently-running drainOnce() that
+						// already read currentPageItems before this write lands - it
+						// could then observe fetchingNextPage go false (a plain
+						// AtomicBoolean write, visible immediately to any reader
+						// regardless of wip) while still iterating the stale page.
+						// Routing the swap through pendingNextPage and letting the
+						// next drainOnce() apply it under the wip gate keeps the
+						// three fields changing together, atomically with respect to
+						// every other drainOnce() execution.
+						pendingNextPage.set(nextPage);
 						drain();
 					} catch (Throwable error) {
 						if (!cancelled) {

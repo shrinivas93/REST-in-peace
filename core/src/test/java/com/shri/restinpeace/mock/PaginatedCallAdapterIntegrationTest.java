@@ -142,6 +142,28 @@ class PaginatedCallAdapterIntegrationTest {
 		assertEquals("first", result.get());
 	}
 
+	@Test
+	void addPaginatedCallAdapterFactory_registeringTwoEqualButDistinctInstancesKeepsBoth() {
+		// The add-side counterpart to the remove-side test above: an
+		// equals()-based addIfAbsent() would have silently dropped "second"
+		// here (it .equals() the already-registered "first"), so removing
+		// "first" afterward would leave nothing registered and this call
+		// would fail/fall back instead of being answered by "second".
+		EqualByTagPaginatedCallAdapterFactory first = new EqualByTagPaginatedCallAdapterFactory("shared-tag", "first");
+		EqualByTagPaginatedCallAdapterFactory second = new EqualByTagPaginatedCallAdapterFactory("shared-tag", "second");
+		assertEquals(first, second); // distinct instances, but .equals() by tag
+		RIP.addPaginatedCallAdapterFactory(first);
+		RIP.addPaginatedCallAdapterFactory(second);
+		PaginatedCallAdapterTestApi api = RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl());
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
+
+		RIP.removePaginatedCallAdapterFactory(first);
+
+		@SuppressWarnings("unchecked")
+		TestBox<String> result = (TestBox<String>) (TestBox<?>) api.fluxOrders(null);
+		assertEquals("second", result.get());
+	}
+
 	/**
 	 * A {@link PaginatedCallAdapterFactory} that claims every {@link TestBox}-returning
 	 * method like {@link TestPaginatedCallAdapterFactory}, but overrides

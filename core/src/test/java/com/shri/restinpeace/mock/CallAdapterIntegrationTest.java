@@ -179,6 +179,26 @@ class CallAdapterIntegrationTest {
 		assertEquals("first:shipped", api.getOrder("42").get());
 	}
 
+	@Test
+	void addCallAdapterFactory_registeringTwoEqualButDistinctInstancesKeepsBoth() {
+		// The add-side counterpart to the remove-side test above: an
+		// equals()-based addIfAbsent() would have silently dropped "second"
+		// here (it .equals() the already-registered "first"), so removing
+		// "first" afterward would leave nothing registered and this call
+		// would fail/fall back instead of being answered by "second".
+		EqualByTagCallAdapterFactory first = new EqualByTagCallAdapterFactory("shared-tag", "first");
+		EqualByTagCallAdapterFactory second = new EqualByTagCallAdapterFactory("shared-tag", "second");
+		assertEquals(first, second); // distinct instances, but .equals() by tag
+		RIP.addCallAdapterFactory(first);
+		RIP.addCallAdapterFactory(second);
+		CallAdapterTestApi api = RIP.getClient(CallAdapterTestApi.class, server.baseUrl());
+		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("shipped"));
+
+		RIP.removeCallAdapterFactory(first);
+
+		assertEquals("second:shipped", api.getOrder("42").get());
+	}
+
 	/**
 	 * A {@link CallAdapterFactory} that claims every {@link TestBox}-returning
 	 * method like {@link TestCallAdapterFactory}, but overrides

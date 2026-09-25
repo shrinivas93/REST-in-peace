@@ -522,8 +522,8 @@ final class CompileTimeRestClientValidator {
 					&& !"java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))) {
 				reporter.error(String.format(
 						"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
-								+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
-								+ "implemented yet.",
+								+ "not return Page<T>, Stream<T>, or Iterator<T>; void, RipResponse<T>, and "
+								+ "CompletableFuture<T> are not supported for pagination.",
 						qualifiedName(method)), method);
 				return;
 			}

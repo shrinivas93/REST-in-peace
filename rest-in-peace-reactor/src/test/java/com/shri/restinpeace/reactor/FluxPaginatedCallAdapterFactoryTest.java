@@ -4,11 +4,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.LongConsumer;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
+
+import reactor.core.Disposable;
+import reactor.core.publisher.FluxSink;
+import reactor.util.context.Context;
 
 import com.shri.restinpeace.Page;
 import com.shri.restinpeace.RipResponse;
@@ -80,6 +87,114 @@ class FluxPaginatedCallAdapterFactoryTest {
 		pageDrain.onRequest(0);
 		pageDrain.onRequest(-1);
 		assertEquals(0, pageDrain.requested.get());
+	}
+
+	/**
+	 * Exercises {@code drain()}/{@code drainOnce()}/{@code wip} for real,
+	 * unlike every other test in this class: a {@link RecordingSink} whose
+	 * {@code next()} reentrantly calls {@code onRequest(1)} on its very first
+	 * invocation - reproducing the exact scenario {@code drain()}'s own
+	 * javadoc describes ({@link FluxSink#next} synchronously driving a
+	 * downstream {@code request(n)} before returning) - the same-thread
+	 * reentrancy a plain {@code synchronized drain()} would corrupt {@code
+	 * requested} under, and the wip-guarded loop must instead just register
+	 * as a missed run to pick up afterwards. Three items are requested one at
+	 * a time (the second {@code onRequest(1)} call arriving reentrantly, the
+	 * third from the test itself once the first call returns) - if the
+	 * reentrant demand were lost, only two items would ever be emitted and
+	 * {@code sink.complete()} would never be called; if it corrupted {@code
+	 * requested} into going negative or double-counting, either an item would
+	 * be emitted twice or {@code addCapped}'s saturation math would be thrown
+	 * off - none of which this test lets happen unnoticed.
+	 */
+	@Test
+	void drain_reentrantOnRequestFromSinkNextDoesNotCorruptDemandOrDoubleEmit() {
+		RecordingSink sink = new RecordingSink();
+		Page<Object> page = fakePage(Arrays.asList("a", "b", "c"), false, null);
+		FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain pageDrain = //
+				new FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain(sink, page);
+		sink.reentrantRequestTarget = pageDrain;
+
+		pageDrain.onRequest(1); // triggers the reentrant onRequest(1) on "a", draining "a" and "b"
+		assertEquals(Arrays.asList("a", "b"), sink.emitted);
+		assertFalse(sink.completed);
+		assertEquals(0, pageDrain.requested.get());
+
+		pageDrain.onRequest(1); // drains the remaining "c" and completes
+		assertEquals(Arrays.asList("a", "b", "c"), sink.emitted);
+		assertEquals(1, sink.completeCalls);
+		assertEquals(0, pageDrain.requested.get());
+	}
+
+	/**
+	 * A minimal {@link FluxSink} double: records emitted items and completion,
+	 * and - once, on the first {@link #next} call only, via {@code
+	 * reentrantRequestTarget} - reentrantly calls {@code onRequest(1)} back
+	 * into the very {@link com.shri.restinpeace.reactor.FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain}
+	 * that is currently emitting through it, synchronously, before that
+	 * {@code next()} call returns. Every other {@link FluxSink} method is
+	 * unused by {@code PageDrain} in this test (neither {@link #start()} nor
+	 * the async next-page path is exercised) and throws if ever called.
+	 */
+	private static final class RecordingSink implements FluxSink<Object> {
+
+		private final List<Object> emitted = new ArrayList<>();
+		private boolean completed;
+		private int completeCalls;
+		private boolean firstNext = true;
+		private FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain reentrantRequestTarget;
+
+		@Override
+		public FluxSink<Object> next(Object o) {
+			emitted.add(o);
+			if (firstNext) {
+				firstNext = false;
+				reentrantRequestTarget.onRequest(1);
+			}
+			return this;
+		}
+
+		@Override
+		public void complete() {
+			completed = true;
+			completeCalls++;
+		}
+
+		@Override
+		public void error(Throwable e) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public Context currentContext() {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public long requestedFromDownstream() {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public boolean isCancelled() {
+			return false;
+		}
+
+		@Override
+		public FluxSink<Object> onRequest(LongConsumer consumer) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public FluxSink<Object> onCancel(Disposable disposable) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public FluxSink<Object> onDispose(Disposable disposable) {
+			throw new UnsupportedOperationException();
+		}
+
 	}
 
 	private static FluxPaginatedCallAdapterFactory.FluxPaginatedCallAdapter.PageDrain newPageDrain() {
