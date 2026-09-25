@@ -178,9 +178,18 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 						if (cancelled) {
 							return;
 						}
-						currentPage = nextPage;
-						currentPageItems = nextPage.items().iterator();
-						fetchingNextPage.set(false);
+						// Published under drain()'s own monitor, not just the
+						// fetchingNextPage flag's volatile write - otherwise a
+						// concurrent drain() call on another thread (triggered by
+						// the subscriber's own request(n)) has no guaranteed
+						// happens-before edge to these writes, and could read a
+						// stale currentPage/currentPageItems despite observing
+						// fetchingNextPage already flipped back to false.
+						synchronized (this) {
+							currentPage = nextPage;
+							currentPageItems = nextPage.items().iterator();
+							fetchingNextPage.set(false);
+						}
 						drain();
 					} catch (Throwable error) {
 						if (!cancelled) {
