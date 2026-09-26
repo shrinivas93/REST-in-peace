@@ -891,8 +891,10 @@ up.
       above. The `CallAdapter`/`CallAdapterFactory` SPI (§5 of that design
       doc) was deliberately built library-agnostic, so a from-scratch
       RxJava `Single`/`Observable`/`Maybe`/`Completable`/`Flowable` adapter
-      needs no changes to `core`, only a new implementing module mirroring
-      `rest-in-peace-reactor`'s own shape. Parked rather than started:
+      is expected to need no changes to `core`, only a new implementing
+      module mirroring `rest-in-peace-reactor`'s own shape - unconfirmed
+      until one is actually built (§13 of that design doc still lists it
+      as an open question). Parked rather than started:
       Project Reactor is the dominant reactive choice in the
       Spring/WebFlux ecosystem this library already targets, and building
       a second reactive integration ahead of a real consumer risks
