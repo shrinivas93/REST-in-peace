@@ -898,7 +898,7 @@ up.
       a second reactive integration ahead of a real consumer risks
       guessing wrong about the shape it actually needs - the same
       "don't build ahead of a real user" instinct that governed Micronaut
-      above. Revisit if a concrete RxJava consumer actually asks for it.
+      below. Revisit if a concrete RxJava consumer actually asks for it.
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/
