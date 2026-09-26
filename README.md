@@ -1230,13 +1230,19 @@ implementations for Project Reactor's `Mono<T>` and plain `Flux<T>`, plus a
 `PaginatedCallAdapterFactory` implementation for `@Paginated Flux<T>` (the
 pagination-aware counterpart SPI — see [Pagination](#pagination) above) —
 add the dependency, register once at startup, and any `@RestClient` method
-can return any of the three directly, with no other configuration:
+can return any of the three directly, with no other configuration.
+`rest-in-peace-reactor` isn't published yet (see the
+[Installation](#installation) section above), so build it locally first -
+`mvn install -N && mvn install -DskipTests -pl core,rest-in-peace-reactor`
+from the repository root - then depend on whatever version that installs
+(see [`samples/reactor-consumer`](samples/reactor-consumer) for a complete,
+runnable example resolving it exactly this way):
 
 ```xml
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace-reactor</artifactId>
-    <version>1.0.0.51</version>
+    <version><!-- the version mvn install above just installed --></version>
 </dependency>
 ```
 

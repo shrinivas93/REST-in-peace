@@ -39,8 +39,9 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
       # spring-boot-starter targets Java 17; one JDK 17 setup generates
-      # Javadoc for both modules since javac reads core's own
-      # -source/-target 8 code fine on a newer JDK too.
+      # Javadoc for all three modules since javac reads core's/
+      # rest-in-peace-reactor's own -source/-target 8 code fine on a newer
+      # JDK too.
       - name: Set up JDK 17
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
@@ -49,19 +50,19 @@ jobs:
           cache: maven
       # Directly invoking a plugin goal (rather than a lifecycle phase)
       # doesn't build reactor dependencies first, so spring-boot-starter
-      # can't otherwise resolve core - install the reactor once so both
-      # modules' javadoc:javadoc runs below have what they need.
+      # can't otherwise resolve core - install the reactor once so every
+      # module's javadoc:javadoc run below has what it needs.
       - name: Install the reactor
         run: mvn -B install -DskipTests
       # The repo root pom.xml is just a reactor aggregator with no javadoc
-      # plugin config of its own - core and spring-boot-starter each
-      # declare it themselves and get built (and their docs published)
-      # separately.
+      # plugin config of its own - core, spring-boot-starter, and
+      # rest-in-peace-reactor each declare it themselves and get built
+      # (and their docs published) separately.
       - name: Generate Javadoc
-        run: mvn -B javadoc:javadoc -pl core,spring-boot-starter
+        run: mvn -B javadoc:javadoc -pl core,spring-boot-starter,rest-in-peace-reactor
       - name: Assemble site
         run: |
-          mkdir -p target/site/spring-boot-starter
+          mkdir -p target/site/spring-boot-starter target/site/rest-in-peace-reactor
           cp docs/getting-started.html target/site/index.html
 
           # Stamps the field guide with the exact version it was built from
@@ -88,6 +89,7 @@ jobs:
 
           cp -r core/target/reports/apidocs target/site/apidocs
           cp -r spring-boot-starter/target/reports/apidocs target/site/spring-boot-starter/apidocs
+          cp -r rest-in-peace-reactor/target/reports/apidocs target/site/rest-in-peace-reactor/apidocs
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Upload site
