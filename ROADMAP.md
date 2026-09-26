@@ -887,6 +887,18 @@ up.
       the same "don't guess ahead of a real user" instinct that governed
       pagination and
       circuit-breaker/bulkhead before this).
+- [ ] **Parked: a `rest-in-peace-rxjava` module** — split out from the item
+      above. The `CallAdapter`/`CallAdapterFactory` SPI (§5 of that design
+      doc) was deliberately built library-agnostic, so a from-scratch
+      RxJava `Single`/`Observable`/`Maybe`/`Completable`/`Flowable` adapter
+      needs no changes to `core`, only a new implementing module mirroring
+      `rest-in-peace-reactor`'s own shape. Parked rather than started:
+      Project Reactor is the dominant reactive choice in the
+      Spring/WebFlux ecosystem this library already targets, and building
+      a second reactive integration ahead of a real consumer risks
+      guessing wrong about the shape it actually needs - the same
+      "don't build ahead of a real user" instinct that governed Micronaut
+      above. Revisit if a concrete RxJava consumer actually asks for it.
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/
