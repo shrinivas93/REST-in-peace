@@ -38,6 +38,7 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.Field;
@@ -192,6 +193,21 @@ public class RestClientProcessor extends AbstractProcessor {
 		if (httpMethodAndUrl == null) {
 			return null;
 		}
+		if (isPaginated(methodElement)) {
+			// @Paginated/PaginationStrategy<T> methods are reflective-only, always -
+			// see RequestExecutor.processPaginatedRequest's own javadoc - regardless of
+			// return type. Page<T>/Stream<T>/Iterator<T> already fall back this way "by
+			// accident" (their own type arguments disqualify them below), but a plain,
+			// non-generic return type (e.g. a @Paginated method mistakenly returning
+			// String) would otherwise sail through returnModelOf unrecognized as
+			// anything special and get codegen'd into a broken single-decode method
+			// that silently ignores @Paginated's page-fetch-and-loop semantics
+			// entirely - checked explicitly here, first, so that mistake (or any
+			// return type a PaginatedCallAdapterFactory might otherwise legitimately
+			// claim at runtime - see docs/design/reactor-call-adapter.md §7.2) always
+			// falls back to the reflective proxy instead, never silently miscompiles.
+			return null;
+		}
 		ReturnModel returnModel = returnModelOf(methodElement);
 		if (returnModel == null) {
 			return null;
@@ -321,6 +337,25 @@ public class RestClientProcessor extends AbstractProcessor {
 		} catch (MirroredTypeException e) {
 			return e.getTypeMirror().toString();
 		}
+	}
+
+	/**
+	 * Whether {@code methodElement} is a {@code @Paginated} method or has a
+	 * {@code PaginationStrategy<T>} parameter - either way, reflective-only,
+	 * unconditionally, regardless of return type (see
+	 * {@link #toSupportedMethodModel}'s call site).
+	 */
+	private boolean isPaginated(ExecutableElement methodElement) {
+		if (methodElement.getAnnotation(Paginated.class) != null) {
+			return true;
+		}
+		for (VariableElement parameter : methodElement.getParameters()) {
+			if (parameter.asType().getKind() == TypeKind.DECLARED && "com.shri.restinpeace.PaginationStrategy"
+					.equals(processingEnv.getTypeUtils().erasure(parameter.asType()).toString())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private HttpMethodAndUrl httpMethodAndUrlOf(ExecutableElement methodElement) {

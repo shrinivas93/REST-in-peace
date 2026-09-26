@@ -8,6 +8,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A pluggable `CallAdapter`/`CallAdapterFactory` SPI, letting a method
+  declare a return type RIP has no built-in support for (e.g. Project
+  Reactor's `Mono<T>`/`Flux<T>`) without RIP taking a hard dependency on
+  it. Registered globally via `RIP.addCallAdapterFactory`/
+  `removeCallAdapterFactory`/`clearCallAdapterFactories`, mirroring the
+  existing global interceptor registry. An adapter never dispatches its
+  own HTTP call - it only transforms the exact `CompletableFuture` RIP's
+  own async dispatch path already produced, so an adapted call goes
+  through the identical retry/cache/circuit-breaker/bulkhead/interceptor
+  pipeline as any other call, dispatched exactly once. A method returning
+  a known-opaque reactive wrapper type (Project Reactor's `Mono`/`Flux`;
+  RxJava's `Single`/`Observable`/`Maybe`/`Completable`/`Flowable`) with no
+  registered factory to claim it fails validation by name instead of
+  attempting to decode the response body directly into that type and
+  silently misbehaving. See `docs/design/reactor-call-adapter.md` for the
+  full design and its chunked rollout plan - this is chunk 2 (the general
+  SPI).
+- A new `rest-in-peace-reactor` module (chunk 3 of the same rollout plan)
+  adds real `Mono<T>` support: `MonoCallAdapterFactory` claims any
+  `Mono<T>`-returning `@RestClient` method - `Mono<Void>`,
+  `Mono<RipResponse<T>>`, and `Mono<byte[]>` all work the same way their
+  `CompletableFuture<T>` equivalents already do - and
+  `RestInPeaceReactor.register()`/`unregister()` is the one-call
+  registration entry point. The dispatch is eager (the HTTP call has
+  already gone out by the time the method returns, before any subscribe),
+  matching `CompletableFuture<T>`'s existing semantics elsewhere in RIP
+  rather than Reactor's usual defer-until-subscribed convention; disposing
+  the subscription (or a fired `.timeout(...)`) genuinely cancels the
+  in-flight `CompletableFuture` rather than merely discarding a result
+  that keeps computing anyway. A raw `Mono` (no type argument) fails
+  validation the same way an unclaimed `Mono<T>` already does.
+- `Flux<T>` support (chunk 4), in two flavors: `FluxListCallAdapterFactory`
+  claims a plain, non-`@Paginated` `Flux<T>` method, decoding the response
+  as `List<T>` and emitting it item by item via `Flux.fromIterable` (no
+  real backpressure - the whole list is already in memory); a new
+  `PaginatedCallAdapter`/`PaginatedCallAdapterFactory` SPI (the
+  pagination-aware counterpart of `CallAdapter`/`CallAdapterFactory`) lets
+  `FluxPaginatedCallAdapterFactory` claim a `@Paginated Flux<T>` method
+  instead, building a third, genuinely backpressure-aware
+  return-type-driven flattening mode for `@Paginated` alongside `Page<T>`
+  and `Stream<T>`/`Iterator<T>` - the next page is only fetched once
+  `FluxSink`'s own accumulated demand exceeds what's already buffered.
+  Also fixes two latent gaps the new SPI exposed: a `@Paginated` method
+  returning something other than `Page<T>`/`Stream<T>`/`Iterator<T>` no
+  longer unconditionally fails compilation (a registered
+  `PaginatedCallAdapterFactory` can now legitimately claim it, invisibly
+  to the compile-time processor); and `RestClientProcessor` now explicitly
+  disqualifies every `@Paginated`/`PaginationStrategy<T>` method from
+  compile-time codegen regardless of return type, instead of relying on
+  `Page`/`Stream`/`Iterator`'s own generic type arguments to do so "by
+  accident" - closing a real bug where a `@Paginated` method returning a
+  plain, non-generic type would previously have been silently codegen'd
+  into a broken, non-paginating method.
+- No behavior change, but chunk 5 of the same `CallAdapter` rollout plan
+  locks in something chunks 3 and 4 already relied on implicitly: a
+  regression test (`rest-in-peace-reactor`'s
+  `MixedSupportedMonoAndFluxTestApi`/`CompileTimeCodegenFallbackTest`)
+  proving `RestClientProcessor` correctly disqualifies both a
+  `Mono<T>`-returning method and a `Flux<T>`-returning method into the
+  reflective fallback while still generating a real implementation for
+  the ordinary method on the same interface - the same "partial fallback,
+  not whole-interface fallback" guarantee already proven for a
+  parameterized `List<T>`.
+- Chunk 6, the last of the `CallAdapter`/Project Reactor rollout plan: a
+  new `samples/reactor-consumer` standalone project shows a real downstream
+  consumer using `rest-in-peace-reactor` end to end (`Mono<T>` and both
+  `Flux<T>` flavors, against a real HTTP server), the core README gained
+  its own dedicated "Reactive (Project Reactor)" section, and
+  `docs/getting-started.html`'s field guide gained a matching entry. No
+  production code change.
+
 - `@Paginated` follows a next-page pointer automatically instead of
   hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for
   manual, page-at-a-time iteration. `page.next()` re-invokes the exact same

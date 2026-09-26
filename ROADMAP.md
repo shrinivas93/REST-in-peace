@@ -766,30 +766,141 @@ up.
             and a valid one compiles clean and produces a real generated
             class. See the design doc's §9.10. **All four steps are now
             complete - this roadmap item is done.**
-- [ ] **Parked: a pluggable `CallAdapter`-style return-type system** — return
-      types are currently hardcoded in `RestRequestProcessor` (String/void/
-      POJO/`CompletableFuture`/`RipResponse`). Extracting that into a small
-      adapter interface would let someone add RxJava's `Single`/`Observable`
-      or Reactor's `Mono`/`Flux` as a separate optional module, without RIP
-      itself depending on any of them or bloating the core. Parked rather
-      than started: a design pass surfaced two open questions worth
-      resolving before writing code, not during. First, RIP's two dispatch
-      paths pull in different directions here - the reflective proxy can
-      resolve a `CallAdapter` at runtime via a registry
-      (`RIP.addCallAdapter(...)`), but the compile-time generator needs to
-      know a method's return shape during annotation processing, before any
-      such registration has run - so an adapter-produced return type would
-      need to be one more entry in the existing "disqualify compile-time
-      generation, fall back to the reflective proxy" list, the same way a
-      generic `List<T>` return already is. Workable, but a real scope
-      boundary to commit to up front. Second, a Kotlin `suspend fun` isn't
-      actually `CallAdapter`-shaped at all - the Kotlin compiler rewrites it
-      to take a `Continuation<T>` parameter and return `Object`, closer to
-      its own compiler-plugin-shaped roadmap item than an adapter
-      implementation - so it needs to be scoped out of this item explicitly
-      rather than promised implicitly. Revisit once there's a concrete
-      RxJava/Reactor consumer motivating it, with the reflective-path-only
-      scope boundary decided up front.
+- [x] **A pluggable `CallAdapter` return-type system, with Project Reactor
+      as the first consumer** — return types were previously hardcoded in
+      `RequestExecutor`/`RestClientProcessor` (String/void/POJO/
+      `CompletableFuture`/`RipResponse`/`byte[]`/`File`, plus `Page`/
+      `Stream`/`Iterator` for pagination). No longer parked: this item's two
+      original open questions (the dispatch-path split; Kotlin `suspend fun`
+      being out of scope) are both resolved in
+      [`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md),
+      which also verified against the actual code that the compile-time
+      codegen path *already* disqualifies any `CallAdapter`-shaped return
+      type (e.g. `Mono<T>`) to the reflective fallback, unconditionally,
+      with no code change needed - a cleaner resolution than the original
+      note expected. **Chunk 2 (the general SPI) has landed**: a small
+      `CallAdapter`/`CallAdapterFactory` SPI in `core` (zero new
+      dependencies), registered globally via
+      `RIP.addCallAdapterFactory`/`removeCallAdapterFactory`/
+      `clearCallAdapterFactories` (mirroring the interceptor registry), and
+      a dispatch hook in `RequestExecutor.processRestRequest` reusing the
+      exact already-genuinely-async `CompletableFuture<T>` path any other
+      async call already goes through - an adapter never dispatches its own
+      call, only transforms the future RIP already produced, so an adapted
+      call is dispatched exactly once through the identical retry/cache/
+      circuit-breaker/bulkhead/interceptor pipeline. Also closes a real,
+      separately-discovered gap, narrower than the design doc's own
+      original sketch (a real deviation, caught during implementation - see
+      that doc's Status line): a method returning one of a small, explicit
+      set of known-opaque reactive wrapper types by name (Project Reactor's
+      `Mono`/`Flux`; RxJava 2/3's `Single`/`Observable`/`Maybe`/
+      `Completable`/`Flowable`) now fails validation instead of silently
+      attempting to decode the response body directly into that type -
+      scoped to exactly those known types rather than every unclaimed
+      generic return type, since the broader rule would have broken
+      already-working generic-collection decoding (`List<User>`, etc.),
+      which reaches the same unchecked generic decode path today.
+      **Chunk 3 (real `Mono<T>` support) has also landed**: a new
+      `rest-in-peace-reactor` module adds `MonoCallAdapterFactory`, claiming
+      any `Mono<T>`-returning `@RestClient` method - `Mono<Void>`,
+      `Mono<RipResponse<T>>`, and `Mono<byte[]>` all work identically to
+      their `CompletableFuture<T>` equivalents - with
+      `RestInPeaceReactor.register()`/`unregister()` as the one-call
+      registration entry point. Verified via `StepVerifier`-based tests
+      against a real `MockRestServer`: dispatch is eager (already
+      in-flight before any subscribe, matching `CompletableFuture<T>`'s
+      convention rather than Reactor's usual defer-until-subscribed one),
+      disposing genuinely cancels the underlying `CompletableFuture`, and a
+      raw `Mono` fails validation the same way an unclaimed `Mono<T>`
+      already does. **Chunk 4 (`Flux<T>` support, both flavors) has also
+      landed**: `FluxListCallAdapterFactory` claims a plain, non-`@Paginated`
+      `Flux<T>` method (decode as `List<T>`, emit item by item via
+      `Flux.fromIterable` - no real backpressure, since the whole list is
+      already in memory); a new `PaginatedCallAdapter`/
+      `PaginatedCallAdapterFactory` SPI in `core` (the pagination-aware
+      counterpart of `CallAdapter`/`CallAdapterFactory`, consumed from
+      `RequestExecutor.processPaginatedRequest` and validated the same way
+      in `ReflectiveRestClientValidator.validatePaginated`) lets
+      `FluxPaginatedCallAdapterFactory` claim a `@Paginated Flux<T>` method
+      instead - a third, genuinely backpressure-aware return-type-driven
+      flattening mode for `@Paginated` alongside `Page<T>` and
+      `Stream<T>`/`Iterator<T>`, fetching the next page only once
+      `FluxSink`'s own accumulated demand exceeds what's already buffered.
+      Needing that new SPI at all (rather than teaching `core`'s
+      `PaginationCoordinator` about Reactor types directly, which would
+      have broken the "zero Reactor dependency in `core`" invariant) was
+      itself a real deviation from the design doc's original "no new
+      coordinator logic" assumption. Its existence also exposed two latent
+      compile-time gaps, both fixed as part of this chunk: a `@Paginated`
+      method returning an adapter-claimable declared type other than
+      `Page`/`Stream`/`Iterator` no longer unconditionally fails compilation
+      (`void`, `RipResponse<T>`, and `CompletableFuture<T>` remain hard errors;
+      a registered adapter might legitimately claim it, invisibly to the
+      compile-time processor); and
+      `RestClientProcessor` now explicitly disqualifies every
+      `@Paginated`/`PaginationStrategy<T>` method from compile-time codegen
+      regardless of return type, instead of relying on `Page`/`Stream`/
+      `Iterator`'s own generic type arguments to do so "by accident" -
+      closing a latent codegen-eligibility bug that the compile-time
+      validator's own (now-loosened) hard error had always masked before
+      this chunk: a `@Paginated` method returning a plain, non-generic type
+      used to fail compilation outright, so it never reached codegen at
+      all; only this chunk's own validator loosening (letting an
+      adapter-eligible return type through) exposed the gap, which this
+      same `toSupportedMethodModel` check closes in the same breath.
+      **Chunk 5 (compile-time codegen regression test) has also landed**:
+      `RestClientProcessor` already disqualified `Mono<T>`/`Flux<T>`
+      methods into the reflective fallback correctly, unconditionally, with
+      no code change needed for chunks 3/4 - but nothing had locked that
+      down against a future refactor accidentally narrowing or widening the
+      disqualification boundary for either shape. A new
+      `rest-in-peace-reactor` fixture (`MixedSupportedMonoAndFluxTestApi`,
+      mixing one ordinary codegen-supported method with one real
+      `Mono<T>`-returning one and one real `Flux<T>`-returning one) now
+      proves all three things such a regression could break, for both
+      reactive shapes: each reactive method lands in `fallbackMethods`,
+      not `methods`; the generated `_RipImpl` class still compiles and
+      generates the ordinary method correctly; and `RIP.getClient(...)`
+      answers each reactive method via the lazily-built reflective
+      sub-proxy while the ordinary method still dispatches through the
+      generated implementation - the same E9 "partial fallback, not
+      whole-interface fallback" guarantee already proven for a
+      parameterized `List<T>`, now pinned down for both shapes too.
+      **Chunk 6 (`samples/reactor-consumer` plus documentation) has also
+      landed - closing out this rollout entirely**: a standalone
+      `samples/reactor-consumer` project (mirroring
+      `samples/spring-boot-consumer`'s own precedent) depends on
+      locally-installed `rest-in-peace`/`rest-in-peace-reactor` artifacts
+      like a real downstream consumer, exercising `Mono<T>` and both `Flux<T>`
+      flavors against a throwaway local HTTP server - built and actually
+      run against locally-installed artifacts as part of landing this
+      chunk, not just read as plausible. The core README gained its own
+      top-level "Reactive (Project Reactor)" section (promoted out of the
+      more general "Pluggable return types" section), and
+      `docs/getting-started.html`'s field guide gained a matching "Reactive
+      — `Mono<T>` / `Flux<T>`" entry - closing the exact documentation gap
+      the pagination feature's own history already illustrated the cost of
+      leaving open. RxJava
+      remains an explicit non-goal of
+      this rollout (the SPI itself is library-agnostic, but a second
+      reactive library needs its own concrete consumer to build against,
+      the same "don't guess ahead of a real user" instinct that governed
+      pagination and
+      circuit-breaker/bulkhead before this).
+- [ ] **Parked: a `rest-in-peace-rxjava` module** — split out from the item
+      above. The `CallAdapter`/`CallAdapterFactory` SPI (§5 of that design
+      doc) was deliberately built library-agnostic, so a from-scratch
+      RxJava `Single`/`Observable`/`Maybe`/`Completable`/`Flowable` adapter
+      is expected to need no changes to `core`, only a new implementing
+      module mirroring `rest-in-peace-reactor`'s own shape - unconfirmed
+      until one is actually built (§13 of that design doc still lists it
+      as an open question). Parked rather than started:
+      Project Reactor is the dominant reactive choice in the
+      Spring/WebFlux ecosystem this library already targets, and building
+      a second reactive integration ahead of a real consumer risks
+      guessing wrong about the shape it actually needs - the same
+      "don't build ahead of a real user" instinct that governed Micronaut
+      below. Revisit if a concrete RxJava consumer actually asks for it.
 - [x] **Idempotency-key support baked into `@Retry`** — `@Retry(idempotent =
       true)` generates one `Idempotency-Key` header value per logical call
       and holds it constant across every retry attempt (Stripe/PayPal/Adyen/
