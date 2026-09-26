@@ -224,6 +224,7 @@
         <a href="#downloads">byte[] / File downloads</a>
         <a href="#ripresponse">RipResponse&lt;T&gt;</a>
         <a href="#async">Async — CompletableFuture</a>
+        <a href="#reactive">Reactive — Mono&lt;T&gt; / Flux&lt;T&gt;</a>
 
         <div class="group-title">Pagination</div>
         <a href="#pagination-basics">@Paginated basics</a>
@@ -669,6 +670,34 @@ userApi.getUserAsync("42").thenAccept(user -> System.out.println(user.name));</c
 // outliving its own shutdown — the starter's auto-configuration calls
 // RIP.useDaemonThreadsForAsync() automatically. No property to opt out;
 // exclude RestInPeaceAutoConfiguration if you truly need the plain-Java default.</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="reactive">
+        <h3>Reactive — Mono&lt;T&gt; / Flux&lt;T&gt;</h3>
+        <p class="blurb">The <code>rest-in-peace-reactor</code> module adds a <code>CallAdapterFactory</code> for Project Reactor — add the dependency, call <code>RestInPeaceReactor.register()</code> once at startup, and any method can return <code>Mono&lt;T&gt;</code> or <code>Flux&lt;T&gt;</code> directly.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic · Mono&lt;T&gt;</span>
+              <span class="snippet-caption">eager, not deferred — dispatched before anything subscribes</span></div>
+            <pre><code class="language-java">RestInPeaceReactor.register();   // once, at startup, before building any client
+
+@GET("https://api.example.com/users/{id}")
+Mono&lt;User&gt; getUser(@PathParam("id") String id);   // also: Mono&lt;Void&gt;, Mono&lt;byte[]&gt;, Mono&lt;RipResponse&lt;T&gt;&gt;</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · Flux&lt;T&gt; from one response</span>
+              <span class="snippet-caption">flavor 1 — decodes one JSON array, no real backpressure</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/orders")
+Flux&lt;Order&gt; listOrders();</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · Flux&lt;T&gt; over @Paginated</span>
+              <span class="snippet-caption">flavor 2 — first page fetched eagerly at method call; later pages use real backpressure and are fetched only when demand exceeds what's buffered</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Flux&lt;Order&gt; streamOrders(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
           </div>
         </div>
       </div>

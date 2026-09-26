@@ -71,6 +71,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the ordinary method on the same interface - the same "partial fallback,
   not whole-interface fallback" guarantee already proven for a
   parameterized `List<T>`.
+- Chunk 6, the last of the `CallAdapter`/Project Reactor rollout plan: a
+  new `samples/reactor-consumer` standalone project shows a real downstream
+  consumer using `rest-in-peace-reactor` end to end (`Mono<T>` and both
+  `Flux<T>` flavors, against a real HTTP server), the core README gained
+  its own dedicated "Reactive (Project Reactor)" section, and
+  `docs/getting-started.html`'s field guide gained a matching entry. No
+  production code change.
 
 - `@Paginated` follows a next-page pointer automatically instead of
   hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for

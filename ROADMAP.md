@@ -766,7 +766,7 @@ up.
             and a valid one compiles clean and produces a real generated
             class. See the design doc's §9.10. **All four steps are now
             complete - this roadmap item is done.**
-- [ ] **A pluggable `CallAdapter` return-type system, with Project Reactor
+- [x] **A pluggable `CallAdapter` return-type system, with Project Reactor
       as the first consumer** — return types were previously hardcoded in
       `RequestExecutor`/`RestClientProcessor` (String/void/POJO/
       `CompletableFuture`/`RipResponse`/`byte[]`/`File`, plus `Page`/
@@ -865,7 +865,22 @@ up.
       sub-proxy while the ordinary method still dispatches through the
       generated implementation - the same E9 "partial fallback, not
       whole-interface fallback" guarantee already proven for a
-      parameterized `List<T>`, now pinned down for both shapes too. RxJava
+      parameterized `List<T>`, now pinned down for both shapes too.
+      **Chunk 6 (`samples/reactor-consumer` plus documentation) has also
+      landed - closing out this rollout entirely**: a standalone
+      `samples/reactor-consumer` project (mirroring
+      `samples/spring-boot-consumer`'s own precedent) depends on
+      locally-installed `rest-in-peace`/`rest-in-peace-reactor` artifacts
+      like a real downstream consumer, exercising `Mono<T>` and both `Flux<T>`
+      flavors against a throwaway local HTTP server - built and actually
+      run against locally-installed artifacts as part of landing this
+      chunk, not just read as plausible. The core README gained its own
+      top-level "Reactive (Project Reactor)" section (promoted out of the
+      more general "Pluggable return types" section), and
+      `docs/getting-started.html`'s field guide gained a matching "Reactive
+      — `Mono<T>` / `Flux<T>`" entry - closing the exact documentation gap
+      the pagination feature's own history already illustrated the cost of
+      leaving open. RxJava
       remains an explicit non-goal of
       this rollout (the SPI itself is library-agnostic, but a second
       reactive library needs its own concrete consumer to build against,
