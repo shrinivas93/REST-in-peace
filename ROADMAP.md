@@ -1517,7 +1517,7 @@ policy in `CLAUDE.md`.
       so the test would pass whether or not a duplicate-appending `add`
       ever happened. Assert registry size some other way, or drop the
       dedup-specific reasoning.
-      `core/src/test/java/com/shri/restinpeace/mock/CallAdapterIntegrationTest.java:120`.
+      `core/src/test/java/com/shri/restinpeace/mock/CallAdapterIntegrationTest.java:126`.
 - [ ] **`PaginatedCallAdapterIntegrationTest`: test name overclaims,
       never dispatches a real call** — `assertDoesNotThrow(getClient)`
       only proves the second factory claims the method during
