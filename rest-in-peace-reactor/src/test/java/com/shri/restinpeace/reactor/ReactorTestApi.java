@@ -37,4 +37,14 @@ public interface ReactorTestApi {
 	@Retry(times = 3, retryOnStatus = { 503 }, delayMillis = 1)
 	Mono<String> createOrderWithRetry(@Body String payload);
 
+	/**
+	 * A long {@code delayMillis} (vs. {@link #createOrderWithRetry}'s
+	 * effectively-immediate one) specifically so a test has a wide, reliable
+	 * window to dispose during the backoff wait itself, between the first
+	 * failed attempt landing and the scheduled retry actually firing.
+	 */
+	@POST("/orders")
+	@Retry(times = 3, retryOnStatus = { 503 }, delayMillis = 400)
+	Mono<String> createOrderWithSlowRetry(@Body String payload);
+
 }

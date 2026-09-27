@@ -1,5 +1,6 @@
 package com.shri.restinpeace.reactor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -7,8 +8,10 @@ import java.lang.reflect.Method;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
+import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -67,6 +70,69 @@ class MonoCallAdapterFactoryTest {
 		delegate.completeExceptionally(error);
 
 		StepVerifier.create(mono).expectErrorMatches(e -> e == error).verify();
+	}
+
+	/**
+	 * The other half of the {@code disposing_cancelsTheUnderlyingDelegateFuture}
+	 * pair below: a lone subscriber's disposal is exactly the case where
+	 * cancelling {@code delegate} is correct, since nothing else is still
+	 * awaiting it.
+	 */
+	@Test
+	void disposing_cancelsTheUnderlyingDelegateFuture() throws NoSuchMethodException {
+		CompletableFuture<Object> delegate = new CompletableFuture<>();
+		Mono<Object> mono = adapt(delegate);
+
+		mono.subscribe().dispose();
+
+		assertTrue(delegate.isCancelled());
+	}
+
+	/**
+	 * Regression coverage for the cross-subscriber cancellation bug: since
+	 * {@code delegate} is dispatched once, eagerly, and shared by every
+	 * subscription to the one {@code Mono} {@code adapt(...)} returns for
+	 * that call, one subscriber disposing must not cancel a result another,
+	 * still-active subscriber is waiting on - only once every subscription
+	 * has disposed should {@code delegate} actually be cancelled.
+	 */
+	@Test
+	void oneSubscriberDisposing_doesNotCancelAnotherStillActiveSubscribersDelegate() throws NoSuchMethodException {
+		CompletableFuture<Object> delegate = new CompletableFuture<>();
+		Mono<Object> mono = adapt(delegate);
+
+		Disposable first = mono.subscribe();
+		AtomicReference<Object> secondResult = new AtomicReference<>();
+		Disposable second = mono.subscribe(secondResult::set);
+
+		first.dispose();
+		assertFalse(delegate.isCancelled());
+
+		delegate.complete("shipped");
+		assertEquals("shipped", secondResult.get());
+
+		second.dispose();
+	}
+
+	/**
+	 * The last subscriber disposing, once every earlier one already has too,
+	 * is the one case where cancellation must still actually reach
+	 * {@code delegate} - proving the reference count doesn't just permanently
+	 * suppress cancellation once more than one subscription has ever existed.
+	 */
+	@Test
+	void everySubscriberDisposing_stillCancelsTheSharedDelegate() throws NoSuchMethodException {
+		CompletableFuture<Object> delegate = new CompletableFuture<>();
+		Mono<Object> mono = adapt(delegate);
+
+		Disposable first = mono.subscribe();
+		Disposable second = mono.subscribe();
+
+		first.dispose();
+		assertFalse(delegate.isCancelled());
+		second.dispose();
+
+		assertTrue(delegate.isCancelled());
 	}
 
 	@SuppressWarnings("unchecked")

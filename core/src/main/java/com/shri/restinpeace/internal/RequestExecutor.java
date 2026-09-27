@@ -1144,44 +1144,60 @@ public class RequestExecutor {
 		if (isRipResponseType(futureInnerType)) {
 			Type innerType = resolveWrappedType(futureInnerType, method);
 			if (innerType == byte[].class) {
-				return retryExecutor
-						.executeAsyncWithRetry(method, innerType, context,
-								circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
-										interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))))
-						.thenApply(response -> ResponseDecoder.wrapResponse(response,
-								responseDecoder.decodeOrThrow(response, errorType, innerType)));
+				CompletableFuture<HttpResponse<byte[]>> root = retryExecutor.executeAsyncWithRetry(method, innerType,
+						context, circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
+								interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))));
+				return propagateCancellationToRoot(root.thenApply(response -> ResponseDecoder.wrapResponse(response,
+						responseDecoder.decodeOrThrow(response, errorType, innerType))), root);
 			}
-			return retryExecutor
-					.executeAsyncWithRetry(method, innerType, context,
-							circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
-									cacheCoordinator.wrapWithCacheAsync(request, context,
-											interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))))
-					.thenApply(response -> ResponseDecoder.wrapResponse(response,
-							responseDecoder.decodeOrThrow(response, errorType, innerType)));
+			CompletableFuture<HttpResponse<String>> root = retryExecutor.executeAsyncWithRetry(method, innerType,
+					context, circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
+							cacheCoordinator.wrapWithCacheAsync(request, context,
+									interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))));
+			return propagateCancellationToRoot(root.thenApply(response -> ResponseDecoder.wrapResponse(response,
+					responseDecoder.decodeOrThrow(response, errorType, innerType))), root);
 		}
 		Type innerType = requireDecodableType(futureInnerType, method);
 		if (innerType == byte[].class) {
-			return retryExecutor
-					.executeAsyncWithRetry(method, innerType, context,
-							circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
-									interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))))
-					.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
+			CompletableFuture<HttpResponse<byte[]>> root = retryExecutor.executeAsyncWithRetry(method, innerType, context,
+					circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
+							interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))));
+			return propagateCancellationToRoot(
+					root.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType)), root);
 		}
 		if (innerType == File.class) {
 			File destination = resolveDestinationFile(method, args);
-			return retryExecutor
-					.executeAsyncWithRetry(method, byte[].class, context,
-							circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
-									interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))))
-					.thenApply(response -> writeToFile(destination,
-							(byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class)));
+			CompletableFuture<HttpResponse<byte[]>> root = retryExecutor.executeAsyncWithRetry(method, byte[].class,
+					context, circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
+							interceptorDispatcher.wrapWithShortCircuitAsyncBytes(context, request::asBytesAsync))));
+			return propagateCancellationToRoot(root.thenApply(response -> writeToFile(destination,
+					(byte[]) responseDecoder.decodeOrThrow(response, errorType, byte[].class))), root);
 		}
-		return retryExecutor
-				.executeAsyncWithRetry(method, innerType, context,
-						circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
-								cacheCoordinator.wrapWithCacheAsync(request, context,
-										interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))))
-				.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType));
+		CompletableFuture<HttpResponse<String>> root = retryExecutor.executeAsyncWithRetry(method, innerType, context,
+				circuitBreakerCoordinator.wrapWithCircuitBreakerAsync(bulkheadCoordinator.wrapWithBulkheadAsync(
+						cacheCoordinator.wrapWithCacheAsync(request, context,
+								interceptorDispatcher.wrapWithShortCircuitAsync(context, request::asStringAsync)))));
+		return propagateCancellationToRoot(
+				root.thenApply(response -> responseDecoder.decodeOrThrow(response, errorType, innerType)), root);
+	}
+
+	/**
+	 * {@link CompletableFuture#cancel} on {@code derived} - a
+	 * {@code .thenApply(...)} stage over {@code root} - only ever completes
+	 * {@code derived} itself; it never reaches {@code root}; a {@code Mono}/
+	 * {@code Flux} adapter's {@code sink.onCancel(...)}, or any other caller
+	 * holding only {@code derived}, needs cancellation to reach the actual
+	 * in-flight HTTP call (and, via {@code RetryExecutor}'s own cancellation
+	 * relay, a still-pending {@code @Retry} wait) that {@code root} represents.
+	 */
+	private static <T> CompletableFuture<T> propagateCancellationToRoot(CompletableFuture<T> derived,
+			CompletableFuture<?> root) {
+		derived.whenComplete((value, error) -> {
+			if (derived.isCancelled()) {
+				root.cancel(true);
+			}
+		});
+		return derived;
 	}
 
 	/**

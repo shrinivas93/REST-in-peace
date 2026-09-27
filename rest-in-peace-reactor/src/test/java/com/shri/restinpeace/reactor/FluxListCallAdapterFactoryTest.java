@@ -9,6 +9,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.Test;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
 
@@ -85,6 +86,26 @@ class FluxListCallAdapterFactoryTest {
 
 		flux.subscribe().dispose();
 
+		assertTrue(delegate.isCancelled());
+	}
+
+	/**
+	 * The same cross-subscriber regression coverage
+	 * {@code MonoCallAdapterFactoryTest} has for its own shared-delegate
+	 * pattern - both factories now go through the same {@link FutureMono}.
+	 */
+	@Test
+	void oneSubscriberDisposing_doesNotCancelAnotherStillActiveSubscribersDelegate() throws NoSuchMethodException {
+		CompletableFuture<Object> delegate = new CompletableFuture<>();
+		Flux<Object> flux = adapt(delegate);
+
+		Disposable first = flux.subscribe();
+		Disposable second = flux.subscribe();
+
+		first.dispose();
+		assertFalse(delegate.isCancelled());
+
+		second.dispose();
 		assertTrue(delegate.isCancelled());
 	}
 

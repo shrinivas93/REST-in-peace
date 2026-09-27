@@ -7,7 +7,9 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -195,20 +197,90 @@ final class RetryExecutor {
 					configuredRetry.getJitterFactor(), configuredRetry.getRetryOnStatus());
 		}
 		if (!hasRetry) {
-			return call.get().thenApply(response -> {
+			CompletableFuture<HttpResponse<B>> attemptFuture = call.get();
+			CompletableFuture<HttpResponse<B>> result = attemptFuture.thenApply(response -> {
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 				return response;
 			});
+			propagateCancellation(result, attemptFuture);
+			return result;
 		}
-		return attemptAsync(call, errorType, returnType, context, times, backoffMultiplier, jitterFactor, retryOnStatus,
-				1, delayMillis);
+		CancellationRelay relay = new CancellationRelay();
+		CompletableFuture<HttpResponse<B>> result = attemptAsync(call, errorType, returnType, context, times,
+				backoffMultiplier, jitterFactor, retryOnStatus, 1, delayMillis, relay);
+		relay.arm(result);
+		return result;
+	}
+
+	/**
+	 * A cancellation on the future callers actually hold - itself either
+	 * {@code result} from the no-retry branch above, or the outermost
+	 * {@code attemptAsync} result below - never reaches an upstream future on
+	 * its own ({@link CompletableFuture#cancel} only ever completes the
+	 * future it's called on). This re-attaches that cancellation to whatever
+	 * concrete operation is actually in flight right now: the current
+	 * attempt's own HTTP call, or - while waiting out a retry's backoff - the
+	 * {@link ScheduledFuture} for the next attempt, so cancelling stops a
+	 * scheduled retry from ever running instead of only suppressing its
+	 * eventual result.
+	 */
+	private static final class CancellationRelay {
+
+		private boolean cancelled;
+		private Future<?> current;
+
+		void arm(CompletableFuture<?> outer) {
+			outer.whenComplete((value, error) -> {
+				if (outer.isCancelled()) {
+					cancelCurrent();
+				}
+			});
+		}
+
+		void register(Future<?> cancellable) {
+			boolean alreadyCancelled;
+			synchronized (this) {
+				alreadyCancelled = cancelled;
+				if (!alreadyCancelled) {
+					current = cancellable;
+				}
+			}
+			if (alreadyCancelled) {
+				cancellable.cancel(true);
+			}
+		}
+
+		private void cancelCurrent() {
+			Future<?> toCancel;
+			synchronized (this) {
+				if (cancelled) {
+					return;
+				}
+				cancelled = true;
+				toCancel = current;
+			}
+			if (toCancel != null) {
+				toCancel.cancel(true);
+			}
+		}
+
+	}
+
+	private static void propagateCancellation(CompletableFuture<?> derived, Future<?> upstream) {
+		derived.whenComplete((value, error) -> {
+			if (derived.isCancelled()) {
+				upstream.cancel(true);
+			}
+		});
 	}
 
 	private <B> CompletableFuture<HttpResponse<B>> attemptAsync(Supplier<CompletableFuture<HttpResponse<B>>> call,
 			Class<?> errorType, Type returnType, RequestContext context, int times, double backoffMultiplier,
-			double jitterFactor, int[] retryOnStatus, int attempt, long delay) {
+			double jitterFactor, int[] retryOnStatus, int attempt, long delay, CancellationRelay relay) {
 		CompletableFuture<HttpResponse<B>> result = new CompletableFuture<>();
-		call.get().whenComplete((response, failure) -> {
+		CompletableFuture<HttpResponse<B>> attemptFuture = call.get();
+		relay.register(attemptFuture);
+		attemptFuture.whenComplete((response, failure) -> {
 			if (failure instanceof CircuitOpenException) {
 				// Never worth retrying within the same open window - the async
 				// mirror of executeSyncWithRetry's identical special case; see its
@@ -234,9 +306,9 @@ final class RetryExecutor {
 			Long retryAfterMillis = failure == null ? parseRetryAfterMillis(response) : null;
 			long waitMillis = retryAfterMillis != null ? retryAfterMillis : applyJitter(delay, jitterFactor);
 			long nextDelay = nextDelay(retryAfterMillis != null ? retryAfterMillis : delay, backoffMultiplier);
-			RETRY_SCHEDULER.schedule(
+			ScheduledFuture<?> scheduled = RETRY_SCHEDULER.schedule(
 					() -> attemptAsync(call, errorType, returnType, context, times, backoffMultiplier, jitterFactor,
-							retryOnStatus, attempt + 1, nextDelay)
+							retryOnStatus, attempt + 1, nextDelay, relay)
 							.whenComplete((r, t) -> {
 								if (t != null) {
 									result.completeExceptionally(t);
@@ -245,6 +317,12 @@ final class RetryExecutor {
 								}
 							}),
 					waitMillis, TimeUnit.MILLISECONDS);
+			// A cancellation racing in right here still lands correctly either
+			// way: too early and it just re-cancels the attempt that already
+			// finished (harmless, already complete); too late and register(...)
+			// itself sees CancellationRelay is already cancelled and immediately
+			// cancels `scheduled` instead of leaving it as `current`.
+			relay.register(scheduled);
 		});
 		return result;
 	}

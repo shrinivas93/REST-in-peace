@@ -5,7 +5,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
+import java.util.function.Function;
 
 import reactor.core.publisher.Mono;
 
@@ -71,26 +71,21 @@ public final class MonoCallAdapterFactory implements CallAdapterFactory {
 		}
 
 		/**
-		 * {@code Mono.create} (not {@code Mono.fromFuture}) specifically so
-		 * {@code sink.onCancel(...)} can wire a downstream cancellation (a
-		 * fired {@code .timeout(...)}, an explicit {@code Disposable.dispose()})
-		 * into {@code CompletableFuture#cancel(true)} - which genuinely aborts
-		 * the underlying Apache HttpClient async request, not merely
-		 * abandons interest in a result that keeps computing anyway. See §6.2.
+		 * Delegates to {@link FutureMono#from} - {@code Mono.create} (not
+		 * {@code Mono.fromFuture}) specifically so {@code sink.onCancel(...)}
+		 * can wire a downstream cancellation (a fired {@code .timeout(...)},
+		 * an explicit {@code Disposable.dispose()}) into
+		 * {@code CompletableFuture#cancel(true)}, propagated by
+		 * {@code RequestExecutor}/{@code RetryExecutor} all the way to the
+		 * in-flight HTTP call (or a still-pending {@code @Retry} wait) -
+		 * not merely abandoning interest in a result that keeps computing
+		 * anyway. {@link FutureMono} also guards against one subscriber's
+		 * disposal cancelling a result another subscriber of this same
+		 * {@code Mono} is still awaiting. See §6.2.
 		 */
 		@Override
 		public Mono<Object> adapt(CompletableFuture<Object> delegate) {
-			return Mono.create(sink -> {
-				delegate.whenComplete((value, error) -> {
-					if (error != null) {
-						sink.error(error instanceof CompletionException && error.getCause() != null ? error.getCause()
-								: error);
-					} else {
-						sink.success(value);
-					}
-				});
-				sink.onCancel(() -> delegate.cancel(true));
-			});
+			return FutureMono.from(delegate, Function.identity());
 		}
 
 	}

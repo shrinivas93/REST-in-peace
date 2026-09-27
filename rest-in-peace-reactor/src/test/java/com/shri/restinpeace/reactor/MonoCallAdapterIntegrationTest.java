@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.AfterEach;
@@ -130,6 +132,41 @@ class MonoCallAdapterIntegrationTest {
 
 		Thread.sleep(500); // past the delay - if the subscription were still live, the value would have arrived by now
 		assertFalse(signalReceivedAfterDispose.get());
+	}
+
+	/**
+	 * Regression coverage for the cancellation-doesn't-reach-the-retry-loop
+	 * bug: previously, disposing only cancelled the decoded
+	 * {@code .thenApply(...)} stage {@code RequestExecutor.processAsync}
+	 * built - a derived {@link java.util.concurrent.CompletableFuture} stage,
+	 * whose cancellation never reaches anything upstream on its own - leaving
+	 * the already-scheduled {@code @Retry} wait to fire regardless and issue
+	 * a second request the disposed subscriber never sees delivered, wasting
+	 * the call. Disposing during the backoff wait must now stop that
+	 * scheduled retry from ever firing.
+	 */
+	@Test
+	void disposingDuringTheRetryBackoffWait_stopsTheScheduledRetryFromFiring() throws InterruptedException {
+		server.on(HTTPMethod.POST, "/orders", MockResponse.status(503, "down"));
+
+		Disposable disposable = api.createOrderWithSlowRetry("payload").subscribe();
+		awaitRequestCount(HTTPMethod.POST, "/orders", 1); // the first attempt has landed and failed
+
+		disposable.dispose(); // well before the 400ms @Retry backoff wait elapses
+
+		Thread.sleep(600); // past the backoff wait - a retry would have landed by now if not cancelled
+		assertEquals(1, server.countOf(HTTPMethod.POST, "/orders"));
+	}
+
+	private void awaitRequestCount(HTTPMethod method, String pathTemplate, int expectedCount) throws InterruptedException {
+		long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+		while (server.countOf(method, pathTemplate) < expectedCount) {
+			if (System.nanoTime() > deadline) {
+				fail("Timed out waiting for " + expectedCount + " requests to " + pathTemplate + "; observed "
+						+ server.countOf(method, pathTemplate));
+			}
+			Thread.sleep(10);
+		}
 	}
 
 	@Test

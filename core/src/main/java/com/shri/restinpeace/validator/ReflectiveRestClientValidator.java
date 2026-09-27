@@ -864,9 +864,15 @@ public class ReflectiveRestClientValidator {
 	}
 
 	/**
-	 * Whether the method's return type is {@code File} directly, or
-	 * {@code CompletableFuture<File>} - the two shapes a {@code @Destination}
-	 * parameter is valid on. {@code RipResponse<File>} is rejected by
+	 * Whether the method's return type is {@code File} directly,
+	 * {@code CompletableFuture<File>}, or a registered {@link CallAdapter}'s
+	 * {@code responseBodyType()} is {@code File} (e.g. {@code Mono<File>},
+	 * once {@code rest-in-peace-reactor} registers a factory for it) - the
+	 * shapes a {@code @Destination} parameter is valid on. Checking the
+	 * adapter's declared body type, not just the method's own raw declared
+	 * return type, is what lets a {@code Mono<File>} method pass this check
+	 * at all - {@code method.getReturnType()} is {@code Mono.class} here, not
+	 * {@code File.class}. {@code RipResponse<File>} is rejected by
 	 * {@link #validateParameterizedReturnType} instead of being treated as
 	 * File-returning here.
 	 */
@@ -879,17 +885,24 @@ public class ReflectiveRestClientValidator {
 			Type innerType = ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0];
 			return innerType == File.class;
 		}
-		return false;
+		return RequestExecutor.resolveCallAdapter(method).map(CallAdapter::responseBodyType)
+				.filter(File.class::equals).isPresent();
 	}
 
 	/**
-	 * Whether the method's return type is {@code byte[]}, {@code File}, or
-	 * either wrapped in {@code CompletableFuture}/{@code RipResponse} - the
-	 * shapes a {@code DownloadProgressListener} parameter is meaningful on.
+	 * Whether the method's return type is {@code byte[]}, {@code File}, either
+	 * wrapped in {@code CompletableFuture}/{@code RipResponse}, or a
+	 * registered {@link CallAdapter}'s {@code responseBodyType()} is
+	 * {@code byte[]} (e.g. {@code Mono<byte[]>}) - the shapes a
+	 * {@code DownloadProgressListener} parameter is meaningful on.
 	 */
 	private static boolean returnsDownloadableBody(Method method) {
 		Class<?> returnType = method.getReturnType();
 		if (returnType == byte[].class || returnsFile(method)) {
+			return true;
+		}
+		if (RequestExecutor.resolveCallAdapter(method).map(CallAdapter::responseBodyType).filter(byte[].class::equals)
+				.isPresent()) {
 			return true;
 		}
 		if ((returnType == CompletableFuture.class || returnType == RipResponse.class)

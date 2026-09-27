@@ -6,10 +6,8 @@ import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 import com.shri.restinpeace.CallAdapter;
 import com.shri.restinpeace.CallAdapterFactory;
@@ -70,17 +68,7 @@ public final class FluxListCallAdapterFactory implements CallAdapterFactory {
 		@Override
 		@SuppressWarnings("unchecked")
 		public Flux<Object> adapt(CompletableFuture<Object> delegate) {
-			return Mono.<List<Object>>create(sink -> {
-				delegate.whenComplete((value, error) -> {
-					if (error != null) {
-						sink.error(error instanceof CompletionException && error.getCause() != null
-								? error.getCause() : error);
-					} else {
-						sink.success((List<Object>) value);
-					}
-				});
-				sink.onCancel(() -> delegate.cancel(true));
-			}).flatMapMany(Flux::fromIterable);
+			return FutureMono.from(delegate, value -> (List<Object>) value).flatMapMany(Flux::fromIterable);
 		}
 
 	}

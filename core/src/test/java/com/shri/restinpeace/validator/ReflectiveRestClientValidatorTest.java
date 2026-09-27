@@ -204,6 +204,18 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface CallAdapterFileReturnWithDestination {
+		@GET("http://example.com")
+		Mono<String> foo(@Destination File target);
+	}
+
+	@RestClient
+	public interface CallAdapterFileReturnWithoutDestination {
+		@GET("http://example.com")
+		Mono<String> foo();
+	}
+
+	@RestClient
 	public interface PaginatedUnclaimedReactiveReturnType {
 		@GET("http://example.com")
 		@Paginated(itemsField = "items", pointerField = "next")
@@ -868,6 +880,43 @@ class ReflectiveRestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
+	}
+
+	@Test
+	void validate_callAdapterFileResponseBodyTypeWithDestinationParameter_passes() {
+		// responseBodyType() is File - e.g. a real Mono<File>/MonoCallAdapterFactory
+		// pairing - even though the method's own declared generic return type
+		// argument (here, String, following the established
+		// UnclaimedReactiveReturnType-reuse convention above) is irrelevant to it.
+		// Before returnsFile() consulted a registered adapter's own
+		// responseBodyType(), this failed as "has a @Destination parameter but
+		// does not return File" despite responseBodyType() being File.
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(File.class))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(CallAdapterFileReturnWithDestination.class));
+	}
+
+	@Test
+	void validate_callAdapterFileResponseBodyTypeWithoutDestinationParameter_throwsWithError() {
+		// Before returnsFile() consulted the adapter, this method passed
+		// validation cleanly (the missing-@Destination check never fired,
+		// since returnsFile() saw only the raw Mono.class return type) and
+		// only failed later, at dispatch time, with a raw RestInPeaceException
+		// out of RequestExecutor.resolveDestinationFile instead of a clean,
+		// up-front validation error - the same contract a plain File return
+		// already gets.
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(File.class))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(CallAdapterFileReturnWithoutDestination.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("returns File but has no @Destination parameter to write the response to."));
 	}
 
 	private static CallAdapter<Object> testCallAdapter(Type responseBodyType) {
