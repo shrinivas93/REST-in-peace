@@ -494,15 +494,43 @@ final class CompileTimeRestClientValidator {
 			return;
 		}
 		if (!returnsSupportedType) {
-			reporter.error(String.format(
-					"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
-							+ "not return Page<T>, Stream<T>, or Iterator<T> - wrapping in CompletableFuture is not "
-							+ "implemented yet.",
-					qualifiedName(method)), method);
-			return;
+			// A @Paginated method (never a PaginationStrategy<T>-parameter one -
+			// PaginatedCallAdapterFactory is explicitly scoped to the declarative path
+			// only, §7.2/§7.3) returning some other plain declared type is not
+			// necessarily a mistake, unlike ReflectiveRestClientValidator's own
+			// equivalent check: a registered PaginatedCallAdapterFactory (e.g.
+			// rest-in-peace-reactor's Flux<T> pagination flavor) can legitimately claim
+			// it - but only at runtime, since factory registration is a plain method
+			// call (RIP.addPaginatedCallAdapterFactory) this processor has no way to
+			// see. A @Paginated method is reflective-only regardless (never
+			// compile-time-generated - see processPaginatedRequest's own javadoc), so
+			// there's no codegen correctness risk in deferring to the reflective
+			// validator's own, adapter-aware check at RIP.getClient(...) time instead.
+			// void/RipResponse<T>/CompletableFuture<T> are excluded from this
+			// deferral and still hard-error unconditionally - each is a single-value
+			// wrapper/future concept fundamentally incompatible with "an unknown
+			// number of underlying calls" (the exact reasoning the
+			// RipResponse<Stream/Iterator<T>> check above already uses), so no future
+			// pagination adapter could ever legitimately claim one either.
+			//
+			// Falls through rather than returning outright: deferring the *return
+			// type* check to the reflective validator doesn't mean @Paginated's own
+			// attribute/parameter checks below (URL conflict, advance/pointerSource,
+			// pageSize, pointerKind/cursor params, hasMore/total signals) stop
+			// applying - those are independent of what the return type actually is.
+			if (!(paginated != null && isDeclared && !"com.shri.restinpeace.RipResponse".equals(rawReturnTypeName)
+					&& !"java.util.concurrent.CompletableFuture".equals(rawReturnTypeName))) {
+				reporter.error(String.format(
+						"The method %s is annotated with @Paginated or has a PaginationStrategy<T> parameter but does "
+								+ "not return Page<T>, Stream<T>, or Iterator<T>; void, RipResponse<T>, and "
+								+ "CompletableFuture<T> are not supported for pagination.",
+						qualifiedName(method)), method);
+				return;
+			}
+		} else {
+			String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
+			validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 		}
-		String typeName = returnsPage ? "Page" : returnsStream ? "Stream" : "Iterator";
-		validateParameterizedReturnType(method, (DeclaredType) returnType, typeName, false, types, reporter);
 
 		// Only reported when there's no static URL - validateUrlParam already reports
 		// a more specific "has both a @Url parameter and a static URL" error for that
@@ -892,7 +920,7 @@ final class CompileTimeRestClientValidator {
 						+ "is supported.", qualifiedName(method), parameter.asType()), parameter);
 			}
 		}
-		if (!returnsFile && !destinations.isEmpty()) {
+		if (!returnsFile && !destinations.isEmpty() && !isAdapterEligibleReturnType(method, types)) {
 			reporter.error(String.format("The method %s has a @Destination parameter but does not return File.",
 					qualifiedName(method)), method);
 		}
@@ -914,11 +942,43 @@ final class CompileTimeRestClientValidator {
 			reporter.error(String.format("The method %s has more than one DownloadProgressListener parameter.",
 					qualifiedName(method)), method);
 		}
-		if (!listeners.isEmpty() && !returnsDownloadableBody(method, types)) {
+		if (!listeners.isEmpty() && !returnsDownloadableBody(method, types) && !isAdapterEligibleReturnType(method, types)) {
 			reporter.error(String.format(
 					"The method %s has a DownloadProgressListener parameter but does not return byte[] or File.",
 					qualifiedName(method)), method);
 		}
+	}
+
+	/**
+	 * Mirrors {@code ReflectiveRestClientValidator.KNOWN_UNSUPPORTED_REACTIVE_TYPES}
+	 * by name only (no dependency on any of these libraries) - the one case
+	 * {@code validateDestination}/{@code validateDownloadProgressListener}
+	 * can't soundly enforce "must return File"/"must return byte[] or File"
+	 * for: a {@code CallAdapterFactory} claiming one of these is registered
+	 * at runtime, long after this annotation processor ran, so whether the
+	 * method actually decodes to {@code File}/{@code byte[]} (e.g.
+	 * {@code Mono<File>} once {@code rest-in-peace-reactor} registers its
+	 * factory) is unknowable here. Deferred entirely to
+	 * {@code ReflectiveRestClientValidator.validateCallAdapterResponseBodyType}'s
+	 * own adapter-aware check, which runs at {@code RIP.getClient()} time
+	 * once real adapters are actually known - not weakened for any other
+	 * return type shape (a plain class, {@code List<User>}, {@code CompletableFuture<T>}),
+	 * which codegen either dispatches directly or this validator already
+	 * understands well enough to keep enforcing.
+	 */
+	private static final Set<String> KNOWN_ADAPTER_ELIGIBLE_RETURN_TYPES = new HashSet<>(
+			java.util.Arrays.asList("reactor.core.publisher.Mono", "reactor.core.publisher.Flux",
+					"io.reactivex.rxjava3.core.Single", "io.reactivex.rxjava3.core.Observable",
+					"io.reactivex.rxjava3.core.Maybe", "io.reactivex.rxjava3.core.Completable",
+					"io.reactivex.rxjava3.core.Flowable", "io.reactivex.Single", "io.reactivex.Observable",
+					"io.reactivex.Maybe", "io.reactivex.Completable", "io.reactivex.Flowable"));
+
+	private static boolean isAdapterEligibleReturnType(ExecutableElement method, Types types) {
+		TypeMirror returnType = method.getReturnType();
+		if (returnType.getKind() != TypeKind.DECLARED) {
+			return false;
+		}
+		return KNOWN_ADAPTER_ELIGIBLE_RETURN_TYPES.contains(types.erasure(returnType).toString());
 	}
 
 	private static void validateUploadProgressListener(ExecutableElement method, Reporter reporter) {

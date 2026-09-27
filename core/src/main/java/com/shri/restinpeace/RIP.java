@@ -280,4 +280,72 @@ public class RIP {
 		RequestExecutor.clearInterceptors();
 	}
 
+	/**
+	 * Registers a global {@link CallAdapterFactory}, letting a method
+	 * declare a return type RIP itself has no built-in support for (e.g.
+	 * Project Reactor's {@code Mono<T>}/{@code Flux<T>}, via the separate
+	 * {@code rest-in-peace-reactor} module). Call once at startup, before
+	 * building any client - the same "configure globals first" requirement
+	 * {@link #setObjectMapper}/{@link #setCache}/{@link #useDaemonThreadsForAsync}
+	 * already have, since a factory needs to be registered before
+	 * {@code ReflectiveRestClientValidator} validates a method claiming it.
+	 * See {@code docs/design/reactor-call-adapter.md}.
+	 *
+	 * @param factory the factory to register
+	 */
+	public static void addCallAdapterFactory(CallAdapterFactory factory) {
+		RequestExecutor.addCallAdapterFactory(factory);
+	}
+
+	/**
+	 * Removes one previously registered global {@link CallAdapterFactory}
+	 * by identity; a no-op if it was never registered (or already removed).
+	 *
+	 * @param factory the factory instance to remove
+	 */
+	public static void removeCallAdapterFactory(CallAdapterFactory factory) {
+		RequestExecutor.removeCallAdapterFactory(factory);
+	}
+
+	/**
+	 * Removes every registered {@link CallAdapterFactory}. Mainly useful
+	 * for tests.
+	 */
+	public static void clearCallAdapterFactories() {
+		RequestExecutor.clearCallAdapterFactories();
+	}
+
+	/**
+	 * Registers a global {@link PaginatedCallAdapterFactory}, letting a
+	 * {@code @Paginated} method declare a return type RIP itself has no
+	 * built-in support for (e.g. Project Reactor's {@code Flux<T>}, via the
+	 * separate {@code rest-in-peace-reactor} module) - the pagination-aware
+	 * counterpart of {@link #addCallAdapterFactory}. Call once at startup,
+	 * before building any client, for the same reason. See
+	 * {@code docs/design/reactor-call-adapter.md} §7.2.
+	 *
+	 * @param factory the factory to register
+	 */
+	public static void addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
+		RequestExecutor.addPaginatedCallAdapterFactory(factory);
+	}
+
+	/**
+	 * Removes one previously registered global {@link PaginatedCallAdapterFactory}
+	 * by identity; a no-op if it was never registered (or already removed).
+	 *
+	 * @param factory the factory instance to remove
+	 */
+	public static void removePaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
+		RequestExecutor.removePaginatedCallAdapterFactory(factory);
+	}
+
+	/**
+	 * Removes every registered {@link PaginatedCallAdapterFactory}. Mainly
+	 * useful for tests.
+	 */
+	public static void clearPaginatedCallAdapterFactories() {
+		RequestExecutor.clearPaginatedCallAdapterFactories();
+	}
+
 }

@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -134,6 +136,40 @@ class RipRetryIntegrationTest extends AbstractRipIntegrationTest {
 		assertEquals(RestInPeaceHttpException.class, exception.getCause().getClass());
 		assertEquals(503, ((RestInPeaceHttpException) exception.getCause()).getStatus());
 		assertEquals(3, ALWAYS_FAILING_ATTEMPTS.get());
+	}
+
+	/**
+	 * Regression coverage for the cancellation-doesn't-reach-the-retry-loop
+	 * bug: previously, {@code future.cancel(true)} only ever cancelled the
+	 * {@code .thenApply(...)} decode stage {@code RequestExecutor.processAsync}
+	 * built - a derived {@link CompletableFuture} stage whose cancellation
+	 * never reaches anything upstream on its own - leaving the already-
+	 * scheduled {@code @Retry} wait to fire regardless. This isn't Reactor-
+	 * specific: the same {@code RequestExecutor.processAsync}/
+	 * {@code RetryExecutor} pipeline backs the plain
+	 * {@code CompletableFuture<T>} API exercised here too.
+	 */
+	@Test
+	void retry_asyncCancellingDuringTheBackoffWait_stopsTheScheduledRetryFromFiring() throws InterruptedException {
+		LocalApi api = RIP.getClient(LocalApi.class);
+
+		CompletableFuture<String> future = api.getAlwaysFailingWithSlowRetryAsync(port, "cancel-during-backoff");
+		awaitAttempts(1); // the first attempt has landed and failed
+
+		future.cancel(true); // well before the 400ms @Retry backoff wait elapses
+
+		Thread.sleep(600); // past the backoff wait - a retry would have landed by now if not cancelled
+		assertEquals(1, ALWAYS_FAILING_ATTEMPTS.get());
+	}
+
+	private static void awaitAttempts(int expected) throws InterruptedException {
+		long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+		while (ALWAYS_FAILING_ATTEMPTS.get() < expected) {
+			if (System.nanoTime() > deadline) {
+				fail("Timed out waiting for " + expected + " attempts; observed " + ALWAYS_FAILING_ATTEMPTS.get());
+			}
+			Thread.sleep(10);
+		}
 	}
 
 	@Test

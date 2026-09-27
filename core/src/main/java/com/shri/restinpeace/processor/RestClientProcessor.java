@@ -38,6 +38,7 @@ import com.shri.restinpeace.annotation.method.OPTIONS;
 import com.shri.restinpeace.annotation.method.PATCH;
 import com.shri.restinpeace.annotation.method.POST;
 import com.shri.restinpeace.annotation.method.PUT;
+import com.shri.restinpeace.annotation.pagination.Paginated;
 import com.shri.restinpeace.annotation.request.Body;
 import com.shri.restinpeace.annotation.request.Destination;
 import com.shri.restinpeace.annotation.request.Field;
@@ -192,6 +193,21 @@ public class RestClientProcessor extends AbstractProcessor {
 		if (httpMethodAndUrl == null) {
 			return null;
 		}
+		if (isPaginated(methodElement)) {
+			// @Paginated/PaginationStrategy<T> methods are reflective-only, always -
+			// see RequestExecutor.processPaginatedRequest's own javadoc - regardless of
+			// return type. Page<T>/Stream<T>/Iterator<T> already fall back this way "by
+			// accident" (their own type arguments disqualify them below), but a plain,
+			// non-generic return type (e.g. a @Paginated method mistakenly returning
+			// String) would otherwise sail through returnModelOf unrecognized as
+			// anything special and get codegen'd into a broken single-decode method
+			// that silently ignores @Paginated's page-fetch-and-loop semantics
+			// entirely - checked explicitly here, first, so that mistake (or any
+			// return type a PaginatedCallAdapterFactory might otherwise legitimately
+			// claim at runtime - see docs/design/reactor-call-adapter.md §7.2) always
+			// falls back to the reflective proxy instead, never silently miscompiles.
+			return null;
+		}
 		ReturnModel returnModel = returnModelOf(methodElement);
 		if (returnModel == null) {
 			return null;
@@ -323,6 +339,25 @@ public class RestClientProcessor extends AbstractProcessor {
 		}
 	}
 
+	/**
+	 * Whether {@code methodElement} is a {@code @Paginated} method or has a
+	 * {@code PaginationStrategy<T>} parameter - either way, reflective-only,
+	 * unconditionally, regardless of return type (see
+	 * {@link #toSupportedMethodModel}'s call site).
+	 */
+	private boolean isPaginated(ExecutableElement methodElement) {
+		if (methodElement.getAnnotation(Paginated.class) != null) {
+			return true;
+		}
+		for (VariableElement parameter : methodElement.getParameters()) {
+			if (parameter.asType().getKind() == TypeKind.DECLARED && "com.shri.restinpeace.PaginationStrategy"
+					.equals(processingEnv.getTypeUtils().erasure(parameter.asType()).toString())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private HttpMethodAndUrl httpMethodAndUrlOf(ExecutableElement methodElement) {
 		GET get = methodElement.getAnnotation(GET.class);
 		if (get != null) {
@@ -438,15 +473,18 @@ public class RestClientProcessor extends AbstractProcessor {
 	private ParamModel toSupportedParamModel(VariableElement parameter) {
 		String javaParamName = parameter.getSimpleName().toString();
 		String javaTypeName = parameter.asType().toString();
+		String erasedJavaTypeName = processingEnv.getTypeUtils().erasure(parameter.asType()).toString();
 
 		// UploadProgressListener/DownloadProgressListener need no annotation at all -
 		// detected by type alone, same as the reflective path's own
 		// `parameter.getType() == UploadProgressListener.class`/`== DownloadProgressListener.class`.
 		if ("com.shri.restinpeace.upload.UploadProgressListener".equals(javaTypeName)) {
-			return new ParamModel(ParamKind.UPLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
+			return new ParamModel(ParamKind.UPLOAD_PROGRESS, "", javaParamName, javaTypeName, erasedJavaTypeName,
+					false, "", "");
 		}
 		if ("com.shri.restinpeace.download.DownloadProgressListener".equals(javaTypeName)) {
-			return new ParamModel(ParamKind.DOWNLOAD_PROGRESS, "", javaParamName, javaTypeName, false, "", "");
+			return new ParamModel(ParamKind.DOWNLOAD_PROGRESS, "", javaParamName, javaTypeName, erasedJavaTypeName,
+					false, "", "");
 		}
 
 		PathParam pathParam = parameter.getAnnotation(PathParam.class);
@@ -473,50 +511,56 @@ public class RestClientProcessor extends AbstractProcessor {
 			// validation error the runtime validator catches) would otherwise produce
 			// generated source that fails to compile - never let that happen.
 			return "java.io.File".equals(javaTypeName)
-					? new ParamModel(ParamKind.DESTINATION, "", javaParamName, javaTypeName, false, "", "")
+					? new ParamModel(ParamKind.DESTINATION, "", javaParamName, javaTypeName, erasedJavaTypeName,
+							false, "", "")
 					: null;
 		}
 
 		if (pathParam != null) {
-			return new ParamModel(ParamKind.PATH, pathParam.value(), javaParamName, javaTypeName, false, "", "");
+			return new ParamModel(ParamKind.PATH, pathParam.value(), javaParamName, javaTypeName, erasedJavaTypeName,
+					false, "", "");
 		}
 		if (queryParam != null) {
 			return new ParamModel(ParamKind.QUERY, queryParam.value(), javaParamName, javaTypeName,
-					queryParam.required(), queryParam.defaultValue(), "");
+					erasedJavaTypeName, queryParam.required(), queryParam.defaultValue(), "");
 		}
 		if (headerParam != null) {
 			return new ParamModel(ParamKind.HEADER, headerParam.value(), javaParamName, javaTypeName,
-					headerParam.required(), headerParam.defaultValue(), "");
+					erasedJavaTypeName, headerParam.required(), headerParam.defaultValue(), "");
 		}
 		if (queryMap != null) {
 			return isMapType(parameter.asType())
-					? new ParamModel(ParamKind.QUERY_MAP, "", javaParamName, javaTypeName, false, "", "")
+					? new ParamModel(ParamKind.QUERY_MAP, "", javaParamName, javaTypeName, erasedJavaTypeName, false,
+							"", "")
 					: null;
 		}
 		if (headerMap != null) {
 			return isMapType(parameter.asType())
-					? new ParamModel(ParamKind.HEADER_MAP, "", javaParamName, javaTypeName, false, "", "")
+					? new ParamModel(ParamKind.HEADER_MAP, "", javaParamName, javaTypeName, erasedJavaTypeName, false,
+							"", "")
 					: null;
 		}
 		if (body != null) {
-			return new ParamModel(ParamKind.BODY, "", javaParamName, javaTypeName, false, "", "");
+			return new ParamModel(ParamKind.BODY, "", javaParamName, javaTypeName, erasedJavaTypeName, false, "", "");
 		}
 		if (part != null) {
-			return new ParamModel(ParamKind.PART, part.value(), javaParamName, javaTypeName, part.required(),
-					part.defaultValue(), part.fileName());
+			return new ParamModel(ParamKind.PART, part.value(), javaParamName, javaTypeName, erasedJavaTypeName,
+					part.required(), part.defaultValue(), part.fileName());
 		}
 		if (partMap != null) {
 			return isMapType(parameter.asType())
-					? new ParamModel(ParamKind.PART_MAP, "", javaParamName, javaTypeName, false, "", "")
+					? new ParamModel(ParamKind.PART_MAP, "", javaParamName, javaTypeName, erasedJavaTypeName, false,
+							"", "")
 					: null;
 		}
 		if (field != null) {
-			return new ParamModel(ParamKind.FIELD, field.value(), javaParamName, javaTypeName, field.required(),
-					field.defaultValue(), "");
+			return new ParamModel(ParamKind.FIELD, field.value(), javaParamName, javaTypeName, erasedJavaTypeName,
+					field.required(), field.defaultValue(), "");
 		}
 		if (fieldMap != null) {
 			return isMapType(parameter.asType())
-					? new ParamModel(ParamKind.FIELD_MAP, "", javaParamName, javaTypeName, false, "", "")
+					? new ParamModel(ParamKind.FIELD_MAP, "", javaParamName, javaTypeName, erasedJavaTypeName, false,
+							"", "")
 					: null;
 		}
 		// url != null - the generated method assigns the resolved String straight into a
@@ -524,7 +568,7 @@ public class RestClientProcessor extends AbstractProcessor {
 		// runtime validator catches) would otherwise produce generated source that fails to
 		// compile - never let that happen.
 		return "java.lang.String".equals(javaTypeName)
-				? new ParamModel(ParamKind.URL, "", javaParamName, javaTypeName, false, "", "")
+				? new ParamModel(ParamKind.URL, "", javaParamName, javaTypeName, erasedJavaTypeName, false, "", "")
 				: null;
 	}
 
@@ -619,21 +663,62 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append("public final class ").append(implName).append(" implements ").append(interfaceName)
 				.append(" {\n\n");
 		out.append("\tprivate final com.shri.restinpeace.internal.RequestExecutor ripProcessor;\n");
-		if (!fallbackMethods.isEmpty()) {
+
+		// A CallAdapterFactory can claim a PLAIN-classified method's return type even
+		// though it isn't Mono<T>/Flux<T>-shaped (see docs/design/reactor-call-adapter.md);
+		// the reflective proxy path already checks resolveCallAdapter before falling to
+		// generic decode, but generated PLAIN dispatch (finishGeneratedSync/Async) never
+		// did, silently bypassing any adapter registered for such a method. So every
+		// PLAIN method needs the reflective fallback available (not just compile-time-
+		// disqualified ones) to delegate to when an adapter claims it - see appendMethod.
+		boolean hasPlainMethod = methods.stream().anyMatch(m -> m.returnModel.kind == ReturnKind.PLAIN);
+		boolean needsReflectiveFallback = !fallbackMethods.isEmpty() || hasPlainMethod;
+		if (needsReflectiveFallback) {
 			out.append("\tprivate volatile ").append(interfaceName).append(" __ripReflectiveFallback;\n");
 		}
+
+		List<String> reflectiveMethodFieldNames = new ArrayList<>(methods.size());
+		StringBuilder reflectiveMethodFields = new StringBuilder();
+		StringBuilder reflectiveMethodInit = new StringBuilder();
+		int plainMethodIndex = 0;
+		for (MethodModel method : methods) {
+			String fieldName = null;
+			if (method.returnModel.kind == ReturnKind.PLAIN) {
+				fieldName = "__RIP_METHOD_" + plainMethodIndex++;
+				reflectiveMethodFields.append("\tprivate static final java.lang.reflect.Method ").append(fieldName)
+						.append(";\n");
+				reflectiveMethodInit.append("\t\t\t").append(fieldName).append(" = ").append(interfaceName)
+						.append(".class.getMethod(").append(stringLiteral(method.name));
+				for (ParamModel param : method.params) {
+					reflectiveMethodInit.append(", ").append(param.erasedJavaTypeName).append(".class");
+				}
+				reflectiveMethodInit.append(");\n");
+			}
+			reflectiveMethodFieldNames.add(fieldName);
+		}
+		if (reflectiveMethodFields.length() > 0) {
+			out.append(reflectiveMethodFields);
+			out.append("\tstatic {\n");
+			out.append("\t\ttry {\n");
+			out.append(reflectiveMethodInit);
+			out.append("\t\t} catch (NoSuchMethodException __ripEx) {\n");
+			out.append("\t\t\tthrow new ExceptionInInitializerError(__ripEx);\n");
+			out.append("\t\t}\n");
+			out.append("\t}\n");
+		}
+
 		out.append("\n");
 		out.append("\tpublic ").append(implName)
 				.append("(com.shri.restinpeace.internal.RequestExecutor ripProcessor) {\n");
 		out.append("\t\tthis.ripProcessor = ripProcessor;\n");
 		out.append("\t}\n\n");
 
-		if (!fallbackMethods.isEmpty()) {
+		if (needsReflectiveFallback) {
 			appendReflectiveFallbackAccessor(out, interfaceName);
 		}
 
-		for (MethodModel method : methods) {
-			appendMethod(out, method, interfaceBaseUrl, interfaceName);
+		for (int i = 0; i < methods.size(); i++) {
+			appendMethod(out, methods.get(i), interfaceBaseUrl, interfaceName, reflectiveMethodFieldNames.get(i));
 		}
 		for (ExecutableElement fallbackMethod : fallbackMethods) {
 			appendFallbackMethod(out, fallbackMethod);
@@ -711,7 +796,8 @@ public class RestClientProcessor extends AbstractProcessor {
 		out.append(");\n\t}\n\n");
 	}
 
-	private void appendMethod(StringBuilder out, MethodModel method, String interfaceBaseUrl, String interfaceName) {
+	private void appendMethod(StringBuilder out, MethodModel method, String interfaceBaseUrl, String interfaceName,
+			String reflectiveMethodFieldName) {
 		out.append("\t@Override\n\tpublic ").append(method.returnModel.javaTypeName).append(" ").append(method.name)
 				.append("(");
 		for (int i = 0; i < method.params.size(); i++) {
@@ -722,6 +808,29 @@ public class RestClientProcessor extends AbstractProcessor {
 			out.append(param.javaTypeName).append(" ").append(param.javaParamName);
 		}
 		out.append(") {\n");
+
+		if (reflectiveMethodFieldName != null) {
+			// A CallAdapterFactory can claim this PLAIN method's return type at runtime
+			// even though codegen doesn't know about it at compile time - delegate to the
+			// same reflective proxy the reflective path always checks first, rather than
+			// silently decoding the response body directly and bypassing the adapter.
+			out.append("\t\tif (com.shri.restinpeace.internal.RequestExecutor.resolveCallAdapter(")
+					.append(reflectiveMethodFieldName).append(").isPresent()) {\n");
+			boolean voidReturn = "void".equals(method.returnModel.javaTypeName);
+			out.append("\t\t\t").append(voidReturn ? "" : "return ").append("__ripFallback().").append(method.name)
+					.append("(");
+			for (int i = 0; i < method.params.size(); i++) {
+				if (i > 0) {
+					out.append(", ");
+				}
+				out.append(method.params.get(i).javaParamName);
+			}
+			out.append(");\n");
+			if (voidReturn) {
+				out.append("\t\t\treturn;\n");
+			}
+			out.append("\t\t}\n");
+		}
 
 		ParamModel urlParam = urlParamOf(method);
 		if (urlParam != null) {
@@ -1020,16 +1129,18 @@ public class RestClientProcessor extends AbstractProcessor {
 		final String name;
 		final String javaParamName;
 		final String javaTypeName;
+		final String erasedJavaTypeName;
 		final boolean required;
 		final String defaultValue;
 		final String fileName;
 
-		ParamModel(ParamKind kind, String name, String javaParamName, String javaTypeName, boolean required,
-				String defaultValue, String fileName) {
+		ParamModel(ParamKind kind, String name, String javaParamName, String javaTypeName, String erasedJavaTypeName,
+				boolean required, String defaultValue, String fileName) {
 			this.kind = kind;
 			this.name = name;
 			this.javaParamName = javaParamName;
 			this.javaTypeName = javaTypeName;
+			this.erasedJavaTypeName = erasedJavaTypeName;
 			this.required = required;
 			this.defaultValue = defaultValue;
 			this.fileName = fileName;

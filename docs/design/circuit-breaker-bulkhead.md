@@ -639,8 +639,8 @@ and the reasoning for matching it rather than inventing something else:
   the breaker is an interceptor (already dispatch-path-agnostic by
   construction) and the bulkhead wraps dispatch itself rather than
   depending on how a method's return type was decoded, so unlike the
-  parked `CallAdapter` item, no codegen changes are needed in
-  `RestClientProcessor` at all.
+  `CallAdapter` item (see `docs/design/reactor-call-adapter.md`), no
+  codegen changes are needed in `RestClientProcessor` at all.
 
 ## 8. Open questions to resolve before implementation starts
 

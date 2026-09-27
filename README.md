@@ -73,6 +73,8 @@ test server for unit tests.
 - [Pagination](#pagination)
 - [Error handling](#error-handling)
 - [Async](#async)
+- [Pluggable return types (`CallAdapter`)](#pluggable-return-types-calladapter)
+- [Reactive (Project Reactor)](#reactive-project-reactor)
 - [Retries](#retries)
   - [Retry budget](#retry-budget)
   - [Circuit breaker](#circuit-breaker)
@@ -267,7 +269,12 @@ Published to [Maven Central](https://central.sonatype.com/artifact/io.github.shr
 under `io.github.shrinivas93:rest-in-peace` (core) and
 `io.github.shrinivas93:rest-in-peace-spring-boot-starter` (the
 [Spring Boot starter](#spring--spring-boot)) — no repository declaration or
-credentials needed, just add the dependency. The same coordinates are also
+credentials needed, just add the dependency.
+`io.github.shrinivas93:rest-in-peace-reactor` (the
+[`Mono<T>`/`Flux<T>` `CallAdapter`s](#reactive-project-reactor)) isn't
+published yet - see [`ROADMAP.md`](ROADMAP.md) for status; build it locally
+in the meantime, per [Reactive (Project Reactor)](#reactive-project-reactor)
+below. The other two coordinates are also
 published to GitHub Packages, which does require authentication even for
 public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
@@ -1173,6 +1180,177 @@ own afterward. Two ways to deal with that:
   already configures Unirest's async client itself.
 - Or call `kong.unirest.Unirest.shutDown()` when you're done making
   requests.
+
+## Pluggable return types (`CallAdapter`)
+
+Every return type above is one RIP knows about natively. For a return type
+it doesn't — Project Reactor's `Mono<T>`/`Flux<T>`, or any other
+programming model a consumer's codebase is already built around —
+`CallAdapterFactory` is the escape hatch, without RIP taking a hard
+dependency on any of them:
+
+```java
+public interface CallAdapter<T> {
+    Type responseBodyType();                       // what to decode the response body into
+    T adapt(CompletableFuture<Object> delegate);    // wraps the call RIP already dispatched
+}
+
+public interface CallAdapterFactory {
+    Optional<CallAdapter<?>> get(Method method);    // recognize a method's return type, or decline
+}
+```
+
+```java
+RIP.addCallAdapterFactory(myFactory);   // call once at startup, before building any client
+```
+
+An adapter never dispatches its own HTTP call — `adapt` only ever
+transforms the exact `CompletableFuture` RIP's own async dispatch path
+already produced, guaranteeing the adapted call goes through the identical
+`@Retry`/cache/circuit-breaker/bulkhead/interceptor pipeline as every other
+call, dispatched exactly once. Every registered factory is consulted, in
+registration order, and the first one to recognize a method wins.
+
+A method returning a known-opaque reactive wrapper type (Project Reactor's
+`Mono`/`Flux`, RxJava's `Single`/`Observable`/`Maybe`/`Completable`/
+`Flowable`) with no factory registered to claim it fails validation by
+name — pointing at registering a `CallAdapterFactory` — instead of
+attempting to decode the response body directly into that type and
+silently misbehaving.
+
+Project Reactor is the first (and, so far, only) built-in consumer of this
+SPI, shipped as its own `rest-in-peace-reactor` module rather than folded
+into `core` — see [Reactive (Project Reactor)](#reactive-project-reactor)
+below.
+
+## Reactive (Project Reactor)
+
+The `rest-in-peace-reactor` module ships real `CallAdapterFactory`
+implementations for Project Reactor's `Mono<T>` and plain `Flux<T>`, plus a
+`PaginatedCallAdapterFactory` implementation for `@Paginated Flux<T>` (the
+pagination-aware counterpart SPI — see [Pagination](#pagination) above) —
+add the dependency, register once at startup, and any `@RestClient` method
+can return any of the three directly, with no other configuration.
+`rest-in-peace-reactor` isn't published yet (see the
+[Installation](#installation) section above), so build it locally first -
+`mvn install -N && mvn install -DskipTests -pl core,rest-in-peace-reactor`
+from the repository root - then depend on whatever version that installs
+(see [`samples/reactor-consumer`](samples/reactor-consumer) for a complete,
+runnable example resolving it exactly this way):
+
+```xml
+<dependency>
+    <groupId>io.github.shrinivas93</groupId>
+    <artifactId>rest-in-peace-reactor</artifactId>
+    <version><!-- the version mvn install above just installed --></version>
+</dependency>
+```
+
+```java
+RestInPeaceReactor.register();   // once, at startup, before building any client - covers both Mono<T> and Flux<T>
+```
+
+[`samples/reactor-consumer`](samples/reactor-consumer) is a standalone,
+runnable project exercising `Mono<T>` and both `Flux<T>` flavors against a
+real HTTP server - see its own [README](samples/reactor-consumer/README.md)
+to build and run it.
+
+### `Mono<T>`
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+interface UserApi {
+    @GET("/users/{id}")
+    Mono<User> getUser(@PathParam("id") String id);
+
+    @GET("/users/{id}")
+    Mono<RipResponse<User>> getUserWithResponse(@PathParam("id") String id);
+
+    @GET("/reports/{id}")
+    Mono<byte[]> downloadReport(@PathParam("id") String id);
+
+    @POST("/events")
+    Mono<Void> fireEvent(@Body Event event);
+}
+```
+
+`Mono<Void>`, `Mono<RipResponse<T>>`, and `Mono<byte[]>` all work the same
+way `CompletableFuture<Void>`/`CompletableFuture<RipResponse<T>>`/
+`CompletableFuture<byte[]>` already do — the `Mono<T>` is just a different
+wrapper over the identical dispatch. Two things worth calling out
+explicitly:
+
+- **Eager, not deferred.** The HTTP call is already dispatched by the time
+  `getUser(id)` returns — before anything ever subscribes to the `Mono`.
+  This matches `CompletableFuture<T>`'s own semantics elsewhere in RIP, but
+  differs from Reactor's usual defer-until-subscribed convention. A caller
+  who wants that instead wraps it themselves:
+  `Mono.defer(() -> api.getUser(id))`.
+- **Disposing genuinely cancels the in-flight call.** `.subscribe()`'s
+  returned `Disposable`, or a fired `.timeout(...)`, cancels the underlying
+  `CompletableFuture` (`cancel(true)`), aborting the in-flight request
+  rather than merely discarding a result that keeps computing anyway.
+
+A raw `Mono` (no type argument) fails validation by name, the same as an
+unclaimed `Mono<T>` with no factory registered.
+
+### `Flux<T>`
+
+`rest-in-peace-reactor` also registers `Flux<T>` support, in two genuinely
+different flavors distinguished by `@Paginated`'s presence — the same
+`RestInPeaceReactor.register()` call above covers both, no separate setup:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+interface OrderApi {
+    @GET("/orders")
+    Flux<Order> listOrders();   // flavor 1 — a single JSON array response
+
+    @GET("/orders")
+    @Paginated(itemsField = "orders", pointerField = "next_cursor")
+    Flux<Order> fluxOrders(@QueryParam("cursor") @PaginationCursor String cursor);   // flavor 2 — real backpressure
+}
+```
+
+- **Flavor 1 — a single response's JSON array, emitted item by item.**
+  `listOrders()` decodes the response body as `List<Order>` (RIP's existing
+  generic-collection decoding) and emits each item via `Flux.fromIterable`.
+  There's no real backpressure here — the whole list is already decoded in
+  memory before any item is emitted — so this flavor is a convenience for a
+  consumer already writing Reactor-style pipelines over a normal,
+  non-paginated endpoint, not a memory-efficiency feature.
+- **Flavor 2 — `@Paginated` auto-flattened into a genuinely
+  backpressure-aware stream.** `fluxOrders(cursor)` is a third
+  return-type-driven flattening mode on `@Paginated`, alongside `Page<T>`
+  (manual) and `Stream<T>`/`Iterator<T>` (see
+  [Pagination](#pagination) above) — the next page is only fetched once
+  the subscriber's own demand (`request(n)`) genuinely exceeds what's
+  already buffered, so `.take(2)` or an explicit `request(2)` fetches at
+  most as many pages as needed to satisfy it, never the whole result set
+  up front. The first page is still fetched eagerly (blocking the calling
+  thread, exactly like a plain `Page<T>` return type on the same method),
+  matching RIP's "eager, not deferred" convention; every page after that
+  runs on a background thread, since `Page<T>.next()` is a plain blocking
+  call. Disposing (or a fired `.timeout(...)`) stops further pages from
+  being fetched — best-effort for a fetch already genuinely in flight,
+  since interrupting the worker thread doesn't guarantee the underlying
+  blocking HTTP call itself aborts mid-request the way `Mono<T>`'s
+  `CompletableFuture#cancel(true)` does.
+
+Both flavors decline a raw `Flux` (no type argument). The plain flavor then
+falls through to the by-name validation error; a raw `@Paginated Flux` is
+rejected by pagination validation as an unsupported paginated return type.
+
+Every numbered chunk of the rollout plan has now landed — see
+[`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
+for the full design, the reasoning behind each real deviation from its
+original sketch, and the exhaustive usage-example catalogue every shape
+above is drawn from. `Kotlin coroutines` and RxJava remain deliberately out
+of scope: the `CallAdapterFactory` SPI itself is library-agnostic, but a
+second reactive library needs its own concrete consumer built against real
+usage, not built ahead of one.
 
 ## Retries
 
@@ -2273,12 +2451,21 @@ zero hand-written `@Bean` method. See its own
 [README](samples/spring-boot-consumer/README.md) for how to build and run
 it.
 
+[`samples/reactor-consumer`](samples/reactor-consumer) is a standalone
+project showing what a real downstream consumer sees from
+[Project Reactor support](#reactive-project-reactor) - add
+`rest-in-peace-reactor` as an ordinary dependency alongside the core
+library, call `RestInPeaceReactor.register()` once, and every
+`Mono<T>`/`Flux<T>`-returning method (both `Flux<T>` flavors included)
+just works. See its own [README](samples/reactor-consumer/README.md) for
+how to build and run it.
+
 ## Project structure
 
 ```text
 REST-in-peace/
-├── pom.xml                               # parent of core/ and spring-boot-starter/ - both inherit
-│                                          # its version, so a single release bumps them together
+├── pom.xml                               # parent of core/, spring-boot-starter/, rest-in-peace-reactor/ -
+│                                          # all three inherit its version, so a single release bumps them together
 ├── core/                                 # the rest-in-peace artifact
 │   ├── pom.xml
 │   ├── src/main/java/com/shri/restinpeace/
@@ -2315,17 +2502,21 @@ REST-in-peace/
 │       └── Rip*IntegrationTest.java          # one class per feature area
 ├── spring-boot-starter/                  # optional Spring Boot 4.x/Java 17 auto-configuration -
 │                                          # sibling module of core/, same version, own pom.xml
+├── rest-in-peace-reactor/                # optional Project Reactor Mono<T>/Flux<T> CallAdapters -
+│                                          # sibling module of core/, same version, own pom.xml
 ├── samples/compile-time-proxy-consumer/  # standalone downstream-consumer sample
 ├── samples/spring-boot-consumer/         # standalone downstream-consumer sample (Spring Boot)
+├── samples/reactor-consumer/             # standalone downstream-consumer sample (Project Reactor)
 ├── docs/design/                          # design write-ups (compile-time codegen, ...)
 ├── .github/workflows/                    # CI, release, javadoc, publish pipelines
 ├── CONTRIBUTING.md, CHANGELOG.md, ROADMAP.md, LICENSE
 └── README.md
 ```
 
-`core/` and `spring-boot-starter/` are sibling Maven modules under the root
-`pom.xml` - both inherit their version from it, so they're always released
-and published together as one version, never independently. `samples/*`
+`core/`, `spring-boot-starter/`, and `rest-in-peace-reactor/` are sibling
+Maven modules under the root `pom.xml` - all three inherit their version
+from it, so they're always released and published together as one version,
+never independently. `samples/*`
 are deliberately **not** modules — each resolves the artifacts it needs as
 an ordinary external Maven dependency, the same way a real downstream
 consumer would, rather than through reactor resolution. See
@@ -2346,14 +2537,15 @@ cd REST-in-peace
 mvn clean test
 ```
 
-`mvn` at the repo root cascades into every module — `core/` and
-`spring-boot-starter/` — so the command above builds and tests both. To
-work on just one, scope with `-pl` (`-am` also builds any reactor modules
-it depends on):
+`mvn` at the repo root cascades into every module — `core/`,
+`spring-boot-starter/`, and `rest-in-peace-reactor/` — so the command above
+builds and tests all three. To work on just one, scope with `-pl` (`-am`
+also builds any reactor modules it depends on):
 
 ```bash
-mvn test -pl core                    # core only
-mvn test -pl spring-boot-starter -am # the starter, and core since it depends on it
+mvn test -pl core                     # core only
+mvn test -pl spring-boot-starter -am  # the starter, and core since it depends on it
+mvn test -pl rest-in-peace-reactor -am # the reactor module, and core since it depends on it
 ```
 
 If your local JDK is newer than 8 (likely), also run this before pushing —

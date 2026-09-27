@@ -1,0 +1,134 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.github.shrinivas93</groupId>
+		<artifactId>rest-in-peace-parent</artifactId>
+		<version>1.0.0.52-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
+	<artifactId>rest-in-peace-reactor</artifactId>
+	<packaging>jar</packaging>
+
+	<name>rest-in-peace-reactor</name>
+	<url>https://github.com/shrinivas93/REST-in-peace</url>
+	<description>
+		Project Reactor CallAdapterFactory implementations for REST-in-peace -
+		Mono&lt;T&gt; return-type support (Flux&lt;T&gt; lands in a later chunk).
+		See docs/design/reactor-call-adapter.md in the parent repository for
+		the full design and rollout plan. A sibling reactor module of core/
+		(not a dependent of it in the reactor sense - it resolves core the
+		same way a real downstream consumer would, as an ordinary Maven
+		dependency), sharing core's version and release cadence via their
+		common parent. Targets Java 8, matching core, since this module adds
+		no framework requirement of its own beyond reactor-core itself
+		(unlike rest-in-peace-spring-boot-starter, which needs Java 17+ for
+		Spring Boot 4.x).
+	</description>
+
+	<!-- Version, scm, distributionManagement, and release-plugin config are
+	     all inherited from the parent - see pom.xml's own comment for why. -->
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<maven.compiler.source>1.8</maven.compiler.source>
+		<maven.compiler.target>1.8</maven.compiler.target>
+		<reactor.version>2023.0.19</reactor.version>
+		<!-- Held back to the same 5.x line core itself uses, for the same reason
+		     core/pom.xml's own comment gives: JUnit 6.x requires Java 17 minimum,
+		     which breaks compiling this module's tests outright under the real
+		     JDK 8 ci.yml's `test` job builds it with. -->
+		<junit.version>5.14.4</junit.version>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<!-- reactor-bom pins reactor-core/reactor-test to one mutually
+			     compatible pair, the same "import one BOM instead of pinning each
+			     artifact's version by hand" shape spring-boot-starter's own
+			     spring-boot-dependencies import already uses. -->
+			<dependency>
+				<groupId>io.projectreactor</groupId>
+				<artifactId>reactor-bom</artifactId>
+				<version>${reactor.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<dependencies>
+		<dependency>
+			<!-- Same version as this module by construction - both inherit it
+			     from the shared parent, so ${project.version} always names
+			     whatever core version this build is paired with. -->
+			<groupId>io.github.shrinivas93</groupId>
+			<artifactId>rest-in-peace</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<dependency>
+			<!-- The only new runtime dependency this module adds - never present
+			     in core's own pom.xml. -->
+			<groupId>io.projectreactor</groupId>
+			<artifactId>reactor-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${junit.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<!-- StepVerifier - Reactor's own standard test utility for asserting on
+			     a Mono/Flux's emitted signals. -->
+			<groupId>io.projectreactor</groupId>
+			<artifactId>reactor-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.16.0</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>3.6.0</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.12.0</version>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- See core/pom.xml's own comment - required by Maven Central, and a
+			     normal convenience for GitHub Packages consumers too. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<version>3.4.0</version>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+</project>

@@ -2,12 +2,12 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<!--
-	Real parent of core/ and spring-boot-starter/ - both inherit their
-	<version> from here rather than declaring their own, so a single
-	release:prepare run at this root bumps both together and they can never
-	drift out of sync. distributionManagement and the release-plugin config
-	live here for the same reason: one release, one tag, one publish
-	covering both artifacts.
+	Real parent of core/, spring-boot-starter/, and rest-in-peace-reactor/ -
+	all three inherit their <version> from here rather than declaring their
+	own, so a single release:prepare run at this root bumps them together
+	and they can never drift out of sync. distributionManagement and the
+	release-plugin config live here for the same reason: one release, one
+	tag, one publish covering every artifact.
 
 	This POM itself also gets installed/published alongside them (a
 	pom-packaging project's own "artifact" is just its POM) - anything that
@@ -28,7 +28,7 @@
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>
-	<description>Shared parent POM for rest-in-peace and rest-in-peace-spring-boot-starter - a simple, declarative and peaceful REST client for Java.</description>
+	<description>Shared parent POM for rest-in-peace, rest-in-peace-spring-boot-starter, and rest-in-peace-reactor - a simple, declarative and peaceful REST client for Java.</description>
 	<url>https://github.com/shrinivas93/REST-in-peace</url>
 
 	<!-- Required by Maven Central for every published POM (a child module's
@@ -62,6 +62,7 @@
 	<modules>
 		<module>core</module>
 		<module>spring-boot-starter</module>
+		<module>rest-in-peace-reactor</module>
 	</modules>
 
 	<build>
