@@ -479,6 +479,32 @@ class CompileTimeValidationTest {
 		assertErrorContains(diagnostics, "has a @Destination parameter but does not return File");
 	}
 
+	/**
+	 * {@code byte[]}'s {@code TypeKind} is {@code ARRAY}, not {@code DECLARED} -
+	 * exercising {@code isAdapterEligibleReturnType}'s own non-declared-type
+	 * guard (it only ever needs to recognize a possibly-adapter-claimed
+	 * return type among {@code DECLARED} ones, e.g. {@code Mono<File>|byte[]}
+	 * itself is never adapter-claimable the way an opaque wrapper type is,
+	 * since {@code ResponseDecoder} already fully understands it) - proving
+	 * that guard doesn't accidentally suppress this genuinely-invalid
+	 * combination's error.
+	 */
+	@Test
+	void destinationWithByteArrayReturn_failsCompilation() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("DestinationWithByteArrayReturn", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Destination;\n" //
+				+ "import java.io.File;\n" //
+				+ "@RestClient\n" //
+				+ "public interface DestinationWithByteArrayReturn {\n" //
+				+ "  @GET(\"http://localhost/items\")\n" //
+				+ "  byte[] getItem(@Destination File destination);\n" //
+				+ "}\n");
+
+		assertErrorContains(diagnostics, "has a @Destination parameter but does not return File");
+	}
+
 	@Test
 	void downloadProgressListenerWrongReturn_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("DownloadListenerWrongReturn", "" //
