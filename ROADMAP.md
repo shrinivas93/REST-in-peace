@@ -1392,13 +1392,18 @@ policy in `CLAUDE.md`.
       `Metadata` before `adapt` runs; expose the item `Type` through this
       SPI or reject and document a single item-type argument.
       `core/src/main/java/com/shri/restinpeace/PaginatedCallAdapter.java:39`.
-- [ ] **Opaque-reactive denylist misses a nested wrapper** — the denylist
+- [x] **Opaque-reactive denylist misses a nested wrapper** — the denylist
       only checks the outermost return type name, so a nested opaque
       wrapper like `CompletableFuture<Mono<User>>` or
       `RipResponse<Flux<User>>` passes validation and is then decoded into
       `Mono`/`Flux` through the Gson/generic path - the exact broken-
-      instance failure the denylist's own javadoc says it prevents. Also
-      reject the known opaque names when they appear as a type argument.
+      instance failure the denylist's own javadoc says it prevents. Fixed:
+      `validateParameterizedReturnType` now also rejects a
+      `KNOWN_UNSUPPORTED_REACTIVE_TYPES` entry appearing as the inner type
+      argument, for both the `CompletableFuture<T>` and `RipResponse<T>`
+      callers - a registered `CallAdapterFactory` can't rescue this shape
+      either, since `CallAdapterFactory.get(method)` only ever sees a
+      method's own top-level return type, never a nested type argument.
       `core/src/main/java/com/shri/restinpeace/validator/ReflectiveRestClientValidator.java:411`.
 - [ ] **Raw `Mono<RipResponse>` passes validation but decodes wrong** —
       adapter dispatch cannot recognize a raw `RipResponse` as a wrapper,
