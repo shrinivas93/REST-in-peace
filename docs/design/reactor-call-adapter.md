@@ -716,12 +716,13 @@ sibling call, not new coordinator logic):
 
 ```java
 public Flux<Object> flattenToFlux(Supplier<Page<Object>> firstPageSupplier) {
+    Page<Object> firstPage = firstPageSupplier.get();
     return Flux.create(sink -> {
-        AtomicReference<Page<Object>> currentPage = new AtomicReference<>();
+        AtomicReference<Page<Object>> currentPage = new AtomicReference<>(firstPage);
         AtomicLong pendingRequests = new AtomicLong();
         sink.onRequest(n -> {
             pendingRequests.addAndGet(n);
-            drain(sink, currentPage, pendingRequests, firstPageSupplier);
+            drain(sink, currentPage, pendingRequests);
         });
     }, FluxSink.OverflowStrategy.ERROR);
 }
@@ -730,9 +731,16 @@ public Flux<Object> flattenToFlux(Supplier<Page<Object>> firstPageSupplier) {
 The real design property this buys: **page N+1 is only fetched once the
 subscriber has requested more items than every already-fetched page's
 buffered-but-unemitted items can satisfy** - `onRequest(n)` is Reactor's
-own backpressure signal, and `PaginationCoordinator.fetchFirstPage`/
-`Page<T>.next()` (both already-blocking calls, per pagination's own design)
-run on `Schedulers.boundedElastic()` (never the subscriber's own thread,
+own backpressure signal driving that decision. Page 1 itself is fetched
+eagerly and synchronously - via `PaginationCoordinator.fetchFirstPage`, on
+the calling thread, before the `Flux` is even constructed - the same
+"eager, not deferred" convention `Page<T>` already follows, as documented
+in `pagination-helper.md` §12, extended to this flavor; a page-1 failure
+therefore throws synchronously
+from the annotated method call itself, not as a `Flux` error signal, since
+no `Flux` exists yet to carry one. Only `Page<T>.next()` - fetching page
+N+1 once backpressure demands it - is deferred, and runs on
+`Schedulers.boundedElastic()` (never the subscriber's own thread,
 consistent with Reactor's documented rule that a blocking call inside
 `Flux.create`'s callback must never run on a compute-bound scheduler) only
 when a genuine gap between "items requested" and "items already buffered"
