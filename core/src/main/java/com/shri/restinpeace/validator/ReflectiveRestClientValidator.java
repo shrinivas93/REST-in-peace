@@ -438,8 +438,13 @@ public class ReflectiveRestClientValidator {
 	 */
 	private static void validateCallAdapterResponseBodyType(Method method, Type responseBodyType,
 			ValidationResult validationResult) {
-		if (responseBodyType instanceof ParameterizedType
-				&& ((ParameterizedType) responseBodyType).getRawType() == RipResponse.class) {
+		if (responseBodyType == RipResponse.class || (responseBodyType instanceof ParameterizedType
+				&& ((ParameterizedType) responseBodyType).getRawType() == RipResponse.class)) {
+			// A raw RipResponse (e.g. a Mono<RipResponse> adapter's responseBodyType())
+			// can't be recognized as a wrapper at dispatch time any more than an
+			// ordinary raw RipResponse return can - validateParameterizedReturnType's
+			// own raw-type branch (genericReturnType not a ParameterizedType) already
+			// produces exactly that error for RipResponse.class here.
 			validateParameterizedReturnType(method, responseBodyType, "RipResponse", false, validationResult);
 			return;
 		}

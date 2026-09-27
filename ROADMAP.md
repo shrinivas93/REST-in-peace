@@ -1400,11 +1400,14 @@ policy in `CLAUDE.md`.
       instance failure the denylist's own javadoc says it prevents. Also
       reject the known opaque names when they appear as a type argument.
       `core/src/main/java/com/shri/restinpeace/validator/ReflectiveRestClientValidator.java:411`.
-- [ ] **Raw `Mono<RipResponse>` passes validation but decodes wrong** —
+- [x] **Raw `Mono<RipResponse>` passes validation but decodes wrong** —
       adapter dispatch cannot recognize a raw `RipResponse` as a wrapper,
-      so it decodes the wire JSON into the wrong shape. Reject raw
-      `RipResponse.class` here with the same raw-type validation used for
-      ordinary `RipResponse` returns.
+      so it decodes the wire JSON into the wrong shape. Fixed:
+      `validateCallAdapterResponseBodyType` now routes a raw
+      `RipResponse.class` responseBodyType() through the same
+      `validateParameterizedReturnType` raw-type check an ordinary raw
+      `RipResponse` return already gets, producing the same "returns a
+      raw RipResponse with no type parameter" error.
       `core/src/main/java/com/shri/restinpeace/validator/ReflectiveRestClientValidator.java:441`.
 - [ ] **Doc: baseline validation explanation is stale** — says unregistered
       `Mono`/`Flux` methods decode silently; they actually fail validation
