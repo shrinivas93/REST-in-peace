@@ -216,6 +216,12 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface CallAdapterByteArrayReturnWithDownloadProgressListener {
+		@GET("http://example.com")
+		Mono<String> foo(DownloadProgressListener listener);
+	}
+
+	@RestClient
 	public interface PaginatedUnclaimedReactiveReturnType {
 		@GET("http://example.com")
 		@Paginated(itemsField = "items", pointerField = "next")
@@ -917,6 +923,24 @@ class ReflectiveRestClientValidatorTest {
 				() -> ReflectiveRestClientValidator.validate(CallAdapterFileReturnWithoutDestination.class));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("returns File but has no @Destination parameter to write the response to."));
+	}
+
+	@Test
+	void validate_callAdapterByteArrayResponseBodyTypeWithDownloadProgressListener_passes() {
+		// responseBodyType() is byte[] - e.g. a real Mono<byte[]>/MonoCallAdapterFactory
+		// pairing - even though the method's own declared generic return type
+		// argument is irrelevant to it (same reuse-UnclaimedReactiveReturnType-style
+		// convention as the Mono<File> tests above). Before returnsDownloadableBody()
+		// consulted a registered adapter's own responseBodyType(), this failed as
+		// "has a DownloadProgressListener parameter but does not return byte[] or
+		// File" despite responseBodyType() being byte[].
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(byte[].class))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(
+				() -> ReflectiveRestClientValidator.validate(CallAdapterByteArrayReturnWithDownloadProgressListener.class));
 	}
 
 	private static CallAdapter<Object> testCallAdapter(Type responseBodyType) {
