@@ -282,6 +282,17 @@ abstract class AbstractRipIntegrationTest {
 		CompletableFuture<String> getAlwaysFailingWithRetryAsync(@PathParam("port") int port,
 				@PathParam("id") String id);
 
+		/**
+		 * A long {@code delayMillis} (vs. {@link #getAlwaysFailingWithRetryAsync}'s
+		 * effectively-immediate one) specifically so a test has a wide, reliable
+		 * window to cancel during the backoff wait itself, between the first
+		 * failed attempt landing and the scheduled retry actually firing.
+		 */
+		@GET("http://localhost:{port}/always-503/{id}")
+		@Retry(times = 3, delayMillis = 400, retryOnStatus = { 503 })
+		CompletableFuture<String> getAlwaysFailingWithSlowRetryAsync(@PathParam("port") int port,
+				@PathParam("id") String id);
+
 		@GET("http://localhost:{port}/always-503/{id}")
 		String getAlwaysFailingWithoutRetry(@PathParam("port") int port, @PathParam("id") String id);
 
