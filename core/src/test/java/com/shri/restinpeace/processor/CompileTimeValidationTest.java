@@ -494,6 +494,57 @@ class CompileTimeValidationTest {
 		assertErrorContains(diagnostics, "has a DownloadProgressListener parameter but does not return byte[] or File");
 	}
 
+	/**
+	 * A {@code Mono<File>}-returning method (once a registered
+	 * {@code CallAdapterFactory} resolves it, e.g. {@code rest-in-peace-reactor}'s
+	 * {@code MonoCallAdapterFactory}) is exactly the case this annotation
+	 * processor can't decide "returns File" or not for at compile time -
+	 * that's a runtime-registered adapter's own {@code responseBodyType()}.
+	 * Before {@code isAdapterEligibleReturnType}, this failed compilation
+	 * outright (the same "has a @Destination parameter but does not return
+	 * File" error {@code destinationWithoutFileReturn_failsCompilation}
+	 * above genuinely wants for a real non-File return type), even though
+	 * {@code ReflectiveRestClientValidator} - which actually knows about
+	 * registered adapters at {@code RIP.getClient()} time - accepts it.
+	 */
+	@Test
+	void destinationWithMonoFileReturn_compilesCleanAndFallsBackToReflectiveProxy() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compileWithMonoStub("MonoFileDownloadApi", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.annotation.request.Destination;\n" //
+				+ "import com.shri.restinpeace.annotation.request.PathParam;\n" //
+				+ "import java.io.File;\n" //
+				+ "import reactor.core.publisher.Mono;\n" //
+				+ "@RestClient\n" //
+				+ "public interface MonoFileDownloadApi {\n" //
+				+ "  @GET(\"http://localhost/reports/{id}\")\n" //
+				+ "  Mono<File> download(@PathParam(\"id\") String id, @Destination File destination);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+		assertFalse(Files.exists(outputDir.resolve("MonoFileDownloadApi_RipImpl.class")),
+				"A Mono<T>-returning method is codegen-ineligible and must fall back to the reflective proxy, "
+						+ "found: " + list(outputDir));
+	}
+
+	/** The {@code DownloadProgressListener}/{@code Mono<byte[]>} counterpart above. */
+	@Test
+	void downloadProgressListenerWithMonoByteArrayReturn_compilesClean() throws IOException {
+		List<Diagnostic<? extends JavaFileObject>> diagnostics = compileWithMonoStub("MonoBytesDownloadApi", "" //
+				+ "import com.shri.restinpeace.annotation.marker.RestClient;\n" //
+				+ "import com.shri.restinpeace.annotation.method.GET;\n" //
+				+ "import com.shri.restinpeace.download.DownloadProgressListener;\n" //
+				+ "import reactor.core.publisher.Mono;\n" //
+				+ "@RestClient\n" //
+				+ "public interface MonoBytesDownloadApi {\n" //
+				+ "  @GET(\"http://localhost/reports\")\n" //
+				+ "  Mono<byte[]> download(DownloadProgressListener listener);\n" //
+				+ "}\n");
+
+		assertNoErrors(diagnostics);
+	}
+
 	@Test
 	void uploadProgressListenerWithoutMultipart_failsCompilation() throws IOException {
 		List<Diagnostic<? extends JavaFileObject>> diagnostics = compile("UploadListenerWithoutMultipart", "" //
@@ -2604,22 +2655,53 @@ class CompileTimeValidationTest {
 	}
 
 	private List<Diagnostic<? extends JavaFileObject>> compile(String className, String source) throws IOException {
+		return compile(Collections.singletonMap(className, source));
+	}
+
+	/**
+	 * A {@code Mono<T>}-shaped stand-in for {@code reactor.core.publisher.Mono}
+	 * itself - {@code core} has no dependency on {@code reactor-core} (only
+	 * {@code rest-in-peace-reactor} does), so a fixture exercising
+	 * {@link CompileTimeRestClientValidator}'s handling of an
+	 * adapter-eligible return type by name (see {@code isAdapterEligibleReturnType})
+	 * needs a same-named, same-package class actually resolvable on this
+	 * compilation's classpath, compiled alongside the fixture itself rather
+	 * than pulled in as a real dependency just for this one check.
+	 */
+	private static final String MONO_STUB_CLASS_NAME = "reactor.core.publisher.Mono";
+	private static final String MONO_STUB_SOURCE = "package reactor.core.publisher;\n"
+			+ "public final class Mono<T> {}\n";
+
+	private List<Diagnostic<? extends JavaFileObject>> compileWithMonoStub(String className, String source)
+			throws IOException {
+		java.util.Map<String, String> sources = new java.util.LinkedHashMap<>();
+		sources.put(MONO_STUB_CLASS_NAME, MONO_STUB_SOURCE);
+		sources.put(className, source);
+		return compile(sources);
+	}
+
+	private List<Diagnostic<? extends JavaFileObject>> compile(java.util.Map<String, String> sourcesByClassName)
+			throws IOException {
 		JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 		DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-		JavaFileObject sourceFile = new SimpleJavaFileObject(URI.create("string:///" + className + ".java"),
-				JavaFileObject.Kind.SOURCE) {
-			@Override
-			public CharSequence getCharContent(boolean ignoreEncodingErrors) {
-				return source;
-			}
-		};
+		List<JavaFileObject> sourceFiles = new java.util.ArrayList<>();
+		for (java.util.Map.Entry<String, String> entry : sourcesByClassName.entrySet()) {
+			String source = entry.getValue();
+			sourceFiles.add(new SimpleJavaFileObject(
+					URI.create("string:///" + entry.getKey().replace('.', '/') + ".java"), JavaFileObject.Kind.SOURCE) {
+				@Override
+				public CharSequence getCharContent(boolean ignoreEncodingErrors) {
+					return source;
+				}
+			});
+		}
 
 		try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null,
 				StandardCharsets.UTF_8)) {
 			fileManager.setLocation(StandardLocation.CLASS_OUTPUT, Collections.singletonList(outputDir.toFile()));
 			List<String> options = Arrays.asList("-classpath", System.getProperty("java.class.path"));
 			JavaCompiler.CompilationTask task = compiler.getTask(null, fileManager, diagnostics, options, null,
-					Collections.singletonList(sourceFile));
+					sourceFiles);
 			task.call();
 		}
 		return diagnostics.getDiagnostics();

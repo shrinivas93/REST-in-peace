@@ -920,7 +920,7 @@ final class CompileTimeRestClientValidator {
 						+ "is supported.", qualifiedName(method), parameter.asType()), parameter);
 			}
 		}
-		if (!returnsFile && !destinations.isEmpty()) {
+		if (!returnsFile && !destinations.isEmpty() && !isAdapterEligibleReturnType(method, types)) {
 			reporter.error(String.format("The method %s has a @Destination parameter but does not return File.",
 					qualifiedName(method)), method);
 		}
@@ -942,11 +942,43 @@ final class CompileTimeRestClientValidator {
 			reporter.error(String.format("The method %s has more than one DownloadProgressListener parameter.",
 					qualifiedName(method)), method);
 		}
-		if (!listeners.isEmpty() && !returnsDownloadableBody(method, types)) {
+		if (!listeners.isEmpty() && !returnsDownloadableBody(method, types) && !isAdapterEligibleReturnType(method, types)) {
 			reporter.error(String.format(
 					"The method %s has a DownloadProgressListener parameter but does not return byte[] or File.",
 					qualifiedName(method)), method);
 		}
+	}
+
+	/**
+	 * Mirrors {@code ReflectiveRestClientValidator.KNOWN_UNSUPPORTED_REACTIVE_TYPES}
+	 * by name only (no dependency on any of these libraries) - the one case
+	 * {@code validateDestination}/{@code validateDownloadProgressListener}
+	 * can't soundly enforce "must return File"/"must return byte[] or File"
+	 * for: a {@code CallAdapterFactory} claiming one of these is registered
+	 * at runtime, long after this annotation processor ran, so whether the
+	 * method actually decodes to {@code File}/{@code byte[]} (e.g.
+	 * {@code Mono<File>} once {@code rest-in-peace-reactor} registers its
+	 * factory) is unknowable here. Deferred entirely to
+	 * {@code ReflectiveRestClientValidator.validateCallAdapterResponseBodyType}'s
+	 * own adapter-aware check, which runs at {@code RIP.getClient()} time
+	 * once real adapters are actually known - not weakened for any other
+	 * return type shape (a plain class, {@code List<User>}, {@code CompletableFuture<T>}),
+	 * which codegen either dispatches directly or this validator already
+	 * understands well enough to keep enforcing.
+	 */
+	private static final Set<String> KNOWN_ADAPTER_ELIGIBLE_RETURN_TYPES = new HashSet<>(
+			java.util.Arrays.asList("reactor.core.publisher.Mono", "reactor.core.publisher.Flux",
+					"io.reactivex.rxjava3.core.Single", "io.reactivex.rxjava3.core.Observable",
+					"io.reactivex.rxjava3.core.Maybe", "io.reactivex.rxjava3.core.Completable",
+					"io.reactivex.rxjava3.core.Flowable", "io.reactivex.Single", "io.reactivex.Observable",
+					"io.reactivex.Maybe", "io.reactivex.Completable", "io.reactivex.Flowable"));
+
+	private static boolean isAdapterEligibleReturnType(ExecutableElement method, Types types) {
+		TypeMirror returnType = method.getReturnType();
+		if (returnType.getKind() != TypeKind.DECLARED) {
+			return false;
+		}
+		return KNOWN_ADAPTER_ELIGIBLE_RETURN_TYPES.contains(types.erasure(returnType).toString());
 	}
 
 	private static void validateUploadProgressListener(ExecutableElement method, Reporter reporter) {

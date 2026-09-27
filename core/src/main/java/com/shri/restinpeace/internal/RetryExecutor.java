@@ -291,6 +291,20 @@ final class RetryExecutor {
 				result.completeExceptionally(failure);
 				return;
 			}
+			if (attemptFuture.isCancelled()) {
+				// A CancellationRelay-driven cancellation, not a genuine transport
+				// failure - falling through to the retryable check below would
+				// treat it as one, consuming a retryBudget token (a real side
+				// effect, shared across this client's unrelated calls) and
+				// scheduling a retry nobody asked for, for a call the caller has
+				// already walked away from. relay.register(scheduled) below would
+				// still catch and cancel that phantom retry immediately (register
+				// sees CancellationRelay already cancelled), but never reaching a
+				// budget-consuming/scheduling decision in the first place is both
+				// cheaper and the actually-correct semantics.
+				result.completeExceptionally(failure);
+				return;
+			}
 			if (response != null) {
 				interceptorDispatcher.notifyAfterResponse(context, response, errorType, returnType);
 			}

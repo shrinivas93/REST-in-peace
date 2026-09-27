@@ -87,6 +87,45 @@ class RetryExecutorCancellationTest {
 		assertTrue(attemptFuture.isCancelled());
 	}
 
+	/**
+	 * Regression coverage for the cancellation-consumes-retry-budget bug: a
+	 * still-pending attempt's cancellation (via {@code CancellationRelay})
+	 * completes it with a {@code CancellationException}, which was
+	 * previously treated as an ordinary retryable failure - consuming a
+	 * token from this client's shared {@link RetryBudget} even though no
+	 * real HTTP call ever actually failed; only the caller walked away. A
+	 * budget of exactly one token proves it: cancelling a pending attempt
+	 * must leave that one token untouched for the very next, unrelated call
+	 * to use. (Cancelling a real, already-completed, genuinely-failed
+	 * attempt during its backoff wait is a different case - that attempt's
+	 * own token spend already happened honestly and isn't this bug; see
+	 * {@link #cancellingDuringTheRetryBackoffWait_stopsTheScheduledRetryFromEverRunning}.)
+	 */
+	@Test
+	void cancellingAStillPendingAttempt_doesNotConsumeARetryBudgetToken() {
+		RetryBudget retryBudget = new RetryBudget(1, 60_000);
+		RetryExecutor executorWithBudget = new RetryExecutor(
+				new InterceptorDispatcher(Collections.emptyList(), new ResponseDecoder(null)), null, retryBudget);
+
+		CompletableFuture<HttpResponse<String>> attemptFuture = new CompletableFuture<>(); // never completes on its own
+		CompletableFuture<HttpResponse<String>> first = executorWithBudget.executeAsyncWithRetry(null, String.class,
+				context, () -> attemptFuture, true, 3, 300L, 1.0, 0.0, new int[] { 503 });
+		first.cancel(true); // no real attempt ever completed - must not spend the one token
+
+		AtomicInteger secondCallCount = new AtomicInteger();
+		CompletableFuture<HttpResponse<String>> second = executorWithBudget.executeAsyncWithRetry(null, String.class,
+				context, () -> {
+					int attempt = secondCallCount.incrementAndGet();
+					HttpResponse<String> response = new SyntheticHttpResponse<>(attempt < 2 ? 503 : 200,
+							new kong.unirest.Headers(), attempt < 2 ? "down" : "ok");
+					return CompletableFuture.completedFuture(response);
+				}, true, 3, 1L, 1.0, 0.0, new int[] { 503 });
+
+		HttpResponse<String> response = second.join();
+		assertEquals(200, response.getStatus());
+		assertEquals(2, secondCallCount.get());
+	}
+
 	@Test
 	void notCancelling_stillRetriesNormallyAndSucceeds() {
 		AtomicInteger callCount = new AtomicInteger();
