@@ -716,12 +716,13 @@ sibling call, not new coordinator logic):
 
 ```java
 public Flux<Object> flattenToFlux(Supplier<Page<Object>> firstPageSupplier) {
+    Page<Object> firstPage = firstPageSupplier.get();
     return Flux.create(sink -> {
-        AtomicReference<Page<Object>> currentPage = new AtomicReference<>();
+        AtomicReference<Page<Object>> currentPage = new AtomicReference<>(firstPage);
         AtomicLong pendingRequests = new AtomicLong();
         sink.onRequest(n -> {
             pendingRequests.addAndGet(n);
-            drain(sink, currentPage, pendingRequests, firstPageSupplier);
+            drain(sink, currentPage, pendingRequests);
         });
     }, FluxSink.OverflowStrategy.ERROR);
 }
@@ -733,8 +734,9 @@ buffered-but-unemitted items can satisfy** - `onRequest(n)` is Reactor's
 own backpressure signal driving that decision. Page 1 itself is fetched
 eagerly and synchronously - via `PaginationCoordinator.fetchFirstPage`, on
 the calling thread, before the `Flux` is even constructed - the same
-"eager, not deferred" convention `Page<T>` already follows (§6.1),
-extended to this flavor; a page-1 failure therefore throws synchronously
+"eager, not deferred" convention `Page<T>` already follows, as documented
+in `pagination-helper.md` §12, extended to this flavor; a page-1 failure
+therefore throws synchronously
 from the annotated method call itself, not as a `Flux` error signal, since
 no `Flux` exists yet to carry one. Only `Page<T>.next()` - fetching page
 N+1 once backpressure demands it - is deferred, and runs on
