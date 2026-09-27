@@ -34,7 +34,7 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.source>1.8</maven.compiler.source>
 		<maven.compiler.target>1.8</maven.compiler.target>
-		<reactor.version>2023.0.19</reactor.version>
+		<reactor.version>2025.0.7</reactor.version>
 		<!-- Held back to the same 5.x line core itself uses, for the same reason
 		     core/pom.xml's own comment gives: JUnit 6.x requires Java 17 minimum,
 		     which breaks compiling this module's tests outright under the real
