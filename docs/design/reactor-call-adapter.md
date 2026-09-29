@@ -227,11 +227,15 @@ WebFlux controller's own downstream calls.
 
 A second, independent problem surfaced while grounding this design against
 the actual code (not a design-doc-only complaint - see §4): **an
-unrecognized return type doesn't fail cleanly today.** A method declared to
-return `Mono<User>` compiles fine, passes `ReflectiveRestClientValidator`
-without a single check firing (`validateReturnType` only special-cases
-`CompletableFuture`/`RipResponse`), and then falls into
-`processRestRequest`'s final fallback branch, which calls
+unrecognized return type didn't fail cleanly before this design shipped.**
+(This paragraph describes that pre-`CallAdapter` baseline, not
+`ReflectiveRestClientValidator` as it exists today - see the Status note at
+the top of this doc and §8.3 for what actually validates an unrecognized
+return type now.) A method declared to return `Mono<User>` used to compile
+fine, pass `ReflectiveRestClientValidator` without a single check firing
+(`validateReturnType` only special-cased `CompletableFuture`/`RipResponse`
+back then), and then fall into `processRestRequest`'s final fallback
+branch, which calls
 `responseDecoder.decodeOrThrow(response, errorType, genericReturnType)` -
 attempting to Gson-deserialize the response's raw JSON body directly into a
 `Mono` object. Gson can often *construct* an arbitrary class via
@@ -276,11 +280,16 @@ an afterthought.
   and, per §4's grounding, **already does this today, unconditionally, with
   no code change needed** (§8.2). That's this doc's biggest concrete
   finding, not an aspiration.
-- An unrecognized return type - `Mono<T>`/`Flux<T>` with
-  `rest-in-peace-reactor` never added, or any other type nothing claims -
-  is rejected at validation time, by name, instead of silently
-  misdecoding (§8.3) - closing the real gap found in §1, as a byproduct of
-  building this feature properly rather than a separate, unscoped cleanup.
+- An unclaimed return type on `KNOWN_UNSUPPORTED_REACTIVE_TYPES` (the
+  reactive/future type names RIP knows it has no built-in support for -
+  `Mono<T>`/`Flux<T>` with `rest-in-peace-reactor` never added, an RxJava
+  type, and so on) is rejected at validation time, by name, instead of
+  silently misdecoding (§8.3) - closing the real gap found in §1, as a
+  byproduct of building this feature properly rather than a separate,
+  unscoped cleanup. This is a fixed denylist, not "any unrecognized return
+  type": an arbitrary unsupported type outside that list (not a known
+  reactive/future shape) isn't validated by this rule either, exactly as
+  before this design shipped.
 - Full interaction correctness with every existing per-call feature -
   `@Retry` (including the idempotency-key work), cache, circuit breaker,
   bulkhead, interceptors - with the exact same "the adapted call goes
@@ -756,11 +765,23 @@ genuinely can't keep up and calls `request(n)` deliberately.
 (`pagination-helper.md` §6.5) completely unchanged - `Flux<T>` is a
 different *consumption* shape over the identical page sequence, not a
 different pagination algorithm. Cancellation (a `.take(50)` or an explicit
-`Disposable.dispose()`) stops fetching further pages - never mid-page (a
-partially-decoded page's items still make it to the buffer/subscriber if
-already in hand, per ordinary Reactor `Flux.create` cancellation
-semantics), and, per §6.2's same reasoning, cancels the in-flight page
-fetch if one is genuinely in progress when cancellation arrives.
+`Disposable.dispose()`) stops fetching further pages, and, per §6.2's same
+reasoning, cancels the in-flight page fetch if one is genuinely in
+progress when cancellation arrives.
+
+**Cancellation can truncate mid-page - this is intentional, not a bug to
+fix:** the drain loop checks for cancellation after every single item it
+emits, so a page that's already fully fetched and decoded can still have
+some of its items never delivered if cancellation lands between two of
+its `sink.next()` calls - unlike a plain `Page<T>`/`Stream<T>` consumer,
+where a caller already holding a decoded page keeps whatever items it
+chooses to keep iterating regardless of anything RIP does. This is the
+same "stop delivering signals immediately, whatever's already
+decoded-but-not-yet-emitted is dropped" contract as the plain `Mono<T>`
+adapter's own disposal behavior (§6.2) and ordinary Reactor `Flux`
+cancellation semantics generally - a subscriber that cancelled doesn't
+want to see more items at all, including ones from the page already in
+hand.
 
 ### 7.3 Disambiguating the two flavors: return type alone isn't enough
 
@@ -844,11 +865,18 @@ before reverting.
 
 ### 8.3 Validation: reject an unclaimed, unrecognized return type by name
 
-New rule in `ReflectiveRestClientValidator.validateReturnType` (mirrored,
-per the established convention, in `CompileTimeRestClientValidator` -
-though the compile-time side can only check its own *static* whitelist,
-since a `CallAdapterFactory` is registered at runtime, long after
-annotation processing finished; see below):
+New rule in `ReflectiveRestClientValidator.validateReturnType` only - despite
+the "mirrored, per the established convention" pattern most other
+reflective-side validation rules in this doc follow, `CompileTimeRestClientValidator`
+gets no new rule for this one (see the paragraph right after the code block
+below for why: it has no visibility into a runtime-registered
+`CallAdapterFactory` during annotation processing, so it defers this
+question entirely to the reflective validator an adapter-shaped method
+falls back to). The sketch below is the original proposal, narrower in
+scope once it actually shipped - see §4's "Real deviation from §8.3's
+original sketch" note for the real, narrower rule (a fixed denylist of
+known-opaque reactive type names, not "any
+unclaimed generic return type"):
 
 ```java
 // Reflective side - runs at RIP.getClient() time, after any startup-time

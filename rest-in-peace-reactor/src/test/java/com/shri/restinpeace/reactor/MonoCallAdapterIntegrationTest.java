@@ -113,8 +113,7 @@ class MonoCallAdapterIntegrationTest {
 		server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.ok("shipped"));
 
 		Mono<String> mono = api.getOrder("42"); // dispatched here, before any subscribe() at all
-		Thread.sleep(100); // let Unirest's genuinely-async I/O actually land on the server
-		assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}"));
+		awaitRequestCount(HTTPMethod.GET, "/orders/{id}", 1); // poll instead of a fixed sleep - avoids flaking under load
 
 		StepVerifier.create(mono).expectNext("shipped").verifyComplete();
 		assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}")); // subscribing didn't dispatch a second call

@@ -40,6 +40,20 @@
 		     which breaks compiling this module's tests outright under the real
 		     JDK 8 ci.yml's `test` job builds it with. -->
 		<junit.version>5.14.4</junit.version>
+		<!-- This module is local-only for now (docs/design/reactor-call-adapter.md
+		     §"isn't published yet"): it shares this reactor's root pom.xml purely
+		     for the version/release-cadence sync ci.yml and release.yml rely on,
+		     not because it's meant to ship. Without this, `mvn deploy` run from
+		     the root reactor (maven-publish.yml's GitHub Packages step, and the
+		     `central` profile's Maven Central one - both just plain `deploy`
+		     invocations with no per-module -pl filter) would publish this jar
+		     right alongside core/spring-boot-starter, silently changing what's
+		     public before anyone decided it should be. maven.deploy.skip is
+		     honored by both maven-deploy-plugin and central-publishing-maven-plugin,
+		     so it keeps this module out of both without touching either workflow.
+		     `mvn install` (ci.yml's consumer-test job) is unaffected - only
+		     `deploy` is skipped. -->
+		<maven.deploy.skip>true</maven.deploy.skip>
 	</properties>
 
 	<dependencyManagement>

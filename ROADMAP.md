@@ -1386,11 +1386,18 @@ policy in `CLAUDE.md`.
 
 ### P2
 
-- [ ] **`PaginatedCallAdapter` SPI can't select a non-arg-0 page item type** —
+- [x] **`PaginatedCallAdapter` SPI can't select a non-arg-0 page item type** —
       adapters cannot select the page item type when it is not generic
       argument 0. `Result<Metadata, Order>` is accepted but decoded as
       `Metadata` before `adapt` runs; expose the item `Type` through this
-      SPI or reject and document a single item-type argument.
+      SPI or reject and document a single item-type argument. Fixed by the
+      second option: `validateParameterizedReturnType` now rejects a
+      `@Paginated`-adapted return type declaring more than one type
+      parameter by name, and `PaginationCoordinator.resolveItemType` mirrors
+      the same check at dispatch time for defense-in-depth (validation
+      already gates every real path there, so no separate reachable test
+      exists for that duplicate check, consistent with its sibling raw-type
+      check in the same method).
       `core/src/main/java/com/shri/restinpeace/PaginatedCallAdapter.java:39`.
 - [x] **Opaque-reactive denylist misses a nested wrapper** — the denylist
       only checks the outermost return type name, so a nested opaque
@@ -1414,65 +1421,105 @@ policy in `CLAUDE.md`.
       `RipResponse` return already gets, producing the same "returns a
       raw RipResponse with no type parameter" error.
       `core/src/main/java/com/shri/restinpeace/validator/ReflectiveRestClientValidator.java:441`.
-- [ ] **Doc: baseline validation explanation is stale** — says unregistered
+- [x] **Doc: baseline validation explanation is stale** — says unregistered
       `Mono`/`Flux` methods decode silently; they actually fail validation
       before dispatch now. Label the passage as pre-rollout behavior or
-      update it to describe the shipped denylist.
+      update it to describe the shipped denylist. Fixed: the §1 passage is
+      now explicitly labeled as describing the pre-`CallAdapter` baseline,
+      with a pointer to the Status note and §8.3 for current behavior.
       `docs/design/reactor-call-adapter.md:230`.
-- [ ] **Doc: validation contract described broader than what shipped** —
+- [x] **Doc: validation contract described broader than what shipped** —
       only the known opaque-reactive denylist is rejected; an unclaimed
       `Foo<T>` remains decodable. Describe the shipped denylist rule here
-      and in §8.3, or implement the broader rejection rule.
+      and in §8.3, or implement the broader rejection rule. Fixed: the §2
+      goals bullet and §8.3's introduction now both state the real,
+      narrower rule (a fixed `KNOWN_UNSUPPORTED_REACTIVE_TYPES` denylist,
+      not "any unclaimed generic return type"), cross-referencing §4's
+      existing "Real deviation from §8.3's original sketch" note.
       `docs/design/reactor-call-adapter.md:281`.
-- [ ] **Doc: cancellation-mid-page truncation undocumented** — cancellation
+- [x] **Doc: cancellation-mid-page truncation undocumented** — cancellation
       can stop the current `@Paginated Flux` page between items, so
       already-decoded page contents aren't guaranteed to reach the
       subscriber. Document that cancellation may truncate the current
-      page instead of promising it never happens mid-page.
+      page instead of promising it never happens mid-page. Fixed: §7.2 now
+      states this plainly as intentional behavior, not a bug, matching
+      `Mono<T>`'s own disposal contract and ordinary Reactor cancellation
+      semantics.
       `docs/design/reactor-call-adapter.md:759`.
-- [ ] **Doc: false "compile-time validator mirrors this" claim** — the
+- [x] **Doc: false "compile-time validator mirrors this" claim** — the
       compile-time validator deliberately defers adapter-shaped methods
       to reflective validation rather than mirroring the runtime adapter
       check. Remove the "mirrored" claim so readers don't expect
-      compile-time registration or denylist validation.
+      compile-time registration or denylist validation. Fixed: §8.3's
+      intro now says plainly that `CompileTimeRestClientValidator` gets no
+      new rule for this case, with a forward-reference to the paragraph
+      explaining why - no longer contradicting that very paragraph a few
+      lines down.
       `docs/design/reactor-call-adapter.md:848`.
-- [ ] **Doc: missing Maven Central caveat for `rest-in-peace-reactor`** —
+- [x] **Doc: missing Maven Central caveat for `rest-in-peace-reactor`** —
       tells readers to add the dependency without stating it isn't
       published yet, so following the page fails dependency resolution.
       Add the publication caveat and link to the local-build instructions.
+      Fixed: the Reactive feature blurb now states it isn't published yet,
+      gives the local-install command, and links to the README's fuller
+      walkthrough.
       `docs/getting-started.html:679`.
-- [ ] **Root reactor publishes `rest-in-peace-reactor`, contradicting
+- [x] **Root reactor publishes `rest-in-peace-reactor`, contradicting
       local-only policy** — adding this module to the root reactor makes
       the existing release workflow publish it to GitHub Packages/Maven
       Central, contradicting the documented local-only distribution
       policy. Keep it out of the publish reactor, or deliberately update
-      the release workflows and installation docs together. `pom.xml:65`.
-- [ ] **`FluxListCallAdapterFactory` item-type validation gap** — claims
+      the release workflows and installation docs together. Fixed by the
+      first option: `rest-in-peace-reactor/pom.xml` now sets
+      `maven.deploy.skip=true`, which both `maven-deploy-plugin` and
+      `central-publishing-maven-plugin` honor - `mvn deploy` from the root
+      reactor now skips this module's artifact while still installing it
+      locally (verified: `mvn -pl rest-in-peace-reactor deploy` logs
+      "Skipping artifact deployment" and still installs to the local
+      repo). It stays a root-reactor module so release:prepare's version
+      bump still keeps it in sync with core, per ci.yml's existing
+      assumption. `pom.xml:65`.
+- [x] **`FluxListCallAdapterFactory` item-type validation gap** — claims
       `Flux<?>`, `Flux<? extends T>`, and generic `Flux<T>` methods by
       hiding their unresolved item type inside `List<T>`, so invalid
       declarations pass client validation and fail or decode incorrectly
       when the response is read. Reject non-`Class`/`ParameterizedType`
       item types here, matching core's existing async validation
-      contract.
+      contract. Fixed: `get(Method)` now declines (returns
+      `Optional.empty()`) when the extracted item type isn't a `Class` or
+      `ParameterizedType`, falling through to the existing
+      `KNOWN_UNSUPPORTED_REACTIVE_TYPES`-adjacent clean rejection path
+      instead of ever wrapping it in `List<T>`.
       `rest-in-peace-reactor/src/main/java/com/shri/restinpeace/reactor/FluxListCallAdapterFactory.java:52`.
-- [ ] **`FluxPaginatedCallAdapterFactory`: cancellation-callback
+- [x] **`FluxPaginatedCallAdapterFactory`: cancellation-callback
       registration order race** — install the cancellation callbacks
       before registering `onRequest`; otherwise synchronous cancellation
       during initial demand can leave the drain unaware of cancellation
-      and trigger an unnecessary next-page fetch.
+      and trigger an unnecessary next-page fetch. Fixed: `PageDrain.start()`
+      now registers `onCancel`/`onDispose` before `onRequest`, so a
+      synchronous cancellation triggered from within `onRequest`'s own
+      initial-demand processing is always observed.
       `rest-in-peace-reactor/src/main/java/com/shri/restinpeace/reactor/FluxPaginatedCallAdapterFactory.java:125`.
-- [ ] **`FluxPaginatedCallAdapterFactory`: scheduler rejection stalls the
+- [x] **`FluxPaginatedCallAdapterFactory`: scheduler rejection stalls the
       Flux forever** — a scheduler rejection escapes `drainOnce` after
       `fetchingNextPage` is set, leaving the Flux permanently stalled with
       no error signal. Catch scheduling failures, clear the fetch state,
-      and call `sink.error(error)` unless cancellation already won.
+      and call `sink.error(error)` unless cancellation already won. Fixed:
+      `fetchNextPageAsync` now catches a synchronous scheduling failure,
+      clears `fetchingNextPage` so a future `onRequest` can retry, and
+      signals `sink.error` unless cancellation already won - the scheduler
+      is now an injectable field (defaulting to
+      `Schedulers.boundedElastic()`) so a test can deterministically force
+      this path.
       `rest-in-peace-reactor/src/main/java/com/shri/restinpeace/reactor/FluxPaginatedCallAdapterFactory.java:232`.
-- [ ] **Flaky fixed-sleep assertion in `MonoCallAdapterIntegrationTest`** —
+- [x] **Flaky fixed-sleep assertion in `MonoCallAdapterIntegrationTest`** —
       the eager-dispatch assertion depends on the async HTTP request
       reaching `MockRestServer` within a fixed `Thread.sleep(100)`, so it
       can fail spuriously on a slow/loaded CI box (the 500ms sleep in
       `disposing_stopsDelivery` has the same problem). Poll instead: loop
-      on `server.countOf(...)`/`requestCount()` with a deadline.
+      on `server.countOf(...)`/`requestCount()` with a deadline. Fixed:
+      `getOrder_isEagerNotDeferred` now uses the file's existing
+      `awaitRequestCount` poll helper instead of `Thread.sleep(100)`.
       `rest-in-peace-reactor/src/test/java/com/shri/restinpeace/reactor/MonoCallAdapterIntegrationTest.java:116`.
 
 ### P3

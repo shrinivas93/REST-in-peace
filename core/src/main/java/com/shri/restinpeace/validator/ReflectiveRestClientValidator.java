@@ -464,7 +464,23 @@ public class ReflectiveRestClientValidator {
 					method.getDeclaringClass().getName(), method.getName(), typeName));
 			return;
 		}
-		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		Type[] typeArguments = ((ParameterizedType) genericReturnType).getActualTypeArguments();
+		if (typeArguments.length != 1) {
+			// Every built-in caller of this method (CompletableFuture<T>, RipResponse<T>)
+			// is itself declared with exactly one type parameter, so this only ever
+			// fires for a @Paginated method's PaginatedCallAdapter-claimed return type -
+			// a custom adapted type with more than one type parameter (e.g. a
+			// hypothetical Result<Metadata, Order>) has no way to tell RIP which
+			// argument is the page item type, so getActualTypeArguments()[0] would
+			// silently decode the wrong one instead of the type the adapter actually
+			// wants. See PaginatedCallAdapter's own javadoc.
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s with %d type parameters, but only a single type parameter "
+							+ "(the page item type) is supported.",
+					method.getDeclaringClass().getName(), method.getName(), genericReturnType, typeArguments.length));
+			return;
+		}
+		Type innerType = typeArguments[0];
 		if (allowRipResponseInner && innerType instanceof ParameterizedType
 				&& ((ParameterizedType) innerType).getRawType() == RipResponse.class) {
 			validateParameterizedReturnType(method, innerType, "RipResponse", false, validationResult);
