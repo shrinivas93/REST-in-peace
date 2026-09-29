@@ -40,6 +40,22 @@
 		     which breaks compiling this module's tests outright under the real
 		     JDK 8 ci.yml's `test` job builds it with. -->
 		<junit.version>5.14.4</junit.version>
+		<!-- This module is local-only for now (docs/design/reactor-call-adapter.md
+		     §"isn't published yet"): it shares this reactor's root pom.xml purely
+		     for the version/release-cadence sync ci.yml and release.yml rely on,
+		     not because it's meant to ship. Without this, `mvn deploy` run from
+		     the root reactor (maven-publish.yml's GitHub Packages step) would
+		     publish this jar right alongside core/spring-boot-starter, silently
+		     changing what's public before anyone decided it should be.
+		     maven.deploy.skip is honored by the ordinary maven-deploy-plugin, so
+		     it keeps this module out of GitHub Packages without touching that
+		     workflow. It is NOT honored by central-publishing-maven-plugin
+		     though (still an open feature request upstream, as of this writing -
+		     see mavenplugins/central-publishing-maven-plugin#22) - the `central`
+		     profile below carries this module's own opt-out for that separate
+		     publish path. `mvn install` (ci.yml's consumer-test job) is
+		     unaffected either way - only `deploy` is skipped. -->
+		<maven.deploy.skip>true</maven.deploy.skip>
 	</properties>
 
 	<dependencyManagement>
@@ -130,5 +146,33 @@
 			</plugin>
 		</plugins>
 	</build>
+
+	<!-- Mirrors the root pom.xml's own `central` profile (same id, so Maven
+	     merges this into it for this module only): central-publishing-maven-plugin
+	     takes over the `deploy` phase reactor-wide once that profile activates,
+	     the same as maven-deploy-plugin does for the plain GitHub Packages
+	     deploy above - but unlike maven-deploy-plugin, it doesn't honor
+	     maven.deploy.skip (see that property's own comment), so this module
+	     needs its own explicit skipPublishing override to stay out of the
+	     published bundle a tagged release's `mvn -Pcentral deploy` step
+	     otherwise uploads to Maven Central. groupId/artifactId/extensions/
+	     version all come from the root profile's own plugin declaration -
+	     only the per-module skip needs restating here. -->
+	<profiles>
+		<profile>
+			<id>central</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.sonatype.central</groupId>
+						<artifactId>central-publishing-maven-plugin</artifactId>
+						<configuration>
+							<skipPublishing>true</skipPublishing>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 
 </project>

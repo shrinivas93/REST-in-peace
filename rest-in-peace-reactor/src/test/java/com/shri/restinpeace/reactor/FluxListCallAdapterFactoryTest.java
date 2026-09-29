@@ -37,6 +37,38 @@ class FluxListCallAdapterFactoryTest {
 		assertFalse(factory.get(method).isPresent());
 	}
 
+	/**
+	 * A wildcard item type ({@code Flux<?>}) would otherwise be silently
+	 * hidden inside the synthetic {@code List<?>} this factory wraps it in,
+	 * passing {@code ReflectiveRestClientValidator}'s top-level
+	 * Class/ParameterizedType check clean and failing (or misdecoding) at
+	 * Gson's own generic decode instead - {@link #get} must decline this
+	 * shape outright instead.
+	 */
+	@Test
+	void get_declinesAWildcardItemType() throws NoSuchMethodException {
+		Method method = WildcardFluxApi.class.getMethod("wildcardOrders");
+		assertFalse(factory.get(method).isPresent());
+	}
+
+	/**
+	 * Same gap as {@link #get_declinesAWildcardItemType}, but for an
+	 * unresolved type variable - a generic method's own {@code <T> Flux<T>}.
+	 */
+	@Test
+	void get_declinesAnUnresolvedTypeVariableItemType() throws NoSuchMethodException {
+		Method method = WildcardFluxApi.class.getMethod("genericOrders");
+		assertFalse(factory.get(method).isPresent());
+	}
+
+	private interface WildcardFluxApi {
+
+		Flux<?> wildcardOrders();
+
+		<T> Flux<T> genericOrders();
+
+	}
+
 	@Test
 	void adapt_unwrapsACompletionExceptionsCause() throws NoSuchMethodException {
 		CompletableFuture<Object> delegate = new CompletableFuture<>();

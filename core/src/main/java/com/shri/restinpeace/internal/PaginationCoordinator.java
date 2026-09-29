@@ -80,7 +80,20 @@ final class PaginationCoordinator {
 			throw new RestInPeaceException(String.format("The method %s returns a raw %s with no type parameter.",
 					method, method.getReturnType().getSimpleName()));
 		}
-		Type itemType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		Type[] typeArguments = ((ParameterizedType) genericReturnType).getActualTypeArguments();
+		if (typeArguments.length != 1) {
+			// Same reasoning as ReflectiveRestClientValidator's own mirrored check -
+			// this only ever fires for a custom PaginatedCallAdapter-claimed return
+			// type declared with more than one type parameter, which has no way to
+			// tell RIP which argument is the page item type. Kept here too (not just
+			// in validation) since this method is reachable directly, independent of
+			// validate() having run first.
+			throw new RestInPeaceException(String.format(
+					"The method %s returns %s with %d type parameters, but only a single type parameter (the "
+							+ "page item type) is supported.",
+					method, genericReturnType, typeArguments.length));
+		}
+		Type itemType = typeArguments[0];
 		if (!(itemType instanceof Class) && !(itemType instanceof ParameterizedType)) {
 			throw new RestInPeaceException(
 					String.format("The method %s returns %s<%s>, which is not a supported type parameter.", method,

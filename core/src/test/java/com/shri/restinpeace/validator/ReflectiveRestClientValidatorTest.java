@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.io.InputStream;
 import java.lang.reflect.Type;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -245,6 +246,13 @@ class ReflectiveRestClientValidatorTest {
 		@GET("http://example.com")
 		@Paginated(itemsField = "items", pointerField = "next")
 		CompletableFuture<String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface PaginatedMultiTypeArgumentClaimedByFactory {
+		@GET("http://example.com")
+		@Paginated(itemsField = "items", pointerField = "next")
+		Map<String, String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
 	}
 
 	@RestClient
@@ -831,6 +839,25 @@ class ReflectiveRestClientValidatorTest {
 				.contains("no registered PaginatedCallAdapterFactory claims"));
 		assertTrue(exception.getValidationResult().getAllErrors()
 				.contains("is excluded from adapter-based pagination"));
+	}
+
+	@Test
+	void validate_paginatedMultiTypeArgumentClaimedByFactory_throwsWithError() {
+		// Map<String, String> - a real two-type-parameter generic return type a
+		// hypothetical PaginatedCallAdapterFactory claims, standing in for
+		// PaginatedCallAdapter's own documented Result<Metadata, Order> example.
+		// getActualTypeArguments()[0] alone can't tell which argument is the page
+		// item type, so this must be rejected rather than silently resolving the
+		// wrong one.
+		PaginatedCallAdapterFactory factory = method -> method.getReturnType() == Map.class
+				? Optional.of((Supplier<Page<Object>> firstPageSupplier) -> Collections.emptyMap())
+				: Optional.empty();
+		RIP.addPaginatedCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(PaginatedMultiTypeArgumentClaimedByFactory.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("but only a single type parameter (the page item type) is supported"));
 	}
 
 	@Test
