@@ -62,6 +62,13 @@ class CallAdapterIntegrationTest {
 	}
 
 	@Test
+	void get_declinesARawTestBoxReturnTypeInsteadOfThrowing() {
+		RIP.addCallAdapterFactory(TestCallAdapterFactory.INSTANCE);
+
+		assertDoesNotThrow(() -> RIP.getClient(RawTestBoxTestApi.class, server.baseUrl()));
+	}
+
+	@Test
 	void getOrderWithResponse_decodesRipResponseInnerType() {
 		RIP.addCallAdapterFactory(TestCallAdapterFactory.INSTANCE);
 		CallAdapterTestApi api = RIP.getClient(CallAdapterTestApi.class, server.baseUrl());
@@ -122,23 +129,35 @@ class CallAdapterIntegrationTest {
 		assertThrows(RestInPeaceException.class, () -> RIP.getClient(CallAdapterMonoTestApi.class, server.baseUrl()));
 	}
 
+	/**
+	 * Directly counts how many times a registered factory's own
+	 * {@code get(Method)} is consulted, rather than going through
+	 * {@code removeCallAdapterFactory} to infer registry size indirectly:
+	 * that method's own {@code removeIf} removes every identity match in one
+	 * call, so a single remove() would fully unregister a wrongly-duplicated
+	 * entry exactly the same as a correctly-deduplicated one - a test built
+	 * around "one remove() should already clear it" can never fail either
+	 * way, and doesn't actually prove {@code addCallAdapterFactory}
+	 * deduplicated anything. A factory that always declines forces
+	 * {@code resolveCallAdapter}'s loop to consult every registered entry
+	 * (a claiming factory would let the loop return after the first match,
+	 * hiding a duplicate the same way), so the invocation count is a direct
+	 * read of how many copies are actually in the registry.
+	 */
 	@Test
-	void addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() {
-		// Mono<T> (denylisted, §8.1) rather than TestBox<T>: TestBox isn't on
-		// KNOWN_UNSUPPORTED_REACTIVE_TYPES, so getClient() succeeds whether or
-		// not anything claims it - only a genuinely unclaimed denylisted type
-		// makes validation fail, which is what proves the removal actually
-		// unregistered every copy, not just one.
-		CallAdapterFactory monoFactory = monoClaimingFactory();
-		RIP.addCallAdapterFactory(monoFactory);
-		RIP.addCallAdapterFactory(monoFactory);
+	void addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() throws NoSuchMethodException {
+		java.util.concurrent.atomic.AtomicInteger consultedCount = new java.util.concurrent.atomic.AtomicInteger();
+		CallAdapterFactory decliningFactory = method -> {
+			consultedCount.incrementAndGet();
+			return Optional.empty();
+		};
+		RIP.addCallAdapterFactory(decliningFactory);
+		RIP.addCallAdapterFactory(decliningFactory);
 
-		// A single remove() fully unregisters it - if the second add() had
-		// appended a duplicate entry, one remove() would leave the other
-		// behind and validation would still succeed instead of falling back.
-		RIP.removeCallAdapterFactory(monoFactory);
+		com.shri.restinpeace.internal.RequestExecutor
+				.resolveCallAdapter(CallAdapterTestApi.class.getMethod("getOrder", String.class));
 
-		assertThrows(RestInPeaceException.class, () -> RIP.getClient(CallAdapterMonoTestApi.class, server.baseUrl()));
+		assertEquals(1, consultedCount.get());
 	}
 
 	/** Claims every {@code Mono<T>}-returning method - {@code Mono} is denylisted (§8.1) when unclaimed. */

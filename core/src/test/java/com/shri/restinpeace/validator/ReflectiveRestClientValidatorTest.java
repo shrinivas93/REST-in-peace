@@ -223,6 +223,18 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface ByteArrayReturnType {
+		@GET("http://example.com")
+		byte[] foo();
+	}
+
+	@RestClient
+	public interface FileReturnType {
+		@GET("http://example.com")
+		File foo(@Destination File target);
+	}
+
+	@RestClient
 	public interface CallAdapterFileReturnWithoutDestination {
 		@GET("http://example.com")
 		Mono<String> foo();
@@ -883,6 +895,50 @@ class ReflectiveRestClientValidatorTest {
 		RIP.addCallAdapterFactory(factory);
 
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+	}
+
+	/**
+	 * Regression test for the validation/dispatch divergence on a
+	 * {@code byte[]}/{@code File} return type: {@code RequestExecutor.processRestRequest}'s
+	 * own {@code byte[]}/{@code File} branches always win at dispatch time,
+	 * before {@code resolveCallAdapter} is ever consulted, so a factory
+	 * "claiming" one of these two return types has no actual effect. Before
+	 * this fix, validation didn't know that - it routed a {@code byte[]}-
+	 * returning method through the claiming factory's declared
+	 * {@code responseBodyType()} anyway, so a factory with a broken one
+	 * (like the wildcard type used here, and in
+	 * {@link #validate_callAdapterWithUnsupportedResponseBodyType_throwsWithError})
+	 * would fail {@code RIP.getClient(...)} for an otherwise completely
+	 * ordinary {@code byte[]} method. Must pass regardless.
+	 */
+	@Test
+	void validate_byteArrayReturnTypeClaimedByFactoryWithUnsupportedResponseBodyType_stillPasses()
+			throws NoSuchMethodException {
+		Type wildcardType = ((java.lang.reflect.ParameterizedType) UnsupportedCompletableFutureTypeParam.class
+				.getMethod("foo").getGenericReturnType()).getActualTypeArguments()[0];
+		CallAdapterFactory factory = method -> method.getReturnType() == byte[].class
+				? Optional.of(testCallAdapter(wildcardType))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ByteArrayReturnType.class));
+	}
+
+	/**
+	 * Same regression as {@link #validate_byteArrayReturnTypeClaimedByFactoryWithUnsupportedResponseBodyType_stillPasses},
+	 * for the {@code File} return type's own unconditional dispatch branch.
+	 */
+	@Test
+	void validate_fileReturnTypeClaimedByFactoryWithUnsupportedResponseBodyType_stillPasses()
+			throws NoSuchMethodException {
+		Type wildcardType = ((java.lang.reflect.ParameterizedType) UnsupportedCompletableFutureTypeParam.class
+				.getMethod("foo").getGenericReturnType()).getActualTypeArguments()[0];
+		CallAdapterFactory factory = method -> method.getReturnType() == File.class
+				? Optional.of(testCallAdapter(wildcardType))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(FileReturnType.class));
 	}
 
 	@Test

@@ -991,7 +991,7 @@ rest-in-peace-reactor/
   src/main/java/com/shri/restinpeace/reactor/
     MonoCallAdapterFactory.java
     FluxListCallAdapterFactory.java
-    ReactorPagination.java      # the Flux<T>-over-@Paginated wiring (§7.2), package-private glue
+    FluxPaginatedCallAdapterFactory.java   # the Flux<T>-over-@Paginated wiring (§7.2)
   src/test/java/...
 ```
 
@@ -1259,13 +1259,16 @@ a follow-on chunk of this one.
 
 ## 13. Open questions
 
-- **The exact "known built-in shapes" whitelist for §8.3's validation
-  rule.** Needs to be enumerated against the current, real support matrix
-  across `responseDecoder`, `RestClientProcessor`'s E9 collection support,
-  and pagination's `Page`/`Stream`/`Iterator` types before the rule ships -
-  an implementation-detail enumeration task, not a design-doc-level
-  decision (the same category §8 of `circuit-breaker-bulkhead.md` already
-  put its own async-bulkhead-permit shape question in).
+- ~~**The exact "known built-in shapes" whitelist for §8.3's validation
+  rule.**~~ **Resolved, not merely deferred** - see §4's "Real deviation
+  from §8.3's original sketch" note: the rule that actually shipped
+  sidesteps this question entirely rather than answering it as originally
+  posed here. A positive whitelist enumerated against the current
+  `responseDecoder`/`RestClientProcessor` support matrix was never needed,
+  since the shipped rule is instead a small, explicit denylist of known-
+  opaque reactive type names - anything not on that list keeps decoding
+  via the pre-existing generic path, completely unchanged, with no
+  enumeration task left to do.
 - **Whether `rest-in-peace-reactor-spring-boot-starter`** (auto-calling
   `RestInPeaceReactor.register()` the way the plain Spring starter
   auto-calls `useDaemonThreadsForAsync()`) ships as part of this rollout or

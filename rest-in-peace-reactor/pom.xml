@@ -15,7 +15,8 @@
 	<url>https://github.com/shrinivas93/REST-in-peace</url>
 	<description>
 		Project Reactor CallAdapterFactory implementations for REST-in-peace -
-		Mono&lt;T&gt; return-type support (Flux&lt;T&gt; lands in a later chunk).
+		Mono&lt;T&gt; and Flux&lt;T&gt; return-type support, including a
+		backpressure-aware Flux&lt;T&gt; over @Paginated methods.
 		See docs/design/reactor-call-adapter.md in the parent repository for
 		the full design and rollout plan. A sibling reactor module of core/
 		(not a dependent of it in the reactor sense - it resolves core the

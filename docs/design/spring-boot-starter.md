@@ -271,9 +271,10 @@ being conflated as one, worth separating up front:
   rollout chunk (§7), once the feature is functionally complete and there's
   something worth versioning.
 - Not adding a `CallAdapter`-style pluggable return-type system (a
-  separate roadmap item - see
-  `docs/design/reactor-call-adapter.md`) - this module never touches
-  return-type decoding.
+  separate roadmap item - see `docs/design/reactor-call-adapter.md` -
+  **since shipped as its own feature**, not roadmap work anymore; that
+  doc's own Status line confirms every rollout chunk has landed) - this
+  module never touches return-type decoding.
 
 ## 4. Proposed architecture
 

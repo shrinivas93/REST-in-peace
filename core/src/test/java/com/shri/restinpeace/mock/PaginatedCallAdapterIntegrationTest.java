@@ -79,8 +79,18 @@ class PaginatedCallAdapterIntegrationTest {
 	void aDecliningFactory_letsTheNextRegisteredFactoryAnswer() {
 		RIP.addPaginatedCallAdapterFactory(method -> Optional.empty());
 		RIP.addPaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
+		PaginatedCallAdapterTestApi api = RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl());
+		server.on(HTTPMethod.GET, "/orders", MockResponse.ok("{\"orders\":[{\"id\":\"1\"}]}"));
 
-		assertDoesNotThrow(() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
+		// getClient() succeeding only proves SOME factory claims the method -
+		// the actual regression this name promises is that dispatch itself
+		// skips the declining factory and reaches the one that actually
+		// answers, which only a real invocation can show.
+		@SuppressWarnings("unchecked")
+		TestBox<List<PaginationTestApi.Order>> result = (TestBox<List<PaginationTestApi.Order>>) (TestBox<?>) api
+				.fluxOrders(null);
+
+		assertEquals("1", result.get().get(0).id);
 	}
 
 	@Test
@@ -105,18 +115,36 @@ class PaginatedCallAdapterIntegrationTest {
 				() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
 	}
 
+	/**
+	 * Directly counts how many times a registered factory's own
+	 * {@code get(Method)} is consulted, rather than going through
+	 * {@code removePaginatedCallAdapterFactory} to infer registry size
+	 * indirectly: that method's own {@code removeIf} removes every identity
+	 * match in one call, so a single remove() would fully unregister a
+	 * wrongly-duplicated entry exactly the same as a correctly-deduplicated
+	 * one - a test built around "one remove() should already clear it" can
+	 * never fail either way, and doesn't actually prove
+	 * {@code addPaginatedCallAdapterFactory} deduplicated anything (same
+	 * reasoning as {@code CallAdapterIntegrationTest}'s own identically-fixed
+	 * test). A factory that always declines forces
+	 * {@code RequestExecutor.resolvePaginatedCallAdapter}'s loop to consult
+	 * every registered entry, so the invocation count directly reads how
+	 * many copies are actually in the registry.
+	 */
 	@Test
-	void addPaginatedCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() {
-		RIP.addPaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
-		RIP.addPaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
+	void addPaginatedCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() throws NoSuchMethodException {
+		java.util.concurrent.atomic.AtomicInteger consultedCount = new java.util.concurrent.atomic.AtomicInteger();
+		PaginatedCallAdapterFactory decliningFactory = method -> {
+			consultedCount.incrementAndGet();
+			return Optional.empty();
+		};
+		RIP.addPaginatedCallAdapterFactory(decliningFactory);
+		RIP.addPaginatedCallAdapterFactory(decliningFactory);
 
-		// A single remove() fully unregisters it - if the second add() had
-		// appended a duplicate entry, one remove() would leave the other
-		// behind and dispatch would still succeed instead of falling back.
-		RIP.removePaginatedCallAdapterFactory(TestPaginatedCallAdapterFactory.INSTANCE);
+		com.shri.restinpeace.internal.RequestExecutor.resolvePaginatedCallAdapter(
+				PaginatedCallAdapterTestApi.class.getMethod("fluxOrders", String.class));
 
-		assertThrows(RestInPeaceException.class,
-				() -> RIP.getClient(PaginatedCallAdapterTestApi.class, server.baseUrl()));
+		assertEquals(1, consultedCount.get());
 	}
 
 	@Test

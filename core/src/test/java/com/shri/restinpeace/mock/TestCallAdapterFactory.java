@@ -27,7 +27,18 @@ final class TestCallAdapterFactory implements CallAdapterFactory {
 		if (method.getReturnType() != TestBox.class) {
 			return Optional.empty();
 		}
-		Type innerType = ((ParameterizedType) method.getGenericReturnType()).getActualTypeArguments()[0];
+		Type genericReturnType = method.getGenericReturnType();
+		if (!(genericReturnType instanceof ParameterizedType)) {
+			// A raw TestBox (no type parameter) declines rather than throws - same
+			// guard both production factories in core use (MonoCallAdapterFactory,
+			// FluxListCallAdapterFactory), for the same reason: this method is also
+			// called from ReflectiveRestClientValidator's per-method
+			// error-collection loop, where a thrown ClassCastException would abort
+			// validation for the whole interface instead of producing one clean,
+			// collected diagnostic for just this method.
+			return Optional.empty();
+		}
+		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
 		return Optional.of(new CallAdapter<TestBox<Object>>() {
 			@Override
 			public Type responseBodyType() {

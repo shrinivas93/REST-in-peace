@@ -343,8 +343,9 @@ exactly as today.
 - **Interaction with the pluggable `CallAdapter` roadmap item** (design:
   `docs/design/reactor-call-adapter.md`). Now that this has moved from
   a note to a full design, its own §4.2 confirms this codegen's existing
-  "any generic type with type arguments that isn't `RipResponse<T>`
-  disqualifies to the reflective fallback" check already covers an
+  "any generic type with type arguments that isn't `RipResponse<T>` or
+  `CompletableFuture<T>` (both already explicitly supported) disqualifies
+  to the reflective fallback" check already covers an
   adapter-shaped return type (`Mono<T>`, `Flux<T>`) unconditionally, with
   no change needed here - narrowing this open question to Kotlin
   `suspend fun`/RxJava specifically, should either ever get its own

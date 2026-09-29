@@ -57,11 +57,16 @@ public final class Main {
 		String baseUrl = "http://localhost:" + server.getAddress().getPort();
 
 		try {
-			// Every Mono<T>/Flux<T> call below dispatches through Unirest's async
-			// client, whose I/O threads are non-daemon by default - opting into
-			// daemon threads here lets this short-lived program exit on its own
-			// once main() returns, instead of hanging (see RIP.useDaemonThreadsForAsync's
-			// own javadoc: call once at startup, before building any client).
+			// The Mono<T> and plain (non-@Paginated) Flux<T> calls below dispatch
+			// through Unirest's async client, whose I/O threads are non-daemon by
+			// default - opting into daemon threads here lets this short-lived
+			// program exit on its own once main() returns, instead of hanging (see
+			// RIP.useDaemonThreadsForAsync's own javadoc: call once at startup,
+			// before building any client). The @Paginated Flux<T> call further
+			// below doesn't go through that async client at all: its first page is
+			// fetched synchronously and eagerly, and every later page blocks on
+			// Page.next() via Schedulers.boundedElastic() instead - daemon threads
+			// matter for it too, just via a different mechanism.
 			RIP.useDaemonThreadsForAsync();
 			RestInPeaceReactor.register();
 			OrderApi api = RIP.getClient(OrderApi.class, baseUrl);

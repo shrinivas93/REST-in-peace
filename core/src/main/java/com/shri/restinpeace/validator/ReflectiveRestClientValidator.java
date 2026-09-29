@@ -403,6 +403,19 @@ public class ReflectiveRestClientValidator {
 					validationResult);
 			return;
 		}
+		if (returnType == byte[].class || returnType == File.class) {
+			// Mirrors RequestExecutor.processRestRequest's own unconditional
+			// byte[]/File branches, which run before resolveCallAdapter is ever
+			// consulted at dispatch time - a CallAdapterFactory "claiming" one of
+			// these two return types would pass validation below (its
+			// responseBodyType() checked out fine) but then never actually run,
+			// since dispatch always wins with the built-in handling first. Not
+			// consulting resolveCallAdapter here at all keeps the two in sync:
+			// validation now agrees these built-in shapes need no CallAdapter to
+			// already work exactly as they always have, whether or not a factory
+			// would have claimed them.
+			return;
+		}
 		Optional<CallAdapter<?>> callAdapter = RequestExecutor.resolveCallAdapter(method);
 		if (callAdapter.isPresent()) {
 			validateCallAdapterResponseBodyType(method, callAdapter.get().responseBodyType(), validationResult);

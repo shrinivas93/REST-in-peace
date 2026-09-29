@@ -34,7 +34,7 @@ public interface ReactorTestApi {
 	Mono<Void> fireEvent(@Body String payload);
 
 	@POST("/orders")
-	@Retry(times = 3, retryOnStatus = { 503 }, delayMillis = 1)
+	@Retry(times = 3, retryOnStatus = { 503 }, delayMillis = 1, idempotent = true)
 	Mono<String> createOrderWithRetry(@Body String payload);
 
 	/**
@@ -44,7 +44,7 @@ public interface ReactorTestApi {
 	 * failed attempt landing and the scheduled retry actually firing.
 	 */
 	@POST("/orders")
-	@Retry(times = 3, retryOnStatus = { 503 }, delayMillis = 400)
+	@Retry(times = 3, retryOnStatus = { 503 }, delayMillis = 400, idempotent = true)
 	Mono<String> createOrderWithSlowRetry(@Body String payload);
 
 }

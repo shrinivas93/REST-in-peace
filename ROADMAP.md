@@ -37,6 +37,14 @@ for reference rather than tracked in code. Check items off as they land.
       once, right after this shipped (#194). First real releases:
       v1.0.0.45-v1.0.0.47, all confirmed live on
       [Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace).
+      **`rest-in-peace-reactor` is deliberately excluded from this, for
+      now** - it shares this reactor's root `pom.xml` purely for version
+      sync, not because it's meant to ship; `maven.deploy.skip=true` plus
+      its own `central` profile `skipPublishing=true` override
+      (`rest-in-peace-reactor/pom.xml`) keep it out of both GitHub
+      Packages and Maven Central. No release date is planned yet - see the
+      PR #227 review backlog section below for the exact mechanism and its
+      rationale.
 - [x] **Refactor to idiomatic Java 8** — swept `RestRequestProcessor`,
       `RestClientValidator`, and `RestClientInvocationHandler` for imperative
       loops and manual `Optional` isPresent/get patterns, replacing them with
@@ -1532,39 +1540,57 @@ policy in `CLAUDE.md`.
 
 ### P3
 
-- [ ] **Reactor Javadoc unlinked from the published field guide** — it's
+- [x] **Reactor Javadoc unlinked from the published field guide** — it's
       published under a new path, but the field guide only exposes the
       core `/apidocs/` link. Add a link to
-      `/rest-in-peace-reactor/apidocs/`. `.github/workflows/javadoc.yml:92`.
-- [ ] **README points to ROADMAP for a publish status that isn't recorded
+      `/rest-in-peace-reactor/apidocs/`. Fixed: added a "Reactor Javadoc ↗"
+      link to `docs/getting-started.html`'s sidebar, alongside the existing
+      core Javadoc link. `.github/workflows/javadoc.yml:92`.
+- [x] **README points to ROADMAP for a publish status that isn't recorded
       there** — neither the `[x]` CallAdapter item nor the existing "Maven
       Central publishing" item states `rest-in-peace-reactor`'s
       publication status, yet the root pom already adds it to
       `<modules>`, so the next release silently publishes it everywhere
       with no documented plan. Add an explicit ROADMAP status line for
-      the module's first Maven Central release. `README.md:275`.
-- [ ] **Unusable dependency snippet (empty `<version>`)** — Maven sees the
+      the module's first Maven Central release. Fixed: added an explicit
+      status note to the "Maven Central publishing" item above stating
+      `rest-in-peace-reactor` is deliberately excluded (no release date
+      planned), naming the exact `maven.deploy.skip`/`skipPublishing`
+      mechanism now keeping it that way. `README.md:275`.
+- [x] **Unusable dependency snippet (empty `<version>`)** — Maven sees the
       comment-only `<version>` as empty and rejects the POM. Put the
       locally installed version in the element, or show a property the
-      consumer defines. `README.md:1245`.
-- [ ] **`CallAdapterFactory.get` javadoc omits validation-time calls** —
+      consumer defines. Fixed: moved the comment above the `<dependency>`
+      block and put a real, illustrative version string in `<version>`.
+      `README.md:1245`.
+- [x] **`CallAdapterFactory.get` javadoc omits validation-time calls** —
       it runs during client-construction validation as well as request
       dispatch, but the contract documents only dispatch. Say validation
-      calls occur too.
+      calls occur too. Fixed, together with the next item.
       `core/src/main/java/com/shri/restinpeace/CallAdapterFactory.java:19`.
-- [ ] **`CallAdapterFactory.get` javadoc ordering implies factories run
+- [x] **`CallAdapterFactory.get` javadoc ordering implies factories run
       before built-ins** — `@return` documents factories before built-in
       shapes, but `RequestExecutor` handles built-ins first, silently
       ignoring a factory that claims them. Document built-ins as handled
-      first.
+      first. Fixed: `@param`/`@return` now both state the real contract -
+      called at validation time too, and RIP's built-in shapes
+      (`CompletableFuture`/`RipResponse`/`byte[]`/`File`) are always
+      checked first and always win, so claiming one has no effect.
       `core/src/main/java/com/shri/restinpeace/CallAdapterFactory.java:21`.
-- [ ] **`addCallAdapterFactory` TOCTOU race on duplicate registration** —
+- [x] **`addCallAdapterFactory` TOCTOU race on duplicate registration** —
       can append the same instance twice when concurrent startup calls
       pass the identity check before either adds it; the paginated
       registry has the same race. Synchronize the check/add, or use an
-      identity-aware atomic registry.
+      identity-aware atomic registry. Fixed: both `addCallAdapterFactory`
+      and `addPaginatedCallAdapterFactory` now synchronize their
+      check-then-add on a dedicated lock object each; `remove`/`clear`
+      need no change since they don't need to coordinate with that check.
+      Regression tests count how many times a doubly-registered, always-
+      declining factory is consulted (proving registry size directly,
+      unlike the two tests fixed below), each confirmed to fail against
+      the unsynchronized version.
       `core/src/main/java/com/shri/restinpeace/internal/RequestExecutor.java:272`.
-- [ ] **Validation and dispatch diverge for `byte[]`/`File` + a claiming
+- [x] **Validation and dispatch diverge for `byte[]`/`File` + a claiming
       adapter** — `ReflectiveRestClientValidator.validateReturnType` lets
       a factory claim a `byte[]`/`File`-returning method through
       `resolveCallAdapter`, so it passes `RIP.getClient(...)`, but
@@ -1573,103 +1599,144 @@ policy in `CLAUDE.md`.
       never actually runs - the method silently returns raw bytes
       instead of the adapted value. Check `byte[]`/`File` before
       consulting factories in the validator (mirroring dispatch), or
-      move the adapter hook before those branches.
+      move the adapter hook before those branches. Fixed by the first
+      option: `validateReturnType` now returns early for `byte[]`/`File`
+      before ever calling `resolveCallAdapter`, mirroring dispatch's own
+      order. Regression tests register a factory claiming `byte[]`/`File`
+      with a deliberately-broken `responseBodyType()` and confirm
+      `RIP.getClient(...)` still succeeds - both confirmed to fail
+      against the old order.
       `core/src/main/java/com/shri/restinpeace/internal/RequestExecutor.java:492`.
-- [ ] **`CallAdapterIntegrationTest` doesn't actually prove add-time
+- [x] **`CallAdapterIntegrationTest` doesn't actually prove add-time
       dedup** — `removeCallAdapterFactory` removes every identity match,
       so the test would pass whether or not a duplicate-appending `add`
       ever happened. Assert registry size some other way, or drop the
-      dedup-specific reasoning.
+      dedup-specific reasoning. Fixed: rewritten to count
+      `resolveCallAdapter`'s consultations of an always-declining,
+      doubly-registered factory instead of round-tripping through
+      `removeCallAdapterFactory` - confirmed to fail (count of 2 instead
+      of 1) against a deliberately-broken dedup.
       `core/src/test/java/com/shri/restinpeace/mock/CallAdapterIntegrationTest.java:126`.
-- [ ] **`PaginatedCallAdapterIntegrationTest`: test name overclaims,
+- [x] **`PaginatedCallAdapterIntegrationTest`: test name overclaims,
       never dispatches a real call** — `assertDoesNotThrow(getClient)`
       only proves the second factory claims the method during
       validation. Exercise the real invocation and assert a tag from the
-      second factory.
+      second factory. Fixed: now dispatches a real call through a mock
+      server and asserts the decoded item actually came from the second,
+      non-declining factory.
       `core/src/test/java/com/shri/restinpeace/mock/PaginatedCallAdapterIntegrationTest.java:79`.
-- [ ] **`PaginatedCallAdapterIntegrationTest`: test can't fail for the
+- [x] **`PaginatedCallAdapterIntegrationTest`: test can't fail for the
       regression it claims to guard** — `removePaginatedCallAdapterFactory`
       removes every copy by identity, so the no-op-add property this test
       claims to check is unobservable through the public API. Drop the
-      test or assert something meaningful about dispatch.
+      test or assert something meaningful about dispatch. Fixed: same
+      consultation-counting rewrite as `CallAdapterIntegrationTest`'s own
+      fix, via `RequestExecutor.resolvePaginatedCallAdapter`.
       `core/src/test/java/com/shri/restinpeace/mock/PaginatedCallAdapterIntegrationTest.java:113`.
-- [ ] **`TestBox` javadoc describes behavior it doesn't have** — claims it
+- [x] **`TestBox` javadoc describes behavior it doesn't have** — claims it
       "resolves synchronously via `get()` (blocking on the underlying
       future)"; `TestBox` never touches a future, it just stores an
       already-produced value. Reword to describe the stored-decoded-value
-      semantics. `core/src/test/java/com/shri/restinpeace/mock/TestBox.java:8`.
-- [ ] **`TestBox.failed(null)` silently builds a success box** — the error
+      semantics. Fixed. `core/src/test/java/com/shri/restinpeace/mock/TestBox.java:8`.
+- [x] **`TestBox.failed(null)` silently builds a success box** — the error
       field ends up null, `isFailed()` returns false, and `get()` returns
       null - the failure signal this class exists to carry is silently
-      lost. Guard with a null check.
+      lost. Guard with a null check. Fixed: `failed(...)` now
+      `Objects.requireNonNull`s its argument; new `TestBoxTest` covers it.
       `core/src/test/java/com/shri/restinpeace/mock/TestBox.java:29`.
-- [ ] **`TestCallAdapterFactory.get()` throws instead of declining for a
+- [x] **`TestCallAdapterFactory.get()` throws instead of declining for a
       raw return type** — casts `method.getGenericReturnType()` to
       `ParameterizedType` with no `instanceof` guard, unlike both
       production factories in this PR (which guard exactly this case
       because `resolveCallAdapter` also runs from
       `ReflectiveRestClientValidator`'s per-method error-collection loop,
       where a throw here crashes `RIP.getClient(...)` for the whole
-      interface). Add the same guard.
+      interface). Add the same guard. Fixed, with the same guard the
+      production factories use; new `RawTestBoxTestApi` fixture and
+      `CallAdapterIntegrationTest` regression test confirmed to fail
+      (`ClassCastException`) against the unguarded version.
       `core/src/test/java/com/shri/restinpeace/mock/TestCallAdapterFactory.java:30`.
-- [ ] **Doc: blanket generic-type codegen rule ignores
+- [x] **Doc: blanket generic-type codegen rule ignores
       `CompletableFuture<T>`** — inaccurate because `CompletableFuture<T>`
       is another generic type codegen explicitly supports. Qualify the
       rule to the non-async generic check, or call out the exception.
+      Fixed: the rule now explicitly names `CompletableFuture<T>` as
+      already-supported alongside `RipResponse<T>`.
       `docs/design/compile-time-proxy-generation.md:347`.
-- [ ] **Doc: references a nonexistent `ReactorPagination.java`** —
+- [x] **Doc: references a nonexistent `ReactorPagination.java`** —
       replace with `FluxPaginatedCallAdapterFactory.java` so maintainers
-      can locate the shipped pagination implementation.
+      can locate the shipped pagination implementation. Fixed.
       `docs/design/reactor-call-adapter.md:966`.
-- [ ] **Doc: stale open-question marker on an already-resolved rule** —
+- [x] **Doc: stale open-question marker on an already-resolved rule** —
       the completed design still presents the resolved validation rule as
-      an open pre-release question. Remove it or mark it resolved.
+      an open pre-release question. Remove it or mark it resolved. Fixed:
+      struck through and marked resolved, cross-referencing §4's own
+      "Real deviation from §8.3's original sketch" note that already
+      answers it.
       `docs/design/reactor-call-adapter.md:1234`.
-- [ ] **Doc: calls `CallAdapter` a roadmap item after it shipped** — this
+- [x] **Doc: calls `CallAdapter` a roadmap item after it shipped** — this
       release landed the SPI and Reactor implementations; calling it
       roadmap work contradicts the current release documentation.
-      Describe it as a separate, shipped feature instead.
+      Describe it as a separate, shipped feature instead. Fixed: the §3
+      non-goals bullet now says "since shipped as its own feature", citing
+      that doc's own Status line.
       `docs/design/spring-boot-starter.md:274`.
-- [ ] **`rest-in-peace-reactor` artifact description says Flux is still
+- [x] **`rest-in-peace-reactor` artifact description says Flux is still
       future** — the module now ships both Flux factories; update the
-      description to describe current Mono and Flux support.
+      description to describe current Mono and Flux support. Fixed.
       `rest-in-peace-reactor/pom.xml:18`.
-- [ ] **`FluxListCallAdapterFactoryTest` javadoc undercounts its own test
+- [x] **`FluxListCallAdapterFactoryTest` javadoc undercounts its own test
       coverage** — says the file covers "the same two things" the
       integration test can't reliably exercise, but the class adds a
       third, distinct category (`disposing_cancelsTheUnderlyingDelegateFuture`).
-      Update the summary sentence to match.
+      Update the summary sentence to match. Fixed: now describes three
+      categories (decline paths, `CompletionException` unwrapping,
+      disposal/cancellation propagation).
       `rest-in-peace-reactor/src/test/java/com/shri/restinpeace/reactor/FluxListCallAdapterFactoryTest.java:20`.
-- [ ] **`FluxListCallAdapterFactoryTest`: two of three decline branches
+- [x] **`FluxListCallAdapterFactoryTest`: two of three decline branches
       untested** — only the non-`Flux`-return-type decline condition is
       covered; the `@Paginated`-decline and non-parameterized/raw-`Flux`
       branches (both new logic in this PR) aren't exercised anywhere at
-      the factory level. Add the two missing assertions.
+      the factory level. Add the two missing assertions. Fixed: added
+      `get_declinesAPaginatedMethod` (reusing `FluxTestApi.fluxOrders`)
+      and `get_declinesARawFluxReturnType`.
       `rest-in-peace-reactor/src/test/java/com/shri/restinpeace/reactor/FluxListCallAdapterFactoryTest.java:37`.
-- [ ] **`FluxPaginatedCallAdapterIntegrationTest`: backpressure proof
+- [x] **`FluxPaginatedCallAdapterIntegrationTest`: backpressure proof
       relies on fixed sleeps, not determinism** — `thenAwait(200ms)` plus
       fixed `Thread.sleep(400)` disposal waits repeat the exact
       fixed-sleep pattern this file's own `awaitRequestCount` javadoc
       warns against; the test's own comment concedes the coalescing case
       is "never actually exercised." Prefer an await-loop like
-      `awaitRequestCount`.
+      `awaitRequestCount`. Addressed: unlike `awaitRequestCount`'s
+      genuinely pollable "a request landed" signal, this race is pure
+      in-process CPU scheduling (has `drainOnce()`'s last few lines
+      finished after `sink.next()` returned) with nothing external to
+      poll on, so no await-loop applies here - widened the fixed margin
+      instead (200ms → 500ms), with a comment explaining why a poll isn't
+      meaningfully possible.
       `rest-in-peace-reactor/src/test/java/com/shri/restinpeace/reactor/FluxPaginatedCallAdapterIntegrationTest.java:75`.
-- [ ] **`FluxPaginatedCallAdapterIntegrationTest`: disposal tests' fixed-
+- [x] **`FluxPaginatedCallAdapterIntegrationTest`: disposal tests' fixed-
       sleep margin too tight** — sleeps a fixed 400ms against a
       server-side 300ms delay, leaving only ~100ms of margin - flaky
       under a loaded CI runner exactly as the file's own javadoc warns
       against elsewhere. Poll instead of sleeping a fixed duration, or
-      widen the margin well past the delay.
+      widen the margin well past the delay. Fixed by the second option
+      (no "response sent" signal exists to poll on, only "request
+      received," already awaited beforehand): widened both disposal
+      tests' sleep from 400ms to 900ms, a ~600ms margin instead of ~100ms.
       `rest-in-peace-reactor/src/test/java/com/shri/restinpeace/reactor/FluxPaginatedCallAdapterIntegrationTest.java:130`.
-- [ ] **`ReactorTestApi` fixture: `@Retry` on a `POST` without
+- [x] **`ReactorTestApi` fixture: `@Retry` on a `POST` without
       `idempotent = true`** — the exact combination core's `Retry`
       javadoc documents as risking duplicate execution, and it diverges
       from the design doc's own §11.8 exemplar. Add `idempotent = true`;
-      test semantics are unaffected.
+      test semantics are unaffected. Fixed on both `@POST` `@Retry`
+      methods; confirmed the affected `MonoCallAdapterIntegrationTest`
+      suite still passes unchanged.
       `rest-in-peace-reactor/src/test/java/com/shri/restinpeace/reactor/ReactorTestApi.java:37`.
-- [ ] **Sample comment overclaims non-blocking behavior for `@Paginated
+- [x] **Sample comment overclaims non-blocking behavior for `@Paginated
       Flux`** — `@Paginated Flux<T>` doesn't dispatch through Unirest's
       async client (page 1 is synchronous, later pages block on
       `Page.next()` via `boundedElastic`); limit the comment to the
-      Mono/plain-Flux calls.
+      Mono/plain-Flux calls. Fixed; confirmed the sample still compiles
+      and runs correctly against a local install after the change.
       `samples/reactor-consumer/src/main/java/com/example/consumer/Main.java:60`.
