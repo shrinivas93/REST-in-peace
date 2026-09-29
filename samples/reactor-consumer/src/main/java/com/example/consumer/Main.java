@@ -63,10 +63,10 @@ public final class Main {
 			// program exit on its own once main() returns, instead of hanging (see
 			// RIP.useDaemonThreadsForAsync's own javadoc: call once at startup,
 			// before building any client). The @Paginated Flux<T> call further
-			// below doesn't go through that async client at all: its first page is
-			// fetched synchronously and eagerly, and every later page blocks on
-			// Page.next() via Schedulers.boundedElastic() instead - daemon threads
-			// matter for it too, just via a different mechanism.
+			// below doesn't go through that async client at all, so this setting
+			// doesn't affect it: its first page is fetched synchronously and
+			// eagerly, and every later page blocks on Page.next() via
+			// Schedulers.boundedElastic() instead.
 			RIP.useDaemonThreadsForAsync();
 			RestInPeaceReactor.register();
 			OrderApi api = RIP.getClient(OrderApi.class, baseUrl);

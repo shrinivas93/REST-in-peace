@@ -66,6 +66,15 @@ class FluxPaginatedCallAdapterIntegrationTest {
 
 		StepVerifier.create(api.fluxOrders(null), 1) // request exactly 1 item up front
 				.expectNextCount(1)
+				// Directly observes the pause itself, not just its end-to-end
+				// consequence: page 2 must not have been fetched yet, right after
+				// item 1 lands and before any further demand is signaled. Without
+				// this, the test could pass even if the two request(n) deliveries
+				// below raced and got coalesced into one drain() pass that never
+				// actually paused at zero demand in between - the final
+				// "2 total, not 3" assertion alone can't distinguish "paused, then
+				// resumed" from "never paused at all but also never ran away."
+				.then(() -> assertEquals(1, server.countOf(HTTPMethod.GET, "/orders")))
 				// Lets the adapter's own drain() genuinely finish pausing (no demand left,
 				// page exhausted) before the next request arrives - without this, the two
 				// request(n) deliveries can race each other (both landing before either
