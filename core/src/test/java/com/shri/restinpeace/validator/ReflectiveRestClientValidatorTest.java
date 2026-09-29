@@ -198,6 +198,18 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface NestedUnclaimedReactiveTypeInCompletableFuture {
+		@GET("http://example.com")
+		CompletableFuture<Mono<String>> foo();
+	}
+
+	@RestClient
+	public interface NestedUnclaimedReactiveTypeInRipResponse {
+		@GET("http://example.com")
+		RipResponse<Mono<String>> foo();
+	}
+
+	@RestClient
 	public interface UnclaimedReactiveReturnType {
 		@GET("http://example.com")
 		Mono<String> foo();
@@ -1006,6 +1018,28 @@ class ReflectiveRestClientValidatorTest {
 	@Test
 	void validate_validCompletableFutureOfRipResponseOfList_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidCompletableFutureOfRipResponseOfList.class));
+	}
+
+	@Test
+	void validate_nestedUnclaimedReactiveTypeInCompletableFuture_throwsWithError() {
+		// Before this check existed, CompletableFuture<Mono<String>> sailed through
+		// as an ordinary decodable type argument - the outer denylist check only
+		// ever sees a method's own top-level return type (CompletableFuture here,
+		// not Mono), so it never caught this. No registered CallAdapterFactory
+		// changes the outcome either: CallAdapterFactory.get(method) is never
+		// consulted for a type argument, only the method's own return type.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(NestedUnclaimedReactiveTypeInCompletableFuture.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("a CallAdapterFactory only ever claims a method's own top-level return type"));
+	}
+
+	@Test
+	void validate_nestedUnclaimedReactiveTypeInRipResponse_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(NestedUnclaimedReactiveTypeInRipResponse.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("a CallAdapterFactory only ever claims a method's own top-level return type"));
 	}
 
 	@Test

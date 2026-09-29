@@ -476,6 +476,28 @@ public class ReflectiveRestClientValidator {
 					method.getDeclaringClass().getName(), method.getName(), typeName, innerType));
 			return;
 		}
+		Class<?> innerRawType = innerType instanceof ParameterizedType
+				? (Class<?>) ((ParameterizedType) innerType).getRawType()
+				: (Class<?>) innerType;
+		if (KNOWN_UNSUPPORTED_REACTIVE_TYPES.contains(innerRawType.getName())) {
+			// The top-level denylist check in validateReturnType only ever sees a
+			// method's own declared return type, so a KNOWN_UNSUPPORTED_REACTIVE_TYPES
+			// entry nested one level deeper - CompletableFuture<Mono<User>>,
+			// RipResponse<Flux<User>> - sailed straight through as an ordinary
+			// decodable type argument and got handed to the Gson/generic decode
+			// path, the exact broken-instance failure the outer check exists to
+			// prevent. A registered CallAdapterFactory can't rescue this shape
+			// either - CallAdapterFactory.get(method) only ever sees the method's
+			// own top-level return type, never a nested type argument.
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s<%s>, but a CallAdapterFactory only ever claims a method's own "
+							+ "top-level return type - %s nested inside %s<...> is never dispatched through one "
+							+ "and has no other built-in support. Return %s directly (with a registered "
+							+ "CallAdapterFactory) instead of wrapping it.",
+					method.getDeclaringClass().getName(), method.getName(), typeName, innerType,
+					innerRawType.getSimpleName(), typeName, innerRawType.getSimpleName()));
+			return;
+		}
 		if ("RipResponse".equals(typeName) && innerType == File.class) {
 			validationResult.addError(String.format(
 					"The method %s.%s returns RipResponse<File>, which is not supported - use a plain File return "
