@@ -1395,9 +1395,9 @@ policy in `CLAUDE.md`.
       `@Paginated`-adapted return type declaring more than one type
       parameter by name, and `PaginationCoordinator.resolveItemType` mirrors
       the same check at dispatch time for defense-in-depth (validation
-      already gates every real path there, so no separate reachable test
-      exists for that duplicate check, consistent with its sibling raw-type
-      check in the same method).
+      already gates every real path there, so a dedicated same-package test
+      calls `resolveItemType` directly, bypassing validation entirely, to
+      cover it).
       `core/src/main/java/com/shri/restinpeace/PaginatedCallAdapter.java:39`.
 - [x] **Opaque-reactive denylist misses a nested wrapper** — the denylist
       only checks the outermost return type name, so a nested opaque
