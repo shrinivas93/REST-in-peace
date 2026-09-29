@@ -1470,15 +1470,23 @@ policy in `CLAUDE.md`.
       Central, contradicting the documented local-only distribution
       policy. Keep it out of the publish reactor, or deliberately update
       the release workflows and installation docs together. Fixed by the
-      first option: `rest-in-peace-reactor/pom.xml` now sets
-      `maven.deploy.skip=true`, which both `maven-deploy-plugin` and
-      `central-publishing-maven-plugin` honor - `mvn deploy` from the root
-      reactor now skips this module's artifact while still installing it
-      locally (verified: `mvn -pl rest-in-peace-reactor deploy` logs
-      "Skipping artifact deployment" and still installs to the local
-      repo). It stays a root-reactor module so release:prepare's version
-      bump still keeps it in sync with core, per ci.yml's existing
-      assumption. `pom.xml:65`.
+      first option, in two parts since the two publish paths don't share a
+      skip mechanism: `rest-in-peace-reactor/pom.xml` sets
+      `maven.deploy.skip=true` for the plain GitHub Packages `mvn deploy`
+      (honored by `maven-deploy-plugin`; verified: `mvn -pl
+      rest-in-peace-reactor deploy` logs "Skipping artifact deployment" and
+      still installs to the local repo), and separately declares its own
+      `central` profile with `<skipPublishing>true</skipPublishing>` for
+      `central-publishing-maven-plugin`'s Maven Central path - that plugin
+      does not honor `maven.deploy.skip` at all (confirmed against
+      mavenplugins/central-publishing-maven-plugin#22, an open upstream
+      feature request for exactly that; caught by Greptile review on this
+      PR after the `maven.deploy.skip`-only fix first landed). Verified via
+      `mvn -pl rest-in-peace-reactor help:effective-pom -Pcentral`: the
+      module's effective POM shows `skipPublishing` merged to `true` into
+      the inherited plugin execution. It stays a root-reactor module so
+      release:prepare's version bump still keeps it in sync with core, per
+      ci.yml's existing assumption. `pom.xml:65`.
 - [x] **`FluxListCallAdapterFactory` item-type validation gap** — claims
       `Flux<?>`, `Flux<? extends T>`, and generic `Flux<T>` methods by
       hiding their unresolved item type inside `List<T>`, so invalid
