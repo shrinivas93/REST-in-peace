@@ -889,6 +889,23 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@Test
+	void validate_callAdapterWithRawRipResponseBodyType_throwsWithError() {
+		// A raw RipResponse.class (e.g. a real Mono<RipResponse>/MonoCallAdapterFactory
+		// pairing) can't be recognized as a wrapper at dispatch time any more than an
+		// ordinary raw RipResponse return can - before this check existed, it sailed
+		// through as if it were a plain decodable Class, decoding the wire JSON
+		// directly into a RipResponse instance instead of unwrapping it first.
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(RipResponse.class))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("raw RipResponse"));
+	}
+
+	@Test
 	void validate_callAdapterFileResponseBodyTypeWithDestinationParameter_passes() {
 		// responseBodyType() is File - e.g. a real Mono<File>/MonoCallAdapterFactory
 		// pairing - even though the method's own declared generic return type

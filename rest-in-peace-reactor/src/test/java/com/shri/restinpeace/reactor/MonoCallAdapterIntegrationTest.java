@@ -26,6 +26,7 @@ import com.shri.restinpeace.annotation.request.PathParam;
 import com.shri.restinpeace.constant.HTTPMethod;
 import com.shri.restinpeace.exception.RestInPeaceException;
 import com.shri.restinpeace.exception.RestInPeaceHttpException;
+import com.shri.restinpeace.exception.RestInPeaceValidationException;
 import com.shri.restinpeace.mock.MockRestServer;
 import com.shri.restinpeace.mock.MockResponse;
 
@@ -181,6 +182,29 @@ class MonoCallAdapterIntegrationTest {
 		@GET("/orders/{id}")
 		@SuppressWarnings("rawtypes")
 		Mono getOrder(@PathParam("id") String id);
+	}
+
+	@Test
+	void validate_rawRipResponseInsideMono_rejectedByTheRealFactory() {
+		// End-to-end regression for the raw-RipResponse-in-a-CallAdapter's
+		// responseBodyType() gap: MonoCallAdapterFactory.get() extracts this
+		// method's Mono<RipResponse> type argument verbatim (a raw RipResponse.class,
+		// since the method declares no further type parameter), so this proves the
+		// real factory's extraction and ReflectiveRestClientValidator's own check
+		// actually catch this combination together - not just the validator in
+		// isolation against a hand-supplied CallAdapter double.
+		RestInPeaceException exception = assertThrows(RestInPeaceException.class,
+				() -> RIP.getClient(RawRipResponseInsideMonoTestApi.class, server.baseUrl()));
+		assertTrue(exception.getCause() instanceof RestInPeaceValidationException);
+		assertTrue(((RestInPeaceValidationException) exception.getCause()).getValidationResult().getAllErrors()
+				.contains("raw RipResponse"));
+	}
+
+	@RestClient
+	@SuppressWarnings("rawtypes")
+	private interface RawRipResponseInsideMonoTestApi {
+		@GET("/orders/{id}")
+		Mono<RipResponse> getOrder(@PathParam("id") String id);
 	}
 
 }
