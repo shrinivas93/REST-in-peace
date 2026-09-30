@@ -21,6 +21,16 @@ import java.util.function.Supplier;
  * same guarantee {@code Page<T>}/{@code Stream<T>}/{@code Iterator<T>}'s own
  * page-at-a-time iteration already has.
  *
+ * <p>
+ * <b>The claimed method's return type must declare exactly one type
+ * parameter - the page item type.</b> RIP resolves the item type to decode
+ * each page's items into from that single type argument
+ * ({@code Flux<Order>}'s {@code Order}, say); a claimed return type declared
+ * with more than one type parameter (e.g. a hypothetical
+ * {@code Result<Metadata, Order>}) has no way to tell RIP which one is the
+ * item type, so both {@code RIP.getClient(...)} validation and dispatch
+ * reject it by name rather than silently decoding the wrong argument.
+ *
  * @param <T> the adapted return type this instance produces
  */
 public interface PaginatedCallAdapter<T> {

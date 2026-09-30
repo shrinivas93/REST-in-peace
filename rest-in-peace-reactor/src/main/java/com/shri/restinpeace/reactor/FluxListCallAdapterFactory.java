@@ -49,6 +49,19 @@ public final class FluxListCallAdapterFactory implements CallAdapterFactory {
 			return Optional.empty();
 		}
 		Type itemType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		if (!(itemType instanceof Class) && !(itemType instanceof ParameterizedType)) {
+			// A wildcard (Flux<?>/Flux<? extends T>) or an unresolved type variable
+			// (a generic method's own <T> Flux<T>) would otherwise be silently hidden
+			// inside the synthetic List<itemType> this factory wraps it in below -
+			// unlike MonoCallAdapterFactory's own unwrapped responseBodyType(),
+			// ReflectiveRestClientValidator's top-level Class/ParameterizedType check
+			// on validateCallAdapterResponseBodyType never looks inside that wrapping
+			// List's own type argument, so it would pass validation clean and then
+			// fail (or misdecode) at Gson's own generic decode instead. Decline
+			// instead, same as a raw Mono/Flux already does - RequestExecutor's own
+			// KNOWN_UNSUPPORTED_REACTIVE_TYPES denylist then reports it cleanly.
+			return Optional.empty();
+		}
 		return Optional.of(new FluxListCallAdapter(listOf(itemType)));
 	}
 

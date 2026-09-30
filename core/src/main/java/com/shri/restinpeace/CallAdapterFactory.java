@@ -16,11 +16,20 @@ import java.util.Optional;
 public interface CallAdapterFactory {
 
 	/**
-	 * @param method the interface method being dispatched
+	 * @param method the interface method being dispatched or, at
+	 *               {@code RIP.getClient(...)} time, validated -
+	 *               {@code ReflectiveRestClientValidator} calls this exact
+	 *               method to check a claimed adapter's declared return
+	 *               type before the client is ever built, so a factory must
+	 *               behave identically both times for the same method
 	 * @return an adapter for {@code method}'s return type, or
-	 *         {@link Optional#empty()} to decline (RIP tries the next
-	 *         registered factory, then its own built-in shapes, in that
-	 *         order)
+	 *         {@link Optional#empty()} to decline. RIP's own built-in
+	 *         shapes ({@code CompletableFuture}, {@code RipResponse},
+	 *         {@code byte[]}, {@code File}) are handled first and always
+	 *         win - a factory is only ever consulted for a return type none
+	 *         of those already claim, so declaring one of them here has no
+	 *         effect. Declining also lets RIP try the next registered
+	 *         factory, in registration order.
 	 */
 	Optional<CallAdapter<?>> get(Method method);
 

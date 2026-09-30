@@ -403,6 +403,19 @@ public class ReflectiveRestClientValidator {
 					validationResult);
 			return;
 		}
+		if (returnType == byte[].class || returnType == File.class) {
+			// Mirrors RequestExecutor.processRestRequest's own unconditional
+			// byte[]/File branches, which run before resolveCallAdapter is ever
+			// consulted at dispatch time - a CallAdapterFactory "claiming" one of
+			// these two return types would pass validation below (its
+			// responseBodyType() checked out fine) but then never actually run,
+			// since dispatch always wins with the built-in handling first. Not
+			// consulting resolveCallAdapter here at all keeps the two in sync:
+			// validation now agrees these built-in shapes need no CallAdapter to
+			// already work exactly as they always have, whether or not a factory
+			// would have claimed them.
+			return;
+		}
 		Optional<CallAdapter<?>> callAdapter = RequestExecutor.resolveCallAdapter(method);
 		if (callAdapter.isPresent()) {
 			validateCallAdapterResponseBodyType(method, callAdapter.get().responseBodyType(), validationResult);
@@ -438,8 +451,13 @@ public class ReflectiveRestClientValidator {
 	 */
 	private static void validateCallAdapterResponseBodyType(Method method, Type responseBodyType,
 			ValidationResult validationResult) {
-		if (responseBodyType instanceof ParameterizedType
-				&& ((ParameterizedType) responseBodyType).getRawType() == RipResponse.class) {
+		if (responseBodyType == RipResponse.class || (responseBodyType instanceof ParameterizedType
+				&& ((ParameterizedType) responseBodyType).getRawType() == RipResponse.class)) {
+			// A raw RipResponse (e.g. a Mono<RipResponse> adapter's responseBodyType())
+			// can't be recognized as a wrapper at dispatch time any more than an
+			// ordinary raw RipResponse return can - validateParameterizedReturnType's
+			// own raw-type branch (genericReturnType not a ParameterizedType) already
+			// produces exactly that error for RipResponse.class here.
 			validateParameterizedReturnType(method, responseBodyType, "RipResponse", false, validationResult);
 			return;
 		}
@@ -459,7 +477,23 @@ public class ReflectiveRestClientValidator {
 					method.getDeclaringClass().getName(), method.getName(), typeName));
 			return;
 		}
-		Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+		Type[] typeArguments = ((ParameterizedType) genericReturnType).getActualTypeArguments();
+		if (typeArguments.length != 1) {
+			// Every built-in caller of this method (CompletableFuture<T>, RipResponse<T>)
+			// is itself declared with exactly one type parameter, so this only ever
+			// fires for a @Paginated method's PaginatedCallAdapter-claimed return type -
+			// a custom adapted type with more than one type parameter (e.g. a
+			// hypothetical Result<Metadata, Order>) has no way to tell RIP which
+			// argument is the page item type, so getActualTypeArguments()[0] would
+			// silently decode the wrong one instead of the type the adapter actually
+			// wants. See PaginatedCallAdapter's own javadoc.
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s with %d type parameters, but only a single type parameter "
+							+ "(the page item type) is supported.",
+					method.getDeclaringClass().getName(), method.getName(), genericReturnType, typeArguments.length));
+			return;
+		}
+		Type innerType = typeArguments[0];
 		if (allowRipResponseInner && innerType instanceof ParameterizedType
 				&& ((ParameterizedType) innerType).getRawType() == RipResponse.class) {
 			validateParameterizedReturnType(method, innerType, "RipResponse", false, validationResult);
@@ -469,6 +503,28 @@ public class ReflectiveRestClientValidator {
 			validationResult.addError(String.format(
 					"The method %s.%s returns %s<%s>, which is not a supported type parameter.",
 					method.getDeclaringClass().getName(), method.getName(), typeName, innerType));
+			return;
+		}
+		Class<?> innerRawType = innerType instanceof ParameterizedType
+				? (Class<?>) ((ParameterizedType) innerType).getRawType()
+				: (Class<?>) innerType;
+		if (KNOWN_UNSUPPORTED_REACTIVE_TYPES.contains(innerRawType.getName())) {
+			// The top-level denylist check in validateReturnType only ever sees a
+			// method's own declared return type, so a KNOWN_UNSUPPORTED_REACTIVE_TYPES
+			// entry nested one level deeper - CompletableFuture<Mono<User>>,
+			// RipResponse<Flux<User>> - sailed straight through as an ordinary
+			// decodable type argument and got handed to the Gson/generic decode
+			// path, the exact broken-instance failure the outer check exists to
+			// prevent. A registered CallAdapterFactory can't rescue this shape
+			// either - CallAdapterFactory.get(method) only ever sees the method's
+			// own top-level return type, never a nested type argument.
+			validationResult.addError(String.format(
+					"The method %s.%s returns %s<%s>, but a CallAdapterFactory only ever claims a method's own "
+							+ "top-level return type - %s nested inside %s<...> is never dispatched through one "
+							+ "and has no other built-in support. Return %s directly (with a registered "
+							+ "CallAdapterFactory) instead of wrapping it.",
+					method.getDeclaringClass().getName(), method.getName(), typeName, innerType,
+					innerRawType.getSimpleName(), typeName, innerRawType.getSimpleName()));
 			return;
 		}
 		if ("RipResponse".equals(typeName) && innerType == File.class) {

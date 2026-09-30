@@ -2,13 +2,19 @@ package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.Optional;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +65,13 @@ class CallAdapterIntegrationTest {
 
 		assertEquals("shipped", result.get());
 		assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}"));
+	}
+
+	@Test
+	void get_declinesARawTestBoxReturnTypeInsteadOfThrowing() {
+		RIP.addCallAdapterFactory(TestCallAdapterFactory.INSTANCE);
+
+		assertDoesNotThrow(() -> RIP.getClient(RawTestBoxTestApi.class, server.baseUrl()));
 	}
 
 	@Test
@@ -122,23 +135,88 @@ class CallAdapterIntegrationTest {
 		assertThrows(RestInPeaceException.class, () -> RIP.getClient(CallAdapterMonoTestApi.class, server.baseUrl()));
 	}
 
+	/**
+	 * Directly counts how many times a registered factory's own
+	 * {@code get(Method)} is consulted, rather than going through
+	 * {@code removeCallAdapterFactory} to infer registry size indirectly:
+	 * that method's own {@code removeIf} removes every identity match in one
+	 * call, so a single remove() would fully unregister a wrongly-duplicated
+	 * entry exactly the same as a correctly-deduplicated one - a test built
+	 * around "one remove() should already clear it" can never fail either
+	 * way, and doesn't actually prove {@code addCallAdapterFactory}
+	 * deduplicated anything. A factory that always declines forces
+	 * {@code resolveCallAdapter}'s loop to consult every registered entry
+	 * (a claiming factory would let the loop return after the first match,
+	 * hiding a duplicate the same way), so the invocation count is a direct
+	 * read of how many copies are actually in the registry.
+	 */
 	@Test
-	void addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() {
-		// Mono<T> (denylisted, §8.1) rather than TestBox<T>: TestBox isn't on
-		// KNOWN_UNSUPPORTED_REACTIVE_TYPES, so getClient() succeeds whether or
-		// not anything claims it - only a genuinely unclaimed denylisted type
-		// makes validation fail, which is what proves the removal actually
-		// unregistered every copy, not just one.
-		CallAdapterFactory monoFactory = monoClaimingFactory();
-		RIP.addCallAdapterFactory(monoFactory);
-		RIP.addCallAdapterFactory(monoFactory);
+	void addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() throws NoSuchMethodException {
+		AtomicInteger consultedCount = new AtomicInteger();
+		CallAdapterFactory decliningFactory = method -> {
+			consultedCount.incrementAndGet();
+			return Optional.empty();
+		};
+		RIP.addCallAdapterFactory(decliningFactory);
+		RIP.addCallAdapterFactory(decliningFactory);
 
-		// A single remove() fully unregisters it - if the second add() had
-		// appended a duplicate entry, one remove() would leave the other
-		// behind and validation would still succeed instead of falling back.
-		RIP.removeCallAdapterFactory(monoFactory);
+		com.shri.restinpeace.internal.RequestExecutor
+				.resolveCallAdapter(CallAdapterTestApi.class.getMethod("getOrder", String.class));
 
-		assertThrows(RestInPeaceException.class, () -> RIP.getClient(CallAdapterMonoTestApi.class, server.baseUrl()));
+		assertEquals(1, consultedCount.get());
+	}
+
+	/**
+	 * Registers the same factory instance from two threads racing a shared
+	 * barrier, directly exercising the TOCTOU window
+	 * {@code addCallAdapterFactory}'s synchronized check-then-add closes -
+	 * the sequential calls in
+	 * {@link #addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp}
+	 * can't exercise this race at all, since the second call's check always
+	 * already sees the first call's completed add; only a genuinely
+	 * concurrent pair of calls can land both threads inside the
+	 * check-then-add window at once. Repeated many times since a race this
+	 * narrow isn't guaranteed to be hit on any single attempt - reliably
+	 * fails within a handful of iterations against the unsynchronized
+	 * version, reliably passes all 200 with the fix. The barrier wait and
+	 * the join both carry a bounded timeout, and the worker threads are
+	 * daemons, so a thread that can't start (e.g. CI genuinely out of
+	 * native threads) fails this test loudly instead of hanging the whole
+	 * run until the CI job's own timeout kills it.
+	 */
+	@Test
+	void addCallAdapterFactory_concurrentRegistrationOfTheSameInstanceStillDeduplicates() throws Exception {
+		Method method = CallAdapterTestApi.class.getMethod("getOrder", String.class);
+		for (int i = 0; i < 200; i++) {
+			RIP.clearCallAdapterFactories();
+			AtomicInteger consultedCount = new AtomicInteger();
+			CallAdapterFactory decliningFactory = adapterMethod -> {
+				consultedCount.incrementAndGet();
+				return Optional.empty();
+			};
+			CyclicBarrier barrier = new CyclicBarrier(2);
+			Runnable register = () -> {
+				try {
+					barrier.await(5, TimeUnit.SECONDS);
+				} catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+					throw new RuntimeException(e);
+				}
+				RIP.addCallAdapterFactory(decliningFactory);
+			};
+			Thread first = new Thread(register);
+			Thread second = new Thread(register);
+			first.setDaemon(true);
+			second.setDaemon(true);
+			first.start();
+			second.start();
+			first.join(5000);
+			second.join(5000);
+			assertFalse(first.isAlive() || second.isAlive(), "a worker thread didn't finish within the timeout");
+
+			com.shri.restinpeace.internal.RequestExecutor.resolveCallAdapter(method);
+
+			assertEquals(1, consultedCount.get(), "duplicate registration on iteration " + i);
+		}
 	}
 
 	/** Claims every {@code Mono<T>}-returning method - {@code Mono} is denylisted (§8.1) when unclaimed. */

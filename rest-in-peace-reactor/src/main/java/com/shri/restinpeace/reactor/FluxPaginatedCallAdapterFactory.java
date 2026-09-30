@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
+import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 import com.shri.restinpeace.Page;
@@ -104,6 +105,7 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 		static final class PageDrain {
 
 			private final FluxSink<Object> sink;
+			private final Scheduler scheduler;
 			final AtomicLong requested = new AtomicLong();
 			private final AtomicBoolean fetchingNextPage = new AtomicBoolean();
 			private final AtomicInteger wip = new AtomicInteger();
@@ -114,15 +116,41 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			private Iterator<Object> currentPageItems;
 
 			PageDrain(FluxSink<Object> sink, Page<Object> firstPage) {
+				this(sink, firstPage, Schedulers.boundedElastic());
+			}
+
+			// Package-private, not private: lets FluxPaginatedCallAdapterFactoryTest
+			// inject a Scheduler whose schedule(...) throws synchronously, exercising
+			// fetchNextPageAsync()'s scheduling-rejection recovery path
+			// deterministically - Schedulers.boundedElastic() is a shared, lazily
+			// re-created global scheduler that (at least as of reactor-core 3.6.18)
+			// simply recreates itself on next access after dispose() rather than
+			// ever rejecting a subsequently scheduled task, so there's no way to
+			// force that failure through the real one.
+			PageDrain(FluxSink<Object> sink, Page<Object> firstPage, Scheduler scheduler) {
 				this.sink = sink;
 				this.currentPage = firstPage;
 				this.currentPageItems = firstPage.items().iterator();
+				this.scheduler = scheduler;
 			}
 
+			/**
+			 * Registers the cancel/dispose callbacks before {@code onRequest}:
+			 * {@code Flux.create} invokes a just-registered {@code onRequest}
+			 * consumer synchronously when demand is already outstanding, and that
+			 * initial {@link #onRequest} call can itself drive {@link #drainOnce}
+			 * far enough to call {@link FluxSink#next} - which a downstream
+			 * operator (e.g. {@code take(1)}) can respond to by cancelling
+			 * synchronously, before this method ever returns. Registering
+			 * {@code onCancel}/{@code onDispose} first guarantees {@link #cancel}
+			 * is already wired up to observe that cancellation instead of missing
+			 * it, which would otherwise leave {@link #cancelled} false and let
+			 * {@link #drainOnce} schedule an unnecessary next-page fetch.
+			 */
 			void start() {
-				sink.onRequest(this::onRequest);
 				sink.onCancel(this::cancel);
 				sink.onDispose(this::cancel);
+				sink.onRequest(this::onRequest);
 			}
 
 			void onRequest(long n) {
@@ -229,33 +257,53 @@ public final class FluxPaginatedCallAdapterFactory implements PaginatedCallAdapt
 			}
 
 			private void fetchNextPageAsync() {
-				Disposable fetch = Schedulers.boundedElastic().schedule(() -> {
-					try {
-						Page<Object> nextPage = currentPage.next();
-						if (cancelled) {
-							return;
+				Disposable fetch;
+				try {
+					fetch = scheduler.schedule(() -> {
+						try {
+							Page<Object> nextPage = currentPage.next();
+							if (cancelled) {
+								return;
+							}
+							// Stashed for drainOnce() itself to consume, rather than
+							// swapped into currentPage/currentPageItems/fetchingNextPage
+							// right here: this callback runs on a boundedElastic thread
+							// with no wip protection of its own, so writing those fields
+							// directly could race a concurrently-running drainOnce() that
+							// already read currentPageItems before this write lands - it
+							// could then observe fetchingNextPage go false (a plain
+							// AtomicBoolean write, visible immediately to any reader
+							// regardless of wip) while still iterating the stale page.
+							// Routing the swap through pendingNextPage and letting the
+							// next drainOnce() apply it under the wip gate keeps the
+							// three fields changing together, atomically with respect to
+							// every other drainOnce() execution.
+							pendingNextPage.set(nextPage);
+							drain();
+						} catch (Throwable error) {
+							if (!cancelled) {
+								sink.error(error);
+							}
 						}
-						// Stashed for drainOnce() itself to consume, rather than
-						// swapped into currentPage/currentPageItems/fetchingNextPage
-						// right here: this callback runs on a boundedElastic thread
-						// with no wip protection of its own, so writing those fields
-						// directly could race a concurrently-running drainOnce() that
-						// already read currentPageItems before this write lands - it
-						// could then observe fetchingNextPage go false (a plain
-						// AtomicBoolean write, visible immediately to any reader
-						// regardless of wip) while still iterating the stale page.
-						// Routing the swap through pendingNextPage and letting the
-						// next drainOnce() apply it under the wip gate keeps the
-						// three fields changing together, atomically with respect to
-						// every other drainOnce() execution.
-						pendingNextPage.set(nextPage);
-						drain();
-					} catch (Throwable error) {
-						if (!cancelled) {
-							sink.error(error);
-						}
+					});
+				} catch (Throwable schedulingFailure) {
+					// Schedulers.boundedElastic().schedule(...) itself can throw
+					// synchronously (e.g. RejectedExecutionException, if the shared
+					// scheduler is disposed) rather than ever running the task above -
+					// without this, fetchingNextPage would stay stuck true forever
+					// (only the task's own drain()/pendingNextPage swap ever clears
+					// it), so every future onRequest's compareAndSet(false, true)
+					// would keep failing and drainOnce() would never try fetching
+					// again: the Flux stalls permanently with no error signal to the
+					// subscriber. Clearing it and signalling the error here instead
+					// gives this failure the exact same outward behavior as one
+					// thrown from inside the task itself.
+					fetchingNextPage.set(false);
+					if (!cancelled) {
+						sink.error(schedulingFailure);
 					}
-				});
+					return;
+				}
 				// Published under the same lock cancel() uses, and disposed
 				// immediately if cancellation already won that race - otherwise a
 				// fetch scheduled just as/after disposal could sit unpublished

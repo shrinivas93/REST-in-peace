@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.File;
 import java.io.InputStream;
 import java.lang.reflect.Type;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -198,6 +199,18 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@RestClient
+	public interface NestedUnclaimedReactiveTypeInCompletableFuture {
+		@GET("http://example.com")
+		CompletableFuture<Mono<String>> foo();
+	}
+
+	@RestClient
+	public interface NestedUnclaimedReactiveTypeInRipResponse {
+		@GET("http://example.com")
+		RipResponse<Mono<String>> foo();
+	}
+
+	@RestClient
 	public interface UnclaimedReactiveReturnType {
 		@GET("http://example.com")
 		Mono<String> foo();
@@ -207,6 +220,18 @@ class ReflectiveRestClientValidatorTest {
 	public interface CallAdapterFileReturnWithDestination {
 		@GET("http://example.com")
 		Mono<String> foo(@Destination File target);
+	}
+
+	@RestClient
+	public interface ByteArrayReturnType {
+		@GET("http://example.com")
+		byte[] foo();
+	}
+
+	@RestClient
+	public interface FileReturnType {
+		@GET("http://example.com")
+		File foo(@Destination File target);
 	}
 
 	@RestClient
@@ -233,6 +258,13 @@ class ReflectiveRestClientValidatorTest {
 		@GET("http://example.com")
 		@Paginated(itemsField = "items", pointerField = "next")
 		CompletableFuture<String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
+	}
+
+	@RestClient
+	public interface PaginatedMultiTypeArgumentClaimedByFactory {
+		@GET("http://example.com")
+		@Paginated(itemsField = "items", pointerField = "next")
+		Map<String, String> foo(@QueryParam("cursor") @PaginationCursor String cursor);
 	}
 
 	@RestClient
@@ -822,6 +854,25 @@ class ReflectiveRestClientValidatorTest {
 	}
 
 	@Test
+	void validate_paginatedMultiTypeArgumentClaimedByFactory_throwsWithError() {
+		// Map<String, String> - a real two-type-parameter generic return type a
+		// hypothetical PaginatedCallAdapterFactory claims, standing in for
+		// PaginatedCallAdapter's own documented Result<Metadata, Order> example.
+		// getActualTypeArguments()[0] alone can't tell which argument is the page
+		// item type, so this must be rejected rather than silently resolving the
+		// wrong one.
+		PaginatedCallAdapterFactory factory = method -> method.getReturnType() == Map.class
+				? Optional.of((Supplier<Page<Object>> firstPageSupplier) -> Collections.emptyMap())
+				: Optional.empty();
+		RIP.addPaginatedCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(PaginatedMultiTypeArgumentClaimedByFactory.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("but only a single type parameter (the page item type) is supported"));
+	}
+
+	@Test
 	void validate_reactiveReturnTypeClaimedByCallAdapterFactory_passes() {
 		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
 				? Optional.of(testCallAdapter(String.class))
@@ -844,6 +895,50 @@ class ReflectiveRestClientValidatorTest {
 		RIP.addCallAdapterFactory(factory);
 
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+	}
+
+	/**
+	 * Regression test for the validation/dispatch divergence on a
+	 * {@code byte[]}/{@code File} return type: {@code RequestExecutor.processRestRequest}'s
+	 * own {@code byte[]}/{@code File} branches always win at dispatch time,
+	 * before {@code resolveCallAdapter} is ever consulted, so a factory
+	 * "claiming" one of these two return types has no actual effect. Before
+	 * this fix, validation didn't know that - it routed a {@code byte[]}-
+	 * returning method through the claiming factory's declared
+	 * {@code responseBodyType()} anyway, so a factory with a broken one
+	 * (like the wildcard type used here, and in
+	 * {@link #validate_callAdapterWithUnsupportedResponseBodyType_throwsWithError})
+	 * would fail {@code RIP.getClient(...)} for an otherwise completely
+	 * ordinary {@code byte[]} method. Must pass regardless.
+	 */
+	@Test
+	void validate_byteArrayReturnTypeClaimedByFactoryWithUnsupportedResponseBodyType_stillPasses()
+			throws NoSuchMethodException {
+		Type wildcardType = ((java.lang.reflect.ParameterizedType) UnsupportedCompletableFutureTypeParam.class
+				.getMethod("foo").getGenericReturnType()).getActualTypeArguments()[0];
+		CallAdapterFactory factory = method -> method.getReturnType() == byte[].class
+				? Optional.of(testCallAdapter(wildcardType))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ByteArrayReturnType.class));
+	}
+
+	/**
+	 * Same regression as {@link #validate_byteArrayReturnTypeClaimedByFactoryWithUnsupportedResponseBodyType_stillPasses},
+	 * for the {@code File} return type's own unconditional dispatch branch.
+	 */
+	@Test
+	void validate_fileReturnTypeClaimedByFactoryWithUnsupportedResponseBodyType_stillPasses()
+			throws NoSuchMethodException {
+		Type wildcardType = ((java.lang.reflect.ParameterizedType) UnsupportedCompletableFutureTypeParam.class
+				.getMethod("foo").getGenericReturnType()).getActualTypeArguments()[0];
+		CallAdapterFactory factory = method -> method.getReturnType() == File.class
+				? Optional.of(testCallAdapter(wildcardType))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(FileReturnType.class));
 	}
 
 	@Test
@@ -886,6 +981,23 @@ class ReflectiveRestClientValidatorTest {
 		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
 				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
 		assertTrue(exception.getValidationResult().getAllErrors().contains("not a supported type parameter"));
+	}
+
+	@Test
+	void validate_callAdapterWithRawRipResponseBodyType_throwsWithError() {
+		// A raw RipResponse.class (e.g. a real Mono<RipResponse>/MonoCallAdapterFactory
+		// pairing) can't be recognized as a wrapper at dispatch time any more than an
+		// ordinary raw RipResponse return can - before this check existed, it sailed
+		// through as if it were a plain decodable Class, decoding the wire JSON
+		// directly into a RipResponse instance instead of unwrapping it first.
+		CallAdapterFactory factory = method -> method.getReturnType() == Mono.class
+				? Optional.of(testCallAdapter(RipResponse.class))
+				: Optional.empty();
+		RIP.addCallAdapterFactory(factory);
+
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(UnclaimedReactiveReturnType.class));
+		assertTrue(exception.getValidationResult().getAllErrors().contains("raw RipResponse"));
 	}
 
 	@Test
@@ -989,6 +1101,28 @@ class ReflectiveRestClientValidatorTest {
 	@Test
 	void validate_validCompletableFutureOfRipResponseOfList_passes() {
 		assertDoesNotThrow(() -> ReflectiveRestClientValidator.validate(ValidCompletableFutureOfRipResponseOfList.class));
+	}
+
+	@Test
+	void validate_nestedUnclaimedReactiveTypeInCompletableFuture_throwsWithError() {
+		// Before this check existed, CompletableFuture<Mono<String>> sailed through
+		// as an ordinary decodable type argument - the outer denylist check only
+		// ever sees a method's own top-level return type (CompletableFuture here,
+		// not Mono), so it never caught this. No registered CallAdapterFactory
+		// changes the outcome either: CallAdapterFactory.get(method) is never
+		// consulted for a type argument, only the method's own return type.
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(NestedUnclaimedReactiveTypeInCompletableFuture.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("a CallAdapterFactory only ever claims a method's own top-level return type"));
+	}
+
+	@Test
+	void validate_nestedUnclaimedReactiveTypeInRipResponse_throwsWithError() {
+		RestInPeaceValidationException exception = assertThrows(RestInPeaceValidationException.class,
+				() -> ReflectiveRestClientValidator.validate(NestedUnclaimedReactiveTypeInRipResponse.class));
+		assertTrue(exception.getValidationResult().getAllErrors()
+				.contains("a CallAdapterFactory only ever claims a method's own top-level return type"));
 	}
 
 	@Test
