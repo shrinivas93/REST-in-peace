@@ -8,7 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.Optional;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -146,7 +149,7 @@ class CallAdapterIntegrationTest {
 	 */
 	@Test
 	void addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() throws NoSuchMethodException {
-		java.util.concurrent.atomic.AtomicInteger consultedCount = new java.util.concurrent.atomic.AtomicInteger();
+		AtomicInteger consultedCount = new AtomicInteger();
 		CallAdapterFactory decliningFactory = method -> {
 			consultedCount.incrementAndGet();
 			return Optional.empty();
@@ -158,6 +161,52 @@ class CallAdapterIntegrationTest {
 				.resolveCallAdapter(CallAdapterTestApi.class.getMethod("getOrder", String.class));
 
 		assertEquals(1, consultedCount.get());
+	}
+
+	/**
+	 * Registers the same factory instance from two threads racing a shared
+	 * barrier, directly exercising the TOCTOU window
+	 * {@code addCallAdapterFactory}'s synchronized check-then-add closes -
+	 * the sequential calls in
+	 * {@link #addCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp}
+	 * can't exercise this race at all, since the second call's check always
+	 * already sees the first call's completed add; only a genuinely
+	 * concurrent pair of calls can land both threads inside the
+	 * check-then-add window at once. Repeated many times since a race this
+	 * narrow isn't guaranteed to be hit on any single attempt - reliably
+	 * fails within a handful of iterations against the unsynchronized
+	 * version, reliably passes all 200 with the fix.
+	 */
+	@Test
+	void addCallAdapterFactory_concurrentRegistrationOfTheSameInstanceStillDeduplicates() throws Exception {
+		Method method = CallAdapterTestApi.class.getMethod("getOrder", String.class);
+		for (int i = 0; i < 200; i++) {
+			RIP.clearCallAdapterFactories();
+			AtomicInteger consultedCount = new AtomicInteger();
+			CallAdapterFactory decliningFactory = adapterMethod -> {
+				consultedCount.incrementAndGet();
+				return Optional.empty();
+			};
+			CyclicBarrier barrier = new CyclicBarrier(2);
+			Runnable register = () -> {
+				try {
+					barrier.await();
+				} catch (InterruptedException | BrokenBarrierException e) {
+					throw new RuntimeException(e);
+				}
+				RIP.addCallAdapterFactory(decliningFactory);
+			};
+			Thread first = new Thread(register);
+			Thread second = new Thread(register);
+			first.start();
+			second.start();
+			first.join();
+			second.join();
+
+			com.shri.restinpeace.internal.RequestExecutor.resolveCallAdapter(method);
+
+			assertEquals(1, consultedCount.get(), "duplicate registration on iteration " + i);
+		}
 	}
 
 	/** Claims every {@code Mono<T>}-returning method - {@code Mono} is denylisted (§8.1) when unclaimed. */
