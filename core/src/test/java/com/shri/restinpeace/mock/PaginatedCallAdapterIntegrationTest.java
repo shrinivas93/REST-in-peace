@@ -2,11 +2,17 @@ package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterEach;
@@ -133,7 +139,7 @@ class PaginatedCallAdapterIntegrationTest {
 	 */
 	@Test
 	void addPaginatedCallAdapterFactory_registeringTheSameInstanceTwiceIsANoOp() throws NoSuchMethodException {
-		java.util.concurrent.atomic.AtomicInteger consultedCount = new java.util.concurrent.atomic.AtomicInteger();
+		AtomicInteger consultedCount = new AtomicInteger();
 		PaginatedCallAdapterFactory decliningFactory = method -> {
 			consultedCount.incrementAndGet();
 			return Optional.empty();
@@ -145,6 +151,54 @@ class PaginatedCallAdapterIntegrationTest {
 				PaginatedCallAdapterTestApi.class.getMethod("fluxOrders", String.class));
 
 		assertEquals(1, consultedCount.get());
+	}
+
+	/**
+	 * Same reasoning as {@code CallAdapterIntegrationTest}'s own identically-named
+	 * concurrent test: registers the same factory instance from two threads
+	 * racing a shared barrier, the only way to actually exercise the TOCTOU
+	 * window {@code addPaginatedCallAdapterFactory}'s synchronized
+	 * check-then-add closes - the sequential calls above always see the
+	 * first call's add already completed before the second call's own check
+	 * runs. Repeated many times since this race window isn't guaranteed to
+	 * be hit on any single attempt. The barrier wait and the join both
+	 * carry a bounded timeout, and the worker threads are daemons, so a
+	 * thread that can't start fails this test loudly instead of hanging
+	 * the whole run until the CI job's own timeout kills it.
+	 */
+	@Test
+	void addPaginatedCallAdapterFactory_concurrentRegistrationOfTheSameInstanceStillDeduplicates() throws Exception {
+		Method method = PaginatedCallAdapterTestApi.class.getMethod("fluxOrders", String.class);
+		for (int i = 0; i < 200; i++) {
+			RIP.clearPaginatedCallAdapterFactories();
+			AtomicInteger consultedCount = new AtomicInteger();
+			PaginatedCallAdapterFactory decliningFactory = adapterMethod -> {
+				consultedCount.incrementAndGet();
+				return Optional.empty();
+			};
+			CyclicBarrier barrier = new CyclicBarrier(2);
+			Runnable register = () -> {
+				try {
+					barrier.await(5, TimeUnit.SECONDS);
+				} catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+					throw new RuntimeException(e);
+				}
+				RIP.addPaginatedCallAdapterFactory(decliningFactory);
+			};
+			Thread first = new Thread(register);
+			Thread second = new Thread(register);
+			first.setDaemon(true);
+			second.setDaemon(true);
+			first.start();
+			second.start();
+			first.join(5000);
+			second.join(5000);
+			assertFalse(first.isAlive() || second.isAlive(), "a worker thread didn't finish within the timeout");
+
+			com.shri.restinpeace.internal.RequestExecutor.resolvePaginatedCallAdapter(method);
+
+			assertEquals(1, consultedCount.get(), "duplicate registration on iteration " + i);
+		}
 	}
 
 	@Test

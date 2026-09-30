@@ -1240,14 +1240,16 @@ runnable example resolving it exactly this way):
 
 ```xml
 <!-- Replace with whatever version `mvn install` above actually installed -
-     it matches core's own version by construction (shared parent), e.g.
-     the current 1.0.0.52-SNAPSHOT. A comment can't go inside <version>
-     itself - Maven sees the element's text content as empty and rejects
-     the POM. -->
+     it matches core's own version by construction (shared parent). A
+     comment can't go inside <version> itself - Maven sees the element's
+     text content as empty and rejects the POM - and an illustrative real
+     version number would silently go stale as the parent version moves on,
+     so REPLACE_WITH_INSTALLED_VERSION is deliberately not a real version:
+     it fails to resolve instead of quietly resolving to the wrong one. -->
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace-reactor</artifactId>
-    <version>1.0.0.52-SNAPSHOT</version>
+    <version>REPLACE_WITH_INSTALLED_VERSION</version>
 </dependency>
 ```
 
