@@ -1239,10 +1239,15 @@ from the repository root - then depend on whatever version that installs
 runnable example resolving it exactly this way):
 
 ```xml
+<!-- Replace with whatever version `mvn install` above actually installed -
+     it matches core's own version by construction (shared parent), e.g.
+     the current 1.0.0.52-SNAPSHOT. A comment can't go inside <version>
+     itself - Maven sees the element's text content as empty and rejects
+     the POM. -->
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace-reactor</artifactId>
-    <version><!-- the version mvn install above just installed --></version>
+    <version>1.0.0.52-SNAPSHOT</version>
 </dependency>
 ```
 

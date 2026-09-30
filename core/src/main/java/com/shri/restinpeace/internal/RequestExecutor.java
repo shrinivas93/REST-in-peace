@@ -257,6 +257,20 @@ public class RequestExecutor {
 	private static final CopyOnWriteArrayList<CallAdapterFactory> CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
 
 	/**
+	 * Guards the check-then-add in {@link #addCallAdapterFactory} - a plain
+	 * {@code CopyOnWriteArrayList} makes each of {@code noneMatch}/{@code add}
+	 * individually atomic, but not the pair together, so two threads racing
+	 * a concurrent startup-time {@code addCallAdapterFactory(sameInstance)}
+	 * could both pass the identity check before either one's {@code add}
+	 * lands, appending the same instance twice - the exact "no-op on a
+	 * second add" contract this method's own javadoc promises. Not reused
+	 * for {@link #removeCallAdapterFactory}/{@link #clearCallAdapterFactories}:
+	 * {@code removeIf}/{@code clear} need no coordination with this check to
+	 * stay correct on their own.
+	 */
+	private static final Object CALL_ADAPTER_FACTORIES_LOCK = new Object();
+
+	/**
 	 * Registers a global {@link CallAdapterFactory}, unless this exact
 	 * instance (by reference, not {@code equals}) is already registered. See
 	 * {@link com.shri.restinpeace.RIP#addCallAdapterFactory(CallAdapterFactory)}.
@@ -269,8 +283,10 @@ public class RequestExecutor {
 	 * @param factory the factory to register
 	 */
 	public static void addCallAdapterFactory(CallAdapterFactory factory) {
-		if (CALL_ADAPTER_FACTORIES.stream().noneMatch(existing -> existing == factory)) {
-			CALL_ADAPTER_FACTORIES.add(factory);
+		synchronized (CALL_ADAPTER_FACTORIES_LOCK) {
+			if (CALL_ADAPTER_FACTORIES.stream().noneMatch(existing -> existing == factory)) {
+				CALL_ADAPTER_FACTORIES.add(factory);
+			}
 		}
 	}
 
@@ -323,6 +339,9 @@ public class RequestExecutor {
 	 */
 	private static final CopyOnWriteArrayList<PaginatedCallAdapterFactory> PAGINATED_CALL_ADAPTER_FACTORIES = new CopyOnWriteArrayList<>();
 
+	/** Guards {@link #addPaginatedCallAdapterFactory}'s check-then-add - see {@link #CALL_ADAPTER_FACTORIES_LOCK}'s own reasoning. */
+	private static final Object PAGINATED_CALL_ADAPTER_FACTORIES_LOCK = new Object();
+
 	/**
 	 * Registers a global {@link PaginatedCallAdapterFactory}, unless this
 	 * exact instance is already registered - identity-based, not
@@ -333,8 +352,10 @@ public class RequestExecutor {
 	 * @param factory the factory to register
 	 */
 	public static void addPaginatedCallAdapterFactory(PaginatedCallAdapterFactory factory) {
-		if (PAGINATED_CALL_ADAPTER_FACTORIES.stream().noneMatch(existing -> existing == factory)) {
-			PAGINATED_CALL_ADAPTER_FACTORIES.add(factory);
+		synchronized (PAGINATED_CALL_ADAPTER_FACTORIES_LOCK) {
+			if (PAGINATED_CALL_ADAPTER_FACTORIES.stream().noneMatch(existing -> existing == factory)) {
+				PAGINATED_CALL_ADAPTER_FACTORIES.add(factory);
+			}
 		}
 	}
 

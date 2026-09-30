@@ -17,15 +17,20 @@ import com.shri.restinpeace.CallAdapter;
 
 /**
  * Unit-level tests against {@link FluxListCallAdapterFactory} directly - no
- * MockRestServer/HTTP dispatch involved - for the same two things
+ * MockRestServer/HTTP dispatch involved - for three things
  * {@link FluxListCallAdapterIntegrationTest} can't reliably exercise:
- * {@link FluxListCallAdapterFactory#get(Method)}'s decline path for a
- * non-{@code Flux} return type, and the {@code CompletionException}
- * unwrapping branches in {@code adapt(...)}, since RIP's own async pipeline
+ * {@link FluxListCallAdapterFactory#get(Method)}'s decline paths (a
+ * non-{@code Flux} return type, a {@code @Paginated} method, a raw or
+ * otherwise-unresolvable item type), the {@code CompletionException}
+ * unwrapping branches in {@code adapt(...)} - since RIP's own async pipeline
  * always completes a failed future via {@code completeExceptionally}
  * directly rather than through a dependent stage that would actually
- * produce a wrapped exception - the same reasoning
- * {@code MonoCallAdapterFactoryTest} already established for {@code Mono<T>}.
+ * produce a wrapped exception, the same reasoning
+ * {@code MonoCallAdapterFactoryTest} already established for {@code Mono<T>}
+ * - and disposal/cancellation propagation to the underlying delegate
+ * future, asserted directly on the future itself rather than through a
+ * downstream signal a cancelled sink would drop on its own regardless of
+ * this wiring.
  */
 class FluxListCallAdapterFactoryTest {
 
@@ -61,11 +66,41 @@ class FluxListCallAdapterFactoryTest {
 		assertFalse(factory.get(method).isPresent());
 	}
 
+	/**
+	 * A {@code @Paginated} method returning {@code Flux<T>} claims the same
+	 * declared type this factory otherwise claims for its own, non-paginated
+	 * flavor (§7.1/§7.3's disambiguation) - {@code @Paginated}'s presence
+	 * must make {@link #get} decline outright, leaving the method entirely to
+	 * {@link FluxPaginatedCallAdapterFactory} instead of ever racing it.
+	 */
+	@Test
+	void get_declinesAPaginatedMethod() throws NoSuchMethodException {
+		Method method = FluxTestApi.class.getMethod("fluxOrders", String.class);
+		assertFalse(factory.get(method).isPresent());
+	}
+
+	/**
+	 * A raw {@code Flux} (no type parameter at all) has no item type to
+	 * extract - {@link #get} must decline rather than throw extracting one,
+	 * same reasoning as {@code MonoCallAdapterFactory}'s own raw-{@code Mono}
+	 * handling: letting {@code ReflectiveRestClientValidator} report a clean,
+	 * collected "raw type" error instead of aborting validation for the whole
+	 * interface.
+	 */
+	@Test
+	void get_declinesARawFluxReturnType() throws NoSuchMethodException {
+		Method method = WildcardFluxApi.class.getMethod("rawOrders");
+		assertFalse(factory.get(method).isPresent());
+	}
+
 	private interface WildcardFluxApi {
 
 		Flux<?> wildcardOrders();
 
 		<T> Flux<T> genericOrders();
+
+		@SuppressWarnings("rawtypes")
+		Flux rawOrders();
 
 	}
 

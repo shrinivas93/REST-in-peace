@@ -66,13 +66,28 @@ class FluxPaginatedCallAdapterIntegrationTest {
 
 		StepVerifier.create(api.fluxOrders(null), 1) // request exactly 1 item up front
 				.expectNextCount(1)
+				// Directly observes the pause itself, not just its end-to-end
+				// consequence: page 2 must not have been fetched yet, right after
+				// item 1 lands and before any further demand is signaled. Without
+				// this, the test could pass even if the two request(n) deliveries
+				// below raced and got coalesced into one drain() pass that never
+				// actually paused at zero demand in between - the final
+				// "2 total, not 3" assertion alone can't distinguish "paused, then
+				// resumed" from "never paused at all but also never ran away."
+				.then(() -> assertEquals(1, server.countOf(HTTPMethod.GET, "/orders")))
 				// Lets the adapter's own drain() genuinely finish pausing (no demand left,
 				// page exhausted) before the next request arrives - without this, the two
 				// request(n) deliveries can race each other (both landing before either
 				// drain() call observes a demand of exactly 0), which still produces the
 				// right end-to-end result but never actually exercises the "pause with no
-				// demand yet" branch this test means to prove.
-				.thenAwait(Duration.ofMillis(200)).thenRequest(1).expectNextCount(1).thenCancel().verify();
+				// demand yet" branch this test means to prove. Unlike awaitRequestCount's
+				// own genuinely pollable "a request landed at the server" signal, there's
+				// nothing externally observable to poll here - the race is purely CPU
+				// scheduling inside this same process (has drainOnce()'s last few lines
+				// finished running after sink.next() returned), not an I/O wait - so a
+				// generous fixed margin, not a poll loop, is the honest fix; widened well
+				// past the ~200ms that occasionally still let this race slip through.
+				.thenAwait(Duration.ofMillis(500)).thenRequest(1).expectNextCount(1).thenCancel().verify();
 
 		assertEquals(2, server.countOf(HTTPMethod.GET, "/orders")); // page 3 never fetched - proves backpressure
 	}
@@ -127,7 +142,13 @@ class FluxPaginatedCallAdapterIntegrationTest {
 		awaitRequestCount(HTTPMethod.GET, "/orders", 2); // page 2's fetch has genuinely reached the server
 		disposable.dispose();
 
-		Thread.sleep(400); // past page 2's delay - if disposal hadn't discarded it, item "2" would have arrived by now
+		// No externally observable signal exists for "the delayed response was
+		// actually constructed and delivered" (MockRestServer only counts
+		// requests received, already confirmed above, not responses sent) - so
+		// this margin over the 300ms delay is a fixed wait, not a poll, widened
+		// well past it (was 400ms, leaving only ~100ms of margin - flaky under
+		// a loaded CI runner) rather than a tight one.
+		Thread.sleep(900); // well past page 2's delay - if disposal hadn't discarded it, item "2" would have arrived by now
 		assertFalse(secondItemReceived.get());
 		assertEquals(2, server.countOf(HTTPMethod.GET, "/orders")); // page 3 never fetched after disposal
 	}
@@ -143,7 +164,11 @@ class FluxPaginatedCallAdapterIntegrationTest {
 		awaitRequestCount(HTTPMethod.GET, "/orders", 2); // page 2's (failing) fetch has genuinely reached the server
 		disposable.dispose();
 
-		Thread.sleep(400); // past page 2's delay - if disposal hadn't suppressed it, the error would have arrived by now
+		// Same reasoning as disposingDuringAnInFlightNextPageFetch_stopsFurtherItemsFromLanding's
+		// own comment: no pollable "response sent" signal exists, so this is a
+		// fixed wait widened well past the 300ms delay (was 400ms, leaving only
+		// ~100ms of margin), not a tight one.
+		Thread.sleep(900); // well past page 2's delay - if disposal hadn't suppressed it, the error would have arrived by now
 		assertFalse(errorReceived.get());
 		assertEquals(2, server.countOf(HTTPMethod.GET, "/orders")); // no request retried/repeated after disposal
 	}
