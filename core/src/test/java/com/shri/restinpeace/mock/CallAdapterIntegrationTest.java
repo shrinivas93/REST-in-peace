@@ -2,6 +2,7 @@ package com.shri.restinpeace.mock;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -11,6 +12,8 @@ import java.util.Optional;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
@@ -175,7 +178,11 @@ class CallAdapterIntegrationTest {
 	 * check-then-add window at once. Repeated many times since a race this
 	 * narrow isn't guaranteed to be hit on any single attempt - reliably
 	 * fails within a handful of iterations against the unsynchronized
-	 * version, reliably passes all 200 with the fix.
+	 * version, reliably passes all 200 with the fix. The barrier wait and
+	 * the join both carry a bounded timeout, and the worker threads are
+	 * daemons, so a thread that can't start (e.g. CI genuinely out of
+	 * native threads) fails this test loudly instead of hanging the whole
+	 * run until the CI job's own timeout kills it.
 	 */
 	@Test
 	void addCallAdapterFactory_concurrentRegistrationOfTheSameInstanceStillDeduplicates() throws Exception {
@@ -190,18 +197,21 @@ class CallAdapterIntegrationTest {
 			CyclicBarrier barrier = new CyclicBarrier(2);
 			Runnable register = () -> {
 				try {
-					barrier.await();
-				} catch (InterruptedException | BrokenBarrierException e) {
+					barrier.await(5, TimeUnit.SECONDS);
+				} catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
 					throw new RuntimeException(e);
 				}
 				RIP.addCallAdapterFactory(decliningFactory);
 			};
 			Thread first = new Thread(register);
 			Thread second = new Thread(register);
+			first.setDaemon(true);
+			second.setDaemon(true);
 			first.start();
 			second.start();
-			first.join();
-			second.join();
+			first.join(5000);
+			second.join(5000);
+			assertFalse(first.isAlive() || second.isAlive(), "a worker thread didn't finish within the timeout");
 
 			com.shri.restinpeace.internal.RequestExecutor.resolveCallAdapter(method);
 
