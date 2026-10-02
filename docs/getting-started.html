@@ -397,6 +397,13 @@ void deleteItem(@PathParam("id") String id);</code></pre>
             <pre><code class="language-java">@GET("https://api.example.com/items/{id}")
 String getItem(@PathParam("id") String id);</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">URL placeholder with no matching @PathParam</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items/{id}")
+String getItem(String id);   // missing @PathParam("id")</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has path param 'id' in its URL that is not annotated on any parameter with @PathParam."</em> There's no implicit binding by position — every <code>{placeholder}</code> needs an explicit <code>@PathParam</code>.</p>
+          </div>
         </div>
       </div>
 
@@ -414,6 +421,13 @@ while (page.next != null) {
     page = itemApi.nextPage(page.next);
     process(page.items);
 }</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@Url combined with a static URL template</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/items")
+String get(@Url String url);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has both a @Url parameter and a static URL ... - remove one or the other."</em> Leave the method annotation's value empty (just <code>@GET</code>) when using <code>@Url</code>.</p>
           </div>
         </div>
       </div>
@@ -445,6 +459,12 @@ String search(@QueryParam("tag") List<String> tags);</code></pre>
             <pre><code class="language-java">@GET("https://api.example.com/items")
 String search(@HeaderParam(value = "Authorization", required = true) String token);</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">calling a required param with null</span></div>
+            <pre><code class="language-java">api.search(null, 1, null);</code></pre>
+            <p class="mistake-why">Throws <code>RestInPeaceException: "Missing required value for param 'q'."</code> — <code>required = true</code> is enforced on every call, not just checked once at validation time.</p>
+          </div>
         </div>
       </div>
 
@@ -462,6 +482,12 @@ String search(@QueryParam("q") String query, @QueryMap Map<String, String> filte
             <pre><code class="language-java">@GET("https://api.example.com/users/{id}")
 User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHeaders);</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">two @QueryMap parameters on one method</span></div>
+            <pre><code class="language-java">String search(@QueryMap Map<String, Object> a, @QueryMap Map<String, Object> b);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has more than one parameter annotated with @QueryMap."</em> Merge into one <code>Map</code> before calling instead.</p>
+          </div>
         </div>
       </div>
 
@@ -475,6 +501,12 @@ User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHea
             <pre><code class="language-java">@GET("https://api.example.com/users")
 @Headers({ "Cache-Control: no-cache", "X-Api-Version: 2" })
 List<User> listUsers();</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">a space instead of a colon</span></div>
+            <pre><code class="language-java">@Headers("X-Api-Version 2")</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has a @Headers entry 'X-Api-Version 2' with no ':' - expected 'Name: Value'."</em> The single most common typo here.</p>
           </div>
         </div>
       </div>
@@ -505,6 +537,13 @@ String createRaw(@Body String rawJson);</code></pre>
             <pre><code class="language-java">@POST("https://api.example.com/orders")
 @Headers({ "Content-Type: application/xml" })
 String createOrder(@Body Order order);</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@Body on a GET</span></div>
+            <pre><code class="language-java">@GET("/items")
+Item search(@Body SearchCriteria criteria);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"is annotated with @Body but HTTP method GET does not support a request body."</em> Use <code>@QueryParam</code>/<code>@QueryMap</code> for GET filter criteria instead.</p>
           </div>
         </div>
       </div>
@@ -549,6 +588,13 @@ String uploadAvatar(@PathParam("id") String id, @Part("file") File avatar,
 api.uploadAvatar("42", avatar, (field, sent, total) ->
         System.out.printf("%s: %d / %d%n", field, sent, total));</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@Part without the method-level @Multipart</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/items")
+String create(@Part("file") File f);   // missing @Multipart</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has a @Part parameter but is not annotated with @Multipart."</em> The single most common mistake with this feature — the two always travel together.</p>
+          </div>
         </div>
       </div>
 
@@ -567,6 +613,14 @@ String getToken(@Field("grant_type") String grantType, @Field("client_id") Strin
             <pre><code class="language-java">@POST("https://api.example.com/search")
 @FormUrlEncoded
 String search(@FieldMap Map<String, Object> filters);</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@FormUrlEncoded combined with @Body</span></div>
+            <pre><code class="language-java">@POST("https://api.example.com/items")
+@FormUrlEncoded
+String create(@Body Item item, @Field("name") String name);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"is annotated with @FormUrlEncoded and also has a @Body parameter - use one or the other."</em> A method has exactly one body-encoding strategy.</p>
           </div>
         </div>
       </div>
@@ -611,6 +665,13 @@ RipResponse&lt;List&lt;User&gt;&gt; listUsersWithResponse();
 @GET("https://api.example.com/users")
 CompletableFuture&lt;List&lt;User&gt;&gt; listUsersAsync();</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">a raw List with no type parameter</span></div>
+            <pre><code class="language-java">@SuppressWarnings("rawtypes")
+List listUsers();</code></pre>
+            <p class="mistake-why">Compiles, but decodes as a plain <code>List</code> of <code>LinkedTreeMap</code>s, not <code>User</code>s — <code>ClassCastException</code> the moment you treat an element as a <code>User</code>. No validation error for this one; always declare the type parameter.</p>
+          </div>
         </div>
       </div>
 
@@ -639,6 +700,13 @@ File downloadReport(@PathParam("id") String id, @Destination File target,
 reportApi.downloadReport("42", target, (sent, total) ->
         System.out.printf("%d / %d%n", sent, total));   // total is -1 with no Content-Length</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">File return type with no @Destination</span></div>
+            <pre><code class="language-java">@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id);   // missing @Destination</code></pre>
+            <p class="mistake-why">Fails validation: <em>"returns File but has no @Destination parameter to write the response to."</em> Unlike <code>byte[]</code>, <code>File</code> needs somewhere to write the bytes.</p>
+          </div>
         </div>
       </div>
 
@@ -656,6 +724,12 @@ response.getStatus();               // 200
 response.getHeader("ETag");         // first value, case-insensitive
 response.getHeaders();              // Map<String, List<String>>
 User user = response.getBody();</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">RipResponse&lt;File&gt;</span></div>
+            <pre><code class="language-java">RipResponse<File> downloadReport(@PathParam("id") String id);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"returns RipResponse&lt;File&gt;, which is not supported - use a plain File return type with @Destination instead."</em> <code>RipResponse&lt;byte[]&gt;</code> works fine if you need both the bytes and the headers.</p>
           </div>
         </div>
       </div>
