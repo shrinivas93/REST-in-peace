@@ -3860,6 +3860,76 @@ for a standalone project showing exactly what a downstream consumer sees —
 including a GraalVM native-image build and run, exercised by CI's
 `native-image-smoke-test` job on every push.
 
+**Mixed coverage on one interface**, to see the per-method fallback in
+practice:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface UserApi {
+
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);        // real generated implementation
+
+    @GET("/users")
+    List<User> listUsers();                           // falls back to the reflective proxy (List<T>)
+
+    @POST("/users")
+    CompletableFuture<User> createUser(@Body User u);  // real generated implementation (CompletableFuture<T> is covered)
+}
+```
+
+Calling any of the three methods above looks identical from the outside —
+`RIP.getClient(UserApi.class)` returns one object either way, and nothing
+in calling code reveals which methods are generated and which fell back.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — hand-editing or depending on the generated <Interface>_RipImpl
+// class's name/shape directly.
+UserApi_RipImpl impl = new UserApi_RipImpl();   // don't do this
+```
+The generated class is an implementation detail `RIP.getClient(...)` looks
+up for you — its name, package, and constructor shape aren't a committed
+public API and can change between releases. Always go through
+`RIP.getClient(UserApi.class)`, never construct or reference the generated
+class directly.
+
+```java
+// A nested or private @RestClient interface still falls back entirely -
+// not a validation error, just silently slower (reflective) than expected.
+public class Container {
+    @RestClient
+    private interface InnerApi {   // nested AND private
+        @GET("/ping")
+        String ping();
+    }
+}
+```
+A nested/private interface declaration is a separate precondition that
+disqualifies codegen for the *whole* interface, regardless of how simple
+its methods are — `RestClientProcessor` can't generate a top-level
+`.java` file implementing a type it has no public, top-level access path
+to. This still works correctly via the reflective proxy; it just never
+gets the compile-time fast path. Declare `@RestClient` interfaces as
+top-level (or nested-and-`public`, in a `public` enclosing class) if the
+GraalVM/cold-start benefits matter for that interface.
+
+```java
+// Expecting codegen to kick in without annotation processing enabled -
+// e.g. a Gradle build that explicitly disabled it, or an IDE run
+// configuration that skips the annotation processing step.
+```
+If your build doesn't run annotation processing at all for this
+dependency, every `@RestClient` interface silently falls back to the
+reflective proxy in its entirety — correctly, just without the
+compile-time benefits. There's no error or warning for this, since the
+reflective path is a fully supported fallback, not a degraded mode.
+
+</details>
+
 ## OpenAPI to `@RestClient` generator
 
 The opposite direction: instead of hand-writing an interface and letting
@@ -3901,6 +3971,50 @@ Also runnable from the command line — `java -cp ... com.shri.restinpeace.codeg
 <specFile> <outputDirectory> <packageName> <interfaceName>` — for wiring
 into a build via `exec-maven-plugin`/a Gradle `JavaExec` task, or just
 running it once by hand and committing the result.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — pointing it at a YAML spec.
+OpenApiClientGenerator.generate(new File("openapi.yaml"), outDir, pkg, name);
+```
+Only JSON specs are supported — convert a YAML OpenAPI document to JSON
+first (most OpenAPI tooling, including Swagger Editor, can export either
+format) before pointing the generator at it.
+
+```java
+// Expecting a generated interface to need no further edits for a
+// non-trivial API.
+```
+Every parameter and body is generated as `String` — this is a skeleton,
+not a full schema-to-POJO generator. Treat the generated file as a
+*starting point* that gets the tedious, error-prone part right (every
+path, HTTP method, and parameter name/location) — narrowing specific
+parameter types and replacing `@Body String` with a real POJO is an
+expected, normal hand-edit afterward, not a sign something went wrong.
+
+```java
+// Expecting a header/cookie parameter from the spec to show up on the
+// generated interface.
+```
+A `parameters` entry with `in: header` or `in: cookie` is silently
+skipped — these are modeled as a per-call/interceptor concern in RIP
+(`@HeaderParam`, a `HeaderInterceptor`), not baked into the generated
+method signature. Add them to the generated interface by hand, or attach
+them via a global/per-client interceptor instead.
+
+```java
+// Expecting a non-JSON request body (e.g. multipart/form-data,
+// application/x-www-form-urlencoded) to generate as @Multipart/@FormUrlEncoded.
+```
+Any `requestBody` at all becomes one `@Body String` parameter regardless
+of its declared `content` media type — the generator doesn't inspect
+whether a spec's body is actually JSON-shaped. Convert the generated
+`@Body String` parameter to `@Multipart`/`@FormUrlEncoded` by hand for an
+operation whose real body isn't JSON.
+
+</details>
 
 ## Testing with `MockRestServer`
 
@@ -3968,6 +4082,149 @@ exposes exactly what was actually sent — path, query params, headers, body
 `getFormFields()` for a decoded `@FormUrlEncoded` one) — for asserting on
 what your code actually sent, not just what came back.
 
+**Every response shape, matching on more than just the path, and
+simulating transport-level failure:**
+
+```java
+server.on(HTTPMethod.GET, "/items", MockResponse.noContent());                     // 204, empty body
+server.on(HTTPMethod.GET, "/items/1", MockResponse.notModified());                 // 304
+server.on(HTTPMethod.GET, "/items/2", MockResponse.status(404, "not found"));       // arbitrary status + body
+server.on(HTTPMethod.GET, "/items/3", MockResponse.status(200, pngBytes));          // binary body
+server.on(HTTPMethod.GET, "/items/4", MockResponse.ok("{...}").delay(300));         // simulate a slow server
+server.on(HTTPMethod.GET, "/items/5", MockResponse.connectionFailure());            // simulate "no response at all"
+
+// Exact query-param match - a request missing status=active, or with a
+// different value, falls through to no match (or a different registered
+// route) instead of this one.
+Map<String, String> activeOnly = Collections.singletonMap("status", "active");
+server.on(HTTPMethod.GET, "/orders", activeOnly, MockResponse.json(activeOrders));
+
+// A fully general predicate - header value, body content, or any
+// combination - for a constraint requiredQueryParams can't express.
+server.on(HTTPMethod.GET, "/orders", request -> "v2".equals(request.getHeader("X-Api-Version")),
+        MockResponse.json(v2Orders));
+```
+
+`MockResponse.connectionFailure()` closes the connection before sending
+anything, proving RIP's "no response at all" transport-failure path
+(unconditionally retried by `@Retry`, regardless of `retryOnStatus`) —
+distinct from `.status(503, ...)`, which *is* a real HTTP response and
+only retried if `503` is in `retryOnStatus`. `.delay(millis)` is the only
+way to prove a `@Timeout`/`RipClientConfig` read timeout actually fires,
+rather than assuming it does because the annotation is present.
+
+**`enqueue(...)` vs. `enqueueFor(...)`** — easy to reach for the wrong
+one: `enqueue(...)` only ever answers a path with *no* route registered
+via `on(...)` at all (route matching always happens first and
+unconditionally shadows the plain queue for a path that has one);
+`enqueueFor(...)` scripts a one-time response *ahead of* an existing
+route's own sticky response, for a route that also needs a final steady-
+state answer:
+
+```java
+// WRONG tool for this job - /orders already has a sticky route below, so
+// this queued response is NEVER consulted; every request keeps hitting
+// the sticky one instead.
+server.on(HTTPMethod.GET, "/orders", MockResponse.json(allOrders));
+server.enqueue(MockResponse.status(503, ""));   // dead - on(...) already claims every GET /orders
+
+// RIGHT tool: enqueueFor targets the already-registered route directly.
+server.enqueueFor(HTTPMethod.GET, "/orders", MockResponse.status(503, ""));
+server.getOrder("...");   // first call gets the 503, second gets allOrders
+```
+
+`RecordedRequest.getReceivedAt()` times each request as it's captured —
+the only way to directly verify `@Retry`'s backoff actually *grows*
+between attempts, rather than just counting that N attempts happened:
+
+```java
+server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2, MockResponse.status(503, ""), MockResponse.json(order));
+orderApi.getOrder("42");
+
+List<RecordedRequest> attempts = server.getRecordedRequests();
+Duration firstGap = Duration.between(attempts.get(0).getReceivedAt(), attempts.get(1).getReceivedAt());
+Duration secondGap = Duration.between(attempts.get(1).getReceivedAt(), attempts.get(2).getReceivedAt());
+assertTrue(secondGap.compareTo(firstGap) > 0);   // backoffMultiplier actually grew the wait
+```
+
+`getUnhitRoutes()` catches a route left registered after the code path
+that used to exercise it was removed — otherwise silent dead test setup:
+
+```java
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
+server.on(HTTPMethod.GET, "/orders/{id}/invoice", MockResponse.json(invoice));   // never actually called below
+
+orderApi.getOrder("42");
+
+assertEquals(Collections.emptyList(), server.getUnhitRoutes());   // fails - "/invoice" route was never hit
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — forgetting server.close(), leaking a real bound socket per test.
+@Test
+void getOrder_works() {
+    MockRestServer server = MockRestServer.start();
+    // ... test body, no server.close() anywhere ...
+}
+```
+Each `MockRestServer.start()` binds a real local port — forgetting to
+close it leaks a socket for the lifetime of the JVM. Use
+`MockRestServerExtension` (below) or a `@BeforeEach`/`@AfterEach` pair so
+`close()` always runs, even if the test body throws.
+
+```java
+// WRONG — re-registering a @RestClient proxy for every test instead of
+// reusing one bound to the shared server's base URL.
+MockRestServer server = MockRestServer.start();
+// ... 10 tests, each calling RIP.getClient(OrderApi.class, server.baseUrl()) again ...
+```
+Not incorrect, just wasteful — `server.baseUrl()` is stable for the
+server's whole lifetime, so the client only needs building once (a
+`@BeforeEach`-built field, or captured once per test class with
+`MockRestServerExtension`'s class-scoped server). Rebuilding it per test
+re-validates the interface every time for no benefit.
+
+```java
+// WRONG — expecting a path TEMPLATE mismatch with the actual recorded
+// path to still match in countOf/getUnhitRoutes.
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
+api.getOrder("42");                                            // actual request path: /orders/42
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/42"));  // WRONG - pass the TEMPLATE, not a resolved path
+```
+`countOf`/`getUnhitRoutes` match against the same `{name}`-templated
+string you registered the route with (`"/orders/{id}"`), not a specific
+resolved path — passing a literal resolved path here always reports zero
+matches, since it's compared against the stored route template, not
+re-matched against recorded requests' actual paths.
+
+```java
+// WRONG — assuming two on(...) calls for the same (method, pathTemplate,
+// requiredQueryParams) key both stay registered.
+server.on(HTTPMethod.GET, "/orders", MockResponse.json(ordersV1));
+server.on(HTTPMethod.GET, "/orders", MockResponse.json(ordersV2));   // REPLACES the first, same position
+```
+`on(...)` upserts by key — the second call replaces the first route's
+response in place rather than appending a second, permanently-shadowed
+one. This is usually what you want (re-registering mid-test to change
+behavior), but surprising if you expected the *first* registration to win
+the way it did in older RIP versions (or the way a `Predicate`-based
+matcher route still behaves, below).
+
+```java
+// A matcher-based route (the Predicate overload) does NOT upsert, unlike
+// the plain/requiredQueryParams overloads - two Predicates can't be
+// compared for equality, so re-registering always appends.
+server.on(HTTPMethod.GET, "/orders", req -> true, MockResponse.json(a));
+server.on(HTTPMethod.GET, "/orders", req -> true, MockResponse.json(b));
+// Both routes exist - the FIRST one registered (a) still wins, since
+// routes match in registration order and this one was never replaced.
+```
+
+</details>
+
 ### JUnit 5 extension
 
 `MockRestServerExtension` removes the `start()`/`close()` and
@@ -4009,6 +4266,56 @@ class OrderApiTest {
     }
 }
 ```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — calling reportUnhitRoutes() on the plain @ExtendWith style.
+@ExtendWith(MockRestServerExtension.class)
+class OrderApiTest {
+    // No way to reach the extension instance here to call reportUnhitRoutes() -
+    // JUnit constructs it itself via the no-arg constructor.
+}
+```
+`reportUnhitRoutes()` only works with the `@RegisterExtension` static-field
+style shown above, since that's the only style where your own code
+constructs the extension (and can therefore call a method on it) before
+JUnit uses it. `@ExtendWith(MockRestServerExtension.class)` works fine for
+everything else — just not this one opt-in diagnostic.
+
+```java
+// WRONG — assuming routes/recorded requests carry over between test
+// methods in the same class.
+@ExtendWith(MockRestServerExtension.class)
+class OrderApiTest {
+    @Test
+    void first(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
+    }
+
+    @Test
+    void second(MockRestServer server) {
+        // The route registered in first() is GONE here - the extension
+        // calls reset() before every test, clearing routes, queued
+        // responses, and recorded requests alike. Register what this
+        // test needs again, from scratch.
+    }
+}
+```
+
+```java
+// WRONG — relying on shared-server reuse under parallel test execution
+// within the same class.
+```
+One `MockRestServer` per test class (not per test method) isn't safe under
+JUnit 5's parallel-within-a-class execution — concurrent tests would
+register routes and read recorded requests against the same shared server
+at the same time. Fine for the default sequential-within-a-class
+execution; disable parallelism for a test class using this extension if
+your build enables it project-wide.
+
+</details>
 
 ## Integrating with your project
 
@@ -4103,6 +4410,75 @@ public class RipClientsConfig {
 Global interceptors (`RIP.addInterceptor(...)`) are a natural fit for an
 `ApplicationRunner`/`@PostConstruct` hook that runs once at startup, before
 any client is used.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @RestClient interfaces exist on the classpath but
+// @EnableRestInPeaceClients is missing from any configuration class.
+@SpringBootApplication
+public class Application { ... }   // no @EnableRestInPeaceClients anywhere
+```
+No beans are registered at all — `UserApi` (and every other `@RestClient`
+interface) simply isn't available for injection, surfacing as Spring's
+own `NoSuchBeanDefinitionException` wherever you try to `@Autowired`/
+constructor-inject it. `@EnableRestInPeaceClients` is what triggers the
+classpath scan; nothing happens automatically just because the starter
+dependency is on the classpath.
+
+```java
+// WRONG — baseUrlProperty names a property that doesn't exist in any
+// active profile/application.yml.
+@RestClient(baseUrlProperty = "user-api.base-url")
+public interface UserApi { ... }
+```
+```yaml
+# application.yml - "user-api.base-url" was never set
+spring:
+  application:
+    name: my-app
+```
+Fails Spring Boot startup entirely with `IllegalStateException: Required
+key 'user-api.base-url' not found` — the whole application context fails
+to refresh, not just this one bean. The property name in `baseUrlProperty`
+has to match an actual configured property exactly (`user-api.base-url`,
+not `userApi.baseUrl` — kebab-case, matching Spring's own relaxed binding
+for `.yml` keys).
+
+```java
+// Ambiguous bean wiring: two ObjectMapper beans in the context, neither
+// qualified for a specific client, expecting one to "just work" for all clients.
+@Bean
+public ObjectMapper strictMapper() { ... }
+
+@Bean
+public ObjectMapper lenientMapper() { ... }
+```
+With more than one unqualified `ObjectMapper` bean (or `Cache`/
+`RequestInterceptor`) in the context, Spring's own ambiguous-dependency
+resolution applies — wiring becomes unpredictable rather than "the first
+one defined." Qualify each one to the specific client it belongs to via
+`@Qualifier("<kebab-case-bean-name>")`, matching the exact qualifier
+convention the starter resolves clients under, or mark exactly one
+`@Primary` if it's genuinely meant to be the shared default for every
+client without its own.
+
+```java
+// WRONG — assuming @AutoConfigureMockRestServer also starts the server
+// for you per-test, the way MockRestServerExtension does.
+@SpringBootTest
+@AutoConfigureMockRestServer
+class UserApiIntegrationTest {
+    @Autowired UserApi userApi;
+    // Forgetting to register any routes at all before calling userApi
+    // methods still fails loudly (MockRestServer's own unmatched-request
+    // error) - @AutoConfigureMockRestServer only redirects clients to a
+    // MockRestServer instance; it doesn't pre-populate any responses.
+}
+```
+
+</details>
 
 ### Plain Java, CLI tools, and scripts
 
