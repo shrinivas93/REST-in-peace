@@ -514,6 +514,77 @@ String getItem(@PathParam("id") String id);
 Every method must have exactly one of these — none or more than one fails
 validation.
 
+**Every verb, side by side** — the only difference between them is which
+ones accept a body (`@Body`/`@Multipart`/`@FormUrlEncoded` all require
+`POST`, `PUT`, `PATCH`, or `DELETE`; using any of them on `GET`, `HEAD`, or
+`OPTIONS` fails validation):
+
+```java
+@GET("https://api.example.com/items/{id}")
+Item get(@PathParam("id") String id);
+
+@POST("https://api.example.com/items")
+Item create(@Body Item item);
+
+@PUT("https://api.example.com/items/{id}")
+Item replace(@PathParam("id") String id, @Body Item item);
+
+@PATCH("https://api.example.com/items/{id}")
+Item update(@PathParam("id") String id, @Body Map<String, Object> patch);
+
+@DELETE("https://api.example.com/items/{id}")
+void delete(@PathParam("id") String id);
+
+// DELETE is the one non-intuitive case: RFC 7231 allows a body on DELETE,
+// and RIP permits @Body/@Multipart/@FormUrlEncoded there too, even though
+// most real APIs never use it.
+@DELETE("https://api.example.com/items/bulk")
+void deleteMany(@Body List<String> ids);
+
+@HEAD("https://api.example.com/items/{id}")
+RipResponse<Void> exists(@PathParam("id") String id);
+
+@OPTIONS("https://api.example.com/items")
+RipResponse<Void> supportedMethods();
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — two method annotations on one method.
+@GET("/items")
+@POST("/items")
+String doSomething();
+```
+Fails validation: *"has more than one HTTP method annotations."* A method
+can mean one verb — if you need both a `GET` and a `POST` against the same
+path, that's two interface methods, not one annotated twice.
+
+```java
+// WRONG — no method annotation at all.
+String getItem(@PathParam("id") String id);
+```
+Fails validation from the other direction: *"is not annotated with any of
+the HTTP method annotations."* RIP has no "default verb" — every method
+needs an explicit one.
+
+```java
+// WRONG — @Body on a GET.
+@GET("/items")
+Item get(@Body Item filter);
+```
+Fails validation: *"is annotated with @Body but HTTP method GET does not
+support a request body."* Encode filter criteria that belong on a `GET` as
+`@QueryParam`/`@QueryMap` instead — a `GET` body is technically possible on
+the wire with some HTTP libraries, but it's unsupported by many
+servers/proxies/caches, which is exactly why RIP refuses to build one for
+you here. If your server genuinely requires a `GET` with a body, that's a
+non-standard server you'll need to talk to with a raw HTTP client outside
+RIP for that one call — RIP always builds a standards-conforming request.
+
+</details>
+
 ### `@PathParam`
 
 Substitutes a `{placeholder}` in the URL template with the argument value.
@@ -529,6 +600,48 @@ The value is percent-encoded before substitution, so a `/`, `?`, `#`, or a
 space in it lands as literal content of that one path segment instead of
 producing a broken or subtly wrong URL (e.g. an unencoded `?` would
 otherwise start a query string partway through the path).
+
+**Multiple placeholders, any order, any type** — `@PathParam` doesn't have
+to be a `String`; any argument is converted with `String.valueOf(...)`
+before encoding:
+
+```java
+@GET("https://api.example.com/orgs/{org}/repos/{repo}/issues/{number}")
+Issue getIssue(@PathParam("number") int number,
+               @PathParam("repo") String repo,
+               @PathParam("org") String org);
+
+// getIssue(42, "rest-in-peace", "shrinivas93") ->
+// GET https://api.example.com/orgs/shrinivas93/repos/rest-in-peace/issues/42
+```
+
+Parameter order in the method signature doesn't need to match the order
+placeholders appear in the URL — each `@PathParam`'s own `value()` is what's
+matched against `{...}`, not position.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — the URL has {id}, but nothing is annotated @PathParam("id").
+@GET("https://api.example.com/items/{id}")
+String getItem(String id);
+```
+Fails validation: *"has path param 'id' in its URL that is not annotated on
+any parameter with @PathParam."* An un-annotated `String` parameter isn't
+assumed to be a path param by position — RIP has no implicit binding here.
+
+```java
+// WRONG — @PathParam("itemId") names something the URL never declares.
+@GET("https://api.example.com/items/{id}")
+String getItem(@PathParam("itemId") String id);
+```
+Fails validation: *"has a @PathParam('itemId') that does not appear as
+'{itemId}' in its URL."* The annotation's `value()` and the URL's
+`{placeholder}` name have to match exactly, including case — `{id}` and
+`{Id}` are different placeholders as far as this check is concerned.
+
+</details>
 
 ### `@Url`
 
@@ -557,6 +670,68 @@ no template left for them to apply to - but `@QueryParam`/`@HeaderParam`/etc.
 still work normally, appended to the given URL. At most one `@Url` parameter
 is allowed per method, and a `null` argument throws at call time.
 
+**A full-URL `@Url` still composes with everything except the template
+itself** — query params, headers, even a request body:
+
+```java
+@POST
+@Headers("X-Trace: enabled")
+String followAction(@Url String actionUrl, @QueryParam("dryRun") boolean dryRun, @Body ActionPayload payload);
+
+// A HATEOAS-style action link embedded in a previous response, still
+// getting query params/headers/body applied on top of it:
+String result = api.followAction(previousResponse.actions().get("cancel"), true, payload);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a static URL *and* a @Url parameter on the same method.
+@GET("https://api.example.com/items")
+String get(@Url String url);
+```
+Fails validation: *"has both a @Url parameter and a static URL
+'https://api.example.com/items' - remove one or the other."* Leave the
+method annotation's `value()` empty (just `@GET`) when a method uses `@Url`.
+
+```java
+// WRONG — @Url combined with @PathParam.
+@GET
+String get(@Url String url, @PathParam("id") String id);
+```
+Fails validation: *"has both a @Url parameter and a @PathParam parameter -
+@PathParam has no effect when @Url is used."* There's no template for
+`@PathParam` to substitute into once the whole URL is supplied directly -
+bake the id into the URL string yourself before calling.
+
+```java
+// WRONG — two @Url parameters on one method.
+@GET
+String get(@Url String primary, @Url String fallback);
+```
+Fails validation: *"has more than one parameter annotated with @Url."*
+Exactly one dynamic URL source per method, same reasoning as `@Body`.
+
+```java
+// WRONG — @Url on a non-String parameter.
+@GET
+String get(@Url URI uri);
+```
+Fails validation: *"has a @Url parameter of type java.net.URI - only
+String is supported."* Call `.toString()` yourself before passing it in.
+
+```java
+// WRONG — passing null at call time.
+api.get(null);
+```
+Throws `RestInPeaceException`: *"Missing value for @Url parameter in
+method ...get."* Unlike `@QueryParam`/`@HeaderParam`, `@Url` has no
+`defaultValue` to fall back to — there's no sensible default for an entire
+missing URL.
+
+</details>
+
 ### `@QueryParam`
 
 Appends a query string parameter. Supports `required` (throws at call time
@@ -579,6 +754,44 @@ String search(@QueryParam("tag") List<String> tags);
 // search(List.of("a", "b")) sends ?tag=a&tag=b
 ```
 
+**Every combination of `required`/`defaultValue`/plain-optional** side by
+side:
+
+```java
+@GET("https://api.example.com/items")
+String search(
+        @QueryParam(value = "q", required = true) String query,        // throws if null
+        @QueryParam(value = "page", defaultValue = "1") Integer page,   // "1" if null
+        @QueryParam("sort") String sort);                               // omitted entirely if null
+```
+
+A `null` argument for a plain optional `@QueryParam` (no `required`, no
+`defaultValue`) is simply left out of the URL - `search("x", null, null)`
+sends `?q=x` with no `page`/`sort` at all, not `?q=x&page=&sort=`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — calling a required param with null.
+api.search(null, 1, null);
+```
+Throws `RestInPeaceException`: *"Missing required value for param 'q'."*
+`required = true` means exactly that — it's not a hint, it's enforced on
+every call, not just checked once at validation time (validation can't
+know what a caller will pass at runtime).
+
+```java
+// Easy to misread: required AND defaultValue together.
+@QueryParam(value = "status", required = true, defaultValue = "active") String status
+```
+This compiles and never actually throws — `defaultValue` is checked
+*before* `required`, so a `null` argument always resolves to `"active"`
+long before the required check would ever fire. If a default exists, a
+value is never truly "required" in practice. Pick one: `required` for
+"the caller must decide," `defaultValue` for "assume this if they don't."
+</details>
+
 ### `@HeaderParam`
 
 Sets an HTTP header, with the same `required`/`defaultValue` semantics as
@@ -588,6 +801,30 @@ Sets an HTTP header, with the same `required`/`defaultValue` semantics as
 @GET("https://api.example.com/items")
 String search(@HeaderParam(value = "Authorization", required = true) String token);
 ```
+
+**Multiple headers, mixing fixed and conditional:**
+
+```java
+@GET("https://api.example.com/items")
+String search(
+        @HeaderParam(value = "Authorization", required = true) String token,
+        @HeaderParam(value = "X-Request-Id") String requestId,
+        @HeaderParam(value = "Accept-Language", defaultValue = "en-US") String language);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — forgetting a value-less sentinel header is still "a value".
+api.search("", null, null);
+```
+`""` (empty string) is **not** `null` — `required` only rejects a missing
+argument, not an empty one. `search("", ...)` sends a literal
+`Authorization: ` header with an empty value, which almost certainly isn't
+what you want and won't trip any RIP-level validation. Check for blank
+tokens yourself before calling if that distinction matters to your API.
+</details>
 
 ### `@QueryMap` / `@HeaderMap`
 
@@ -614,6 +851,48 @@ annotated `@QueryMap`, and at most one `@HeaderMap`. Like `@QueryParam`, a
 once per element under the same name, instead of one entry with a single
 mangled `toString()` value.
 
+**A fully dynamic multi-tenant example**, mixing a fixed param, a fixed
+header, and two runtime-sized maps on one call:
+
+```java
+@GET("https://api.example.com/search")
+String search(@QueryParam("q") String query,
+               @HeaderParam("X-Tenant-Id") String tenantId,
+               @QueryMap Map<String, Object> filters,
+               @HeaderMap Map<String, String> extraHeaders);
+```
+
+```java
+Map<String, Object> filters = new LinkedHashMap<>();
+filters.put("category", "electronics");
+filters.put("tag", Arrays.asList("sale", "new"));   // repeats: &tag=sale&tag=new
+filters.put("inStock", null);                        // skipped entirely
+
+api.search("laptop", "tenant-42", filters, Collections.singletonMap("X-Debug", "true"));
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — two parameters both annotated @QueryMap on one method.
+String search(@QueryMap Map<String, Object> a, @QueryMap Map<String, Object> b);
+```
+Fails validation: *"has more than one parameter annotated with @QueryMap."*
+If you have two logically distinct maps, merge them into one `Map` before
+calling, or promote the always-present ones to fixed `@QueryParam`s instead.
+
+```java
+// WRONG — @QueryMap on something that isn't a Map.
+String search(@QueryMap List<String> filters);
+```
+Fails validation: *"has a parameter annotated with @QueryMap that is not a
+Map."* A `List` has no key to use as the param name — if you just need a
+repeated single-name param, use `@QueryParam` on the `Collection` directly
+instead of `@QueryMap`.
+
+</details>
+
 ### `@Headers`
 
 Sets one or more fixed HTTP headers on a method — for a header whose value
@@ -633,6 +912,84 @@ method; if both set the same header name, `@HeaderParam`/`@HeaderMap` wins,
 since a per-call value is more specific than an always-on method annotation.
 An entry with no `:`, or an empty header name, fails validation.
 
+**Precedence in action** — the fixed `@Headers` entry is a floor, not a
+final answer:
+
+```java
+@GET("https://api.example.com/items")
+@Headers("X-Api-Version: 1")
+List<Item> listItems(@HeaderParam("X-Api-Version") String overrideVersion);
+
+// listItems(null)   -> sends X-Api-Version: 1        (the @Headers default)
+// listItems("2")    -> sends X-Api-Version: 2         (the per-call value wins)
+```
+
+`@Headers` is method-only (`@Target(ElementType.METHOD)`) — there's no
+interface-level form the way `@BaseUrl`/`@Retry`/`@Timeout` have one.
+Repeat it on each method that needs the same fixed headers, or reach for a
+global/per-client `HeaderInterceptor`/custom `RequestInterceptor` (see
+[Interceptors](#interceptors)) when the same fixed set genuinely belongs
+to every method on an interface:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface ItemApi {
+    @GET("/items")
+    @Headers({ "Accept: application/json", "X-Client: rest-in-peace" })
+    List<Item> listItems();
+
+    @GET("/items/{id}")
+    @Headers({ "Accept: application/json", "X-Client: rest-in-peace" })
+    Item getItem(@PathParam("id") String id);
+}
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Headers on the interface itself, expecting it to apply to
+// every method the way @BaseUrl/@Retry/@Timeout do.
+@RestClient
+@Headers({ "Accept: application/json" })
+public interface ItemApi { ... }
+```
+Does not compile — `@Headers` is `@Target(ElementType.METHOD)` only,
+so placing it on a type (an interface) is a Java compilation error, not a
+RIP validation error. Put it on each method instead, or use a
+`HeaderInterceptor`/custom interceptor for a value that's genuinely
+constant across an entire client.
+
+```java
+// WRONG — missing the ':' separator entirely.
+@Headers("X-Api-Version 2")
+```
+Fails validation: *"has a @Headers entry 'X-Api-Version 2' with no ':' -
+expected 'Name: Value'."* A space instead of a colon is the single most
+common typo here — `Headers` parses each string by splitting on the first
+`:`, not by whitespace.
+
+```java
+// WRONG — empty header name before the colon.
+@Headers(": application/json")
+```
+Fails validation: *"has a @Headers entry ': application/json' with an
+empty header name."*
+
+```java
+// Technically valid, but probably not what you meant: a colon *in* the
+// value (e.g. a URL) is fine — only the *first* colon is the separator.
+@Headers("Link: <https://api.example.com/next>; rel=\"next\"")
+```
+This parses correctly as header `Link` with value
+`<https://api.example.com/next>; rel="next"` — only the first `:` splits
+the string, so a value containing its own colons (URLs, timestamps) is
+safe. It's listed here because it surprises people the first time, not
+because it's broken.
+
+</details>
+
 ### `@Body`
 
 Sends a request body. Only valid on `POST`, `PUT`, `PATCH`, and `DELETE` —
@@ -648,6 +1005,101 @@ String createRaw(@Body String rawJson);
 ```
 
 At most one parameter per method may be annotated `@Body`.
+
+**Every HTTP verb that accepts one, and a nested generic body:**
+
+```java
+@POST("https://api.example.com/items")
+Item create(@Body Item item);
+
+@PUT("https://api.example.com/items/{id}")
+Item replace(@PathParam("id") String id, @Body Item item);
+
+@PATCH("https://api.example.com/items/{id}")
+Item patch(@PathParam("id") String id, @Body Map<String, Object> partialFields);
+
+@POST("https://api.example.com/batch")
+BatchResult createMany(@Body List<Item> items);   // a generic collection as the BODY, not the return type
+```
+
+A `null` `@Body` argument sends the request with **no body at all** —
+both the reflective (`RequestExecutor`) and generated (`RestClientProcessor`)
+dispatch paths skip applying a body entirely when the argument is `null`,
+rather than serializing it as the JSON literal `null`. If an endpoint
+distinguishes "no body sent" from a body containing `"field": null`, the
+simplest way to produce the second case is a raw `@Body String` — sent
+as-is with no `ObjectMapper` involved at all (see the plain `@Body`
+example above), so `createRaw("{\"field\": null}")` sends exactly that:
+
+```java
+api.createRaw("{\"field\": null}");   // sent verbatim, bypassing the ObjectMapper entirely
+```
+
+**One caveat specific to the raw-`String` path:** the `Content-Type:
+application/json` default described [below](#json-objectmapper) only
+applies to a *non*-`String` `@Body` value — `applyBody` returns a raw
+`String` body as-is before that defaulting logic ever runs, so
+`createRaw(...)` sends no `Content-Type` header at all unless one is set
+some other way. Harmless against a server that sniffs the body or simply
+doesn't check, but a server that actually enforces
+`Content-Type: application/json` will reject it. Add an explicit
+`@Headers({"Content-Type: application/json"})` on a raw-`String` `@Body`
+method whenever that matters:
+
+```java
+@POST("https://api.example.com/items/raw")
+@Headers({ "Content-Type: application/json" })
+String createRawJson(@Body String rawJson);
+```
+
+Auto-serializing a `Map`/POJO into that same shape is less
+straightforward than it looks, for two independent reasons: an empty
+`Map` (or a POJO with the field simply left unset) serializes as `{}`,
+not `{"field": null}` — the field has to actually be present with a
+`null` value (`Collections.singletonMap("field", null)`, say) — and even
+then, the zero-config default [`ObjectMapper`](#json-objectmapper)
+(`kong.unirest.JsonObjectMapper`) builds its `Gson` instance internally
+with no `serializeNulls()` call and no way to inject a custom `Gson` into
+it, so Gson's own default (omit a `null`-valued field entirely) still
+applies regardless of what the `Map`/POJO itself contains. Reach for the
+raw-`String` approach above unless you have a specific reason to keep the
+request POJO-typed — producing `{"field": null}` through auto-
+serialization requires implementing your own `kong.unirest.ObjectMapper`
+wrapping a `Gson` built via `new GsonBuilder().serializeNulls().create()`
+and registering it with `RIP.setObjectMapper(...)`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Body on a GET.
+@GET("/items")
+Item search(@Body SearchCriteria criteria);
+```
+Fails validation: *"is annotated with @Body but HTTP method GET does not
+support a request body."* See the [HTTP method annotations](#http-method-annotations)
+section above for the fix (query params instead).
+
+```java
+// WRONG — two @Body parameters on one method.
+Item create(@Body Item a, @Body Item b);
+```
+Fails validation: *"has more than one parameter annotated with @Body."*
+Wrap both into one object (or one `Map`) and send that instead — a request
+has exactly one body on the wire, so RIP has exactly one `@Body` slot.
+
+```java
+// Misleading rather than broken: @Body combined with @QueryParam.
+@POST("https://api.example.com/items")
+Item create(@Body Item item, @QueryParam("dryRun") boolean dryRun);
+```
+This is perfectly valid and common (`?dryRun=true` alongside a JSON body) -
+listed here only because it's easy to assume `@Body` "uses up" the method
+the way `@Multipart`/`@FormUrlEncoded` exclude each other. `@Body` only
+conflicts with the *other* body-encoding strategies, never with
+`@QueryParam`/`@HeaderParam`/`@PathParam`.
+
+</details>
 
 ### `@Multipart` / `@Part` / `@PartMap`
 
@@ -733,6 +1185,96 @@ part's name (its `@Part`/`@PartMap` key), needed to tell parts apart since
 calls for different parts interleave rather than running one at a time.
 Pass `null` for a call that doesn't need progress reporting.
 
+**All four `@Part` value types on one method**, to see the shape
+differences side by side:
+
+```java
+@POST("https://api.example.com/documents")
+@Multipart
+String upload(
+        @Part("title") String title,                                    // plain form field
+        @Part("document") File document,                                 // filename = document.getName()
+        @Part(value = "thumbnail", fileName = "thumb.png") byte[] thumb,  // filename must be supplied
+        @Part(value = "stream", fileName = "data.bin") InputStream data); // filename must be supplied
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Multipart on a method with no @Part/@PartMap at all.
+@POST("https://api.example.com/ping")
+@Multipart
+String ping();
+```
+Fails validation: *"is annotated with @Multipart but has no @Part or
+@PartMap parameters."* An empty multipart body is never useful - if you
+don't need a body, drop `@Multipart` entirely.
+
+```java
+// WRONG — @Multipart combined with @Body.
+@POST("https://api.example.com/items")
+@Multipart
+String create(@Body Item item, @Part("file") File attachment);
+```
+Fails validation: *"is annotated with @Multipart and also has a @Body
+parameter - use one or the other."* A request has one body-encoding
+strategy; mix the JSON fields into the multipart body as additional
+`@Part` string fields instead if you need both.
+
+```java
+// WRONG — @Multipart combined with @FormUrlEncoded.
+@POST("https://api.example.com/items")
+@Multipart
+@FormUrlEncoded
+String create(@Part("file") File f, @Field("name") String name);
+```
+Fails validation: *"is annotated with both @Multipart and @FormUrlEncoded -
+use one or the other."*
+
+```java
+// WRONG — @Part on a method that isn't @Multipart.
+@POST("https://api.example.com/items")
+String create(@Part("file") File f);
+```
+Fails validation: *"has a @Part parameter but is not annotated with
+@Multipart."* Forgetting the method-level `@Multipart` while adding
+`@Part` parameters is the single most common mistake with this feature -
+the two always travel together.
+
+```java
+// WRONG — an unsupported @Part value type.
+@Multipart
+String create(@Part("count") int count);
+```
+Fails validation: *"has a @Part parameter of type int - only String, File,
+byte[], and InputStream are supported."* Send a number as a `String` form
+field (`@Part("count") String count`, passing `String.valueOf(count)`) -
+there's no numeric multipart field type on the wire anyway.
+
+```java
+// WRONG — UploadProgressListener without @Multipart.
+String create(@Part("file") File f, UploadProgressListener onProgress);
+```
+Fails validation: *"has an UploadProgressListener parameter but is not
+annotated with @Multipart."* Progress reporting only makes sense for a
+multipart file upload - it has no meaning for a JSON `@Body` call, which
+is written to the wire in one shot regardless.
+
+```java
+// Easy to get backwards: forgetting PartValue when a @PartMap entry needs
+// its OWN filename, distinct from its map key.
+Map<String, Object> parts = new LinkedHashMap<>();
+parts.put("file", photoBytes);   // filename defaults to "file", NOT "photo.jpg"
+```
+A `@PartMap` entry's filename defaults to its *map key*, not anything
+derived from the value - `"file"` above uploads as a part literally named
+`file` with filename `file`, which is rarely what you want for a `byte[]`.
+Wrap it in `PartValue.of(photoBytes, "photo.jpg")` (shown above) whenever
+the filename needs to differ from the key.
+
+</details>
+
 ### `@FormUrlEncoded` / `@Field` / `@FieldMap`
 
 Sends an `application/x-www-form-urlencoded` body instead of `@Body`'s
@@ -769,6 +1311,71 @@ String search(@FieldMap Map<String, Object> filters);
 `null` map or a `null` entry value is skipped rather than an error, and at
 most one `@FieldMap` parameter per method is allowed.
 
+**A realistic OAuth2 `client_credentials` grant**, combining fixed and
+optional fields:
+
+```java
+@POST("https://auth.example.com/oauth/token")
+@FormUrlEncoded
+TokenResponse clientCredentials(
+        @Field(value = "grant_type", defaultValue = "client_credentials") String grantType,
+        @Field("client_id") String clientId,
+        @Field("client_secret") String clientSecret,
+        @Field(value = "scope", required = false) String scope);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @FormUrlEncoded on a GET.
+@GET("https://auth.example.com/token")
+@FormUrlEncoded
+String getToken(@Field("grant_type") String grantType);
+```
+Fails validation: *"is annotated with @FormUrlEncoded but HTTP method GET
+does not support a request body."*
+
+```java
+// WRONG — no @Field/@FieldMap at all.
+@POST("https://api.example.com/ping")
+@FormUrlEncoded
+String ping();
+```
+Fails validation: *"is annotated with @FormUrlEncoded but has no @Field or
+@FieldMap parameters."*
+
+```java
+// WRONG — @FormUrlEncoded combined with @Body.
+@POST("https://api.example.com/items")
+@FormUrlEncoded
+String create(@Body Item item, @Field("name") String name);
+```
+Fails validation: *"is annotated with @FormUrlEncoded and also has a @Body
+parameter - use one or the other."*
+
+```java
+// WRONG — @Field without the method-level @FormUrlEncoded.
+@POST("https://api.example.com/items")
+String create(@Field("name") String name);
+```
+Fails validation: *"has a @Field parameter but is not annotated with
+@FormUrlEncoded."* Same forgot-the-method-annotation mistake as `@Part`
+above.
+
+```java
+// Sends the wrong Content-Type if you reach for the wrong annotation:
+// @FormUrlEncoded is application/x-www-form-urlencoded (key=value&key=value,
+// no file support); @Multipart is multipart/form-data (supports files,
+// larger/binary-safe, heavier wire format). Picking @FormUrlEncoded for a
+// file upload isn't a validation error - @Field only accepts values RIP
+// can URL-encode as text, so there's no File/byte[]/InputStream @Field
+// type to reach for by mistake - but it's the most common "why doesn't my
+// server see the file" confusion between the two.
+```
+
+</details>
+
 ## Return types
 
 A method's declared return type controls what you get back:
@@ -788,6 +1395,36 @@ void fireEvent(@Body Event event);               // response body discarded
 discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies. These
 rules apply to a successful (2xx) response — see below for anything else.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// Not actually wrong, just a frequent misunderstanding: returning String
+// does NOT mean "the JSON field called 'name'" or similar - it's always
+// the ENTIRE raw response body, unparsed.
+@GET("https://api.example.com/users/{id}")
+String getUserName(@PathParam("id") String id);
+// Returns {"id":"42","name":"Ada"} in full, not "Ada".
+```
+If you want one field, deserialize into a POJO (or `Map<String, Object>`)
+and read the field yourself - `String` is an escape hatch for "give me the
+bytes as text," not a field selector.
+
+```java
+// A POJO with a constructor mismatch against the response shape doesn't
+// fail validation - RIP has no way to know your server's JSON shape ahead
+// of time - it fails at CALL time instead, as a Gson deserialization
+// exception, often with a confusing message if the field types mismatch
+// (e.g. server sends "id": 42 as a number, your field is a String).
+```
+There's no compile-time or `RIP.getClient(...)`-time check that a POJO
+actually matches your server's response shape - mismatches surface the
+first time the method is actually called. Write a unit test against a real
+response payload ([`MockRestServer`](#testing-with-mockrestserver) is built exactly for this)
+rather than assuming the shape compiles because the Java side does.
+
+</details>
 
 ### Generic collection return types: `List<User>`
 
@@ -809,6 +1446,43 @@ of a plain `Class<?>` whenever the two differ - see
 [Why isn't `List<User>` code-generated?](#why-isnt-listuser-code-generated)
 for the one place this still falls back to the reflective proxy rather than
 a fully generated implementation.
+
+**Every wrapping combination, explicitly:**
+
+```java
+@GET("https://api.example.com/users")
+List<User> listUsers();                                              // plain
+
+@GET("https://api.example.com/users")
+RipResponse<List<User>> listUsersWithHeaders();                       // + status/headers
+
+@GET("https://api.example.com/users")
+CompletableFuture<List<User>> listUsersAsync();                       // + async
+
+@GET("https://api.example.com/users")
+CompletableFuture<RipResponse<List<User>>> listUsersAsyncWithHeaders(); // both
+```
+
+A `Set<User>`/`Map<String, User>` works the same way — any generic
+collection/map type Gson itself knows how to deserialize into, not just
+`List`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a raw List with no type parameter.
+@GET("https://api.example.com/users")
+@SuppressWarnings("rawtypes")
+List listUsers();
+```
+This compiles (with a raw-type warning) but decodes as a plain `List` of
+`LinkedTreeMap`s, not `User`s — `ClassCastException` the moment you try to
+treat an element as a `User`. There's no validation error for this one,
+since a raw `List` is still a technically-valid return type — always
+declare the type parameter.
+
+</details>
 
 ### Binary downloads: `byte[]` and `File`
 
@@ -860,6 +1534,62 @@ reportApi.downloadReport("42", target, (bytesWritten, totalBytes) ->
 `totalBytes` is `-1` if the server didn't send a `Content-Length`. Pass
 `null` for a call that doesn't need progress reporting.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — returns File but no @Destination parameter at all.
+@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id);
+```
+Fails validation: *"returns File but has no @Destination parameter to
+write the response to."* Unlike `byte[]`, a `File` return type needs
+somewhere to write the bytes - RIP never invents a temp file location for
+you implicitly.
+
+```java
+// WRONG — @Destination on a method that doesn't return File.
+@GET("https://api.example.com/reports/{id}/pdf")
+byte[] downloadReport(@PathParam("id") String id, @Destination File target);
+```
+Fails validation: *"has a @Destination parameter but does not return
+File."* `@Destination` only makes sense paired with a `File` return - for
+`byte[]`, the bytes themselves are the return value.
+
+```java
+// WRONG — two @Destination parameters.
+File downloadReport(@PathParam("id") String id, @Destination File a, @Destination File b);
+```
+Fails validation: *"has more than one parameter annotated with
+@Destination."*
+
+```java
+// WRONG — @Destination on a non-File parameter.
+File downloadReport(@PathParam("id") String id, @Destination String targetPath);
+```
+Fails validation: *"has a @Destination parameter of type
+java.lang.String - only File is supported."* Wrap the path in
+`new File(targetPath)` before passing it.
+
+```java
+// WRONG — DownloadProgressListener on a non-binary return type.
+User getUser(@PathParam("id") String id, DownloadProgressListener onProgress);
+```
+Fails validation: *"has a DownloadProgressListener parameter but does not
+return byte[] or File."* Progress reporting only applies to a response
+RIP streams as raw bytes - a JSON-decoded `User` is fully buffered and
+parsed in one step, with no meaningful intermediate progress to report.
+
+```java
+// Easy mistake: assuming a FAILED download still writes partial content
+// to the @Destination file.
+File pdf = reportApi.downloadReport("bad-id", target);
+// throws RestInPeaceHttpException — target is left untouched, not
+// partially written or deleted, whatever it contained before the call.
+```
+
+</details>
+
 ### Response headers and status: `RipResponse<T>`
 
 The rules above give you the body only. Declare `RipResponse<T>` instead of
@@ -884,6 +1614,62 @@ raw body, `Void` to discard it, anything else deserialized from JSON).
 `RipResponse<T>` only ever wraps a successful response — a non-2xx status
 still throws `RestInPeaceHttpException` as described below, it's never
 wrapped.
+
+**`RipResponse<T>` composes with every other return-type rule** — a
+generic collection, async, or both:
+
+```java
+@GET("https://api.example.com/users")
+RipResponse<List<User>> listUsersWithHeaders();
+
+@GET("https://api.example.com/users/{id}")
+CompletableFuture<RipResponse<User>> getUserAsync(@PathParam("id") String id);
+```
+
+```java
+userApi.getUserAsync("42").thenAccept(response -> {
+    System.out.println(response.getStatus());
+    System.out.println(response.getBody().name());
+});
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a raw RipResponse with no type parameter.
+@SuppressWarnings("rawtypes")
+RipResponse getUser(@PathParam("id") String id);
+```
+Fails validation: *"returns a raw RipResponse with no type parameter."*
+RIP needs to know what `T` to decode the body into — there's no "give me
+the raw body" meaning for a raw `RipResponse` the way plain `String` has.
+
+```java
+// WRONG — RipResponse<File>.
+RipResponse<File> downloadReport(@PathParam("id") String id);
+```
+Fails validation: *"returns RipResponse<File>, which is not supported -
+use a plain File return type with @Destination instead."* `File` already
+has its own dedicated mechanism (`@Destination`) for where the bytes land;
+wrapping it in `RipResponse<T>` would leave `getBody()` returning the same
+`File` you already passed in as `@Destination`, which adds nothing.
+`RipResponse<byte[]>` works fine if you need both the bytes and the
+headers.
+
+```java
+// Looks right, silently wrong: calling getBody() on an exceptional call.
+try {
+    RipResponse<User> response = userApi.getUser("missing");
+} catch (RestInPeaceHttpException e) {
+    // response isn't in scope here — RipResponse<T> is never populated for
+    // a non-2xx status. Handle the error from the exception itself
+    // (e.getStatus(), e.getRawBody()), not by trying to inspect a
+    // response object that was never constructed.
+}
+```
+
+</details>
 
 ## Pagination
 
@@ -1038,6 +1824,180 @@ for more than one override at once. Unlike `@Paginated`, there's no
 `itemsField` — the response body must itself be the JSON items array.
 `@Paginated` and a `PaginationStrategy<T>` parameter are mutually
 exclusive on one method - pick declarative or programmatic, not both.
+
+**An explicit `hasMore`/`total` termination example** — when the pointer
+field stays populated even on the genuinely last page (a real Stripe
+quirk), let a separate signal decide instead:
+
+```java
+@GET("/charges")
+@Paginated(itemsField = "data", pointerField = "next_cursor",
+        hasMoreSource = PaginationSignalSource.RESPONSE_BODY, hasMoreField = "has_more")
+Page<Charge> listCharges(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+
+```java
+// Response: {"data": [...], "next_cursor": "c9", "has_more": false}
+// -> page.hasNext() is false, even though next_cursor is non-empty,
+//    because hasMoreSource overrides pointer-presence as the signal.
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Paginated AND a PaginationStrategy<T> parameter on one method.
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor,
+        PaginationStrategy<Order> strategy);
+```
+Fails validation: *"is annotated with @Paginated and also has a
+PaginationStrategy<T> parameter - use one or the other."* Declarative and
+programmatic pagination are mutually exclusive on one method — pick one.
+
+```java
+// WRONG — returns Page<T> with no @Paginated and no PaginationStrategy<T>.
+@GET("/orders")
+Page<Order> listOrders();
+```
+Fails validation: *"returns Page<T> but is not annotated with @Paginated
+and has no PaginationStrategy<T> parameter."* `Page<T>` isn't a return
+type RIP infers paging behavior from automatically — one of the two
+mechanisms has to be present to say *how* to find the next page.
+
+```java
+// WRONG — @Paginated combined with @Url.
+@RestClient
+interface OrderApi {
+    @GET   // no @BaseUrl needed here - a @Url parameter bypasses it entirely
+    @Paginated(itemsField = "orders", pointerField = "next_cursor")
+    Page<Order> listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);
+}
+```
+Fails validation: *"is annotated with both @Paginated and @Url - remove
+one or the other."*
+
+```java
+// WRONG — advance() set without pointerSource = NONE.
+@Paginated(itemsField = "orders", pointerField = "next_cursor",
+        advance = PaginationAdvance.INCREMENT_BY_ONE)
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+Fails validation: *"sets advance() but pointerSource is not NONE -
+advance() is only meaningful for client-driven pagination with no
+server-given pointer (pointerSource = NONE)."* `advance` and a real
+server-given pointer are two different termination strategies — mixing
+them leaves it ambiguous which one actually governs the next page.
+
+```java
+// WRONG — INCREMENT_BY_PAGE_SIZE with no pageSize set (defaults to 0).
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+        advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE)
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+```
+Fails validation: *"sets advance = INCREMENT_BY_PAGE_SIZE, which needs
+pageSize() to be a positive number."*
+
+```java
+// WRONG — pointerSource = NONE with no advance() set at all.
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE)
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+```
+Fails validation: *"has pointerSource = NONE, which needs advance() to be
+set for client-driven pagination."* `pointerSource = NONE` on its own
+just means "there's no server pointer" — it still needs `advance` to say
+how the client should move forward on its own.
+
+```java
+// WRONG — FULL_URL pointerKind with a @PaginationCursor parameter too.
+@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+        pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+Page<Repo> listRepos(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+Fails validation: *"has pointerKind = FULL_URL but also has a
+@PaginationCursor parameter - a full URL is followed as-is, with nothing
+to inject."* A `FULL_URL` pointer *is* the next request — there's no
+template left for a cursor value to be substituted into.
+
+```java
+// WRONG — a @PaginationCursor stacked on something other than
+// @QueryParam/@PathParam/@HeaderParam/@Body. (@Paginated itself must be
+// present and otherwise valid for this specific check to be the one that
+// fires - without it, validation stops earlier at "not annotated with
+// @Paginated" instead, per the first example in this section.)
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@PaginationCursor String cursor);
+```
+Fails validation: *"has a @PaginationCursor parameter that must be
+stacked on exactly one of @QueryParam/@PathParam/@HeaderParam/@Body."*
+`@PaginationCursor` is a *marker* stacked on an existing request-building
+annotation, not a carrier in its own right — it has to ride on top of one.
+
+```java
+// WRONG — comma-separated pointerField without pointerSource = ITEM_FIELD.
+@Paginated(itemsField = "events", pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
+        @QueryParam("lastTs") @PaginationCursor String lastTimestamp);
+```
+Fails validation: *"has a comma-separated pointerField - a composite
+pointer is only supported for pointerSource = ITEM_FIELD."* A
+response-body/header pointer is always one value; only an item-derived
+keyset cursor can be composite.
+
+```java
+// WRONG — the number of @PaginationCursor parameters doesn't match
+// pointerField's comma-separated entry count.
+@Paginated(itemsField = "events", pointerSource = PaginationSignalSource.ITEM_FIELD,
+        pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId);
+```
+Fails validation: *"has pointerKind = VALUE with pointerSource != NONE,
+which needs 2 @PaginationCursor parameter(s) (matching pointerField's 2
+comma-separated entries) - found 1."* `pointerField = "id,createdAt"`
+promises two resent values; the method only supplies one.
+
+```java
+// WRONG — a @Body @PaginationCursor with an empty bodyField.
+Page<Order> searchOrders(@Body @PaginationCursor Map<String, Object> body);
+```
+Fails validation: *"has a @PaginationCursor stacked on @Body but bodyField
+is empty - set it to the JSON path inside the body to write the next-page
+value to."* Unlike the query/path/header carriers (where the
+`@QueryParam`/etc.'s own `value()` already names the field), a `@Body`
+carrier has no other way to say which JSON field the cursor overwrites.
+
+```java
+// WRONG — a @Body @PaginationCursor on the wrong declared type.
+Page<Order> searchOrders(@Body @PaginationCursor(bodyField = "search_after") Map<String, String> body);
+```
+Fails validation: *"has a @PaginationCursor stacked on @Body but the
+parameter's declared type is not Map<String,Object>."* Must be exactly
+`Map<String, Object>` — not `Map<String, String>`, not a POJO — since the
+page-fetch loop needs to write an arbitrary-typed value (the cursor is
+often a number or nested object) into it between fetches.
+
+```java
+// WRONG — a @PaginationCursor of an unsupported type.
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor Instant cursor);
+```
+Fails validation: *"has a @PaginationCursor parameter of type
+java.time.Instant - only String, int, and long are supported."* Convert
+to a `String`/`long` yourself (e.g. `Instant.toString()` or
+`.toEpochMilli()`) before declaring the parameter.
+
+```java
+// WRONG — a PaginationStrategy<T>'s type argument doesn't match the
+// method's own Page<T>/Stream<T>/Iterator<T> item type.
+Page<Order> listOrders(PaginationStrategy<Item> strategy);   // Page<Order> but PaginationStrategy<Item>
+```
+Fails validation: *"PaginationStrategy<Item> parameter doesn't match its
+Page<Order> return type..."* — the two type parameters have to agree,
+since `PaginationStrategy<T>`'s `ctx.items()` and `Page<T>`'s own items
+are the same decoded objects.
+
+</details>
 
 Testing a paginated method against `MockRestServer` usually means scripting
 a short, fixed sequence of pages rather than one canned response — see
@@ -1223,6 +2183,139 @@ SPI, shipped as its own `rest-in-peace-reactor` module rather than folded
 into `core` — see [Reactive (Project Reactor)](#reactive-project-reactor)
 below.
 
+**Writing your own `CallAdapterFactory`** — a complete, runnable example
+adapting a `404` into `Optional.empty()` instead of a thrown exception,
+following the exact pattern `rest-in-peace-reactor`'s own
+`MonoCallAdapterFactory` uses internally:
+
+```java
+public final class OptionalCallAdapterFactory implements CallAdapterFactory {
+
+    @Override
+    public Optional<CallAdapter<?>> get(Method method) {
+        if (method.getReturnType() != Optional.class) {
+            return Optional.empty();           // decline - not our return type
+        }
+        Type genericReturnType = method.getGenericReturnType();
+        if (!(genericReturnType instanceof ParameterizedType)) {
+            return Optional.empty();           // decline a raw Optional too - nothing to decode into
+        }
+        Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+        return Optional.of(new OptionalCallAdapter(innerType));
+    }
+
+    private static final class OptionalCallAdapter implements CallAdapter<Optional<Object>> {
+
+        private final Type responseBodyType;
+
+        private OptionalCallAdapter(Type responseBodyType) {
+            this.responseBodyType = responseBodyType;
+        }
+
+        @Override
+        public Type responseBodyType() {
+            return responseBodyType;           // what to decode a successful body into
+        }
+
+        @Override
+        public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+            try {
+                return Optional.ofNullable(delegate.join());
+            } catch (CompletionException e) {
+                // delegate.join() always wraps an exceptional completion in
+                // CompletionException, even for the already-unchecked
+                // RestInPeaceHttpException - unwrap it to inspect the real cause.
+                if (e.getCause() instanceof RestInPeaceHttpException
+                        && ((RestInPeaceHttpException) e.getCause()).getStatus() == 404) {
+                    return Optional.empty();
+                }
+                throw e;   // anything else propagates - only a 404 becomes "absent"
+            }
+        }
+    }
+}
+```
+
+```java
+RIP.addCallAdapterFactory(new OptionalCallAdapterFactory());   // once, at startup
+
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface UserApi {
+    @GET("/users/{id}")
+    Optional<User> findUser(@PathParam("id") String id);   // empty instead of throwing on 404
+}
+```
+
+```java
+Optional<User> user = userApi.findUser("does-not-exist");
+if (user.isPresent()) {
+    process(user.get());
+} else {
+    System.out.println("no such user");
+}
+```
+
+Note what this example deliberately does *not* do: `adapt(...)` blocks the
+calling thread on `delegate.join()`, because `Optional<T>` has no lazy
+subscription model the way `Mono<T>`/`Flux<T>` do - unlike
+`MonoCallAdapterFactory`'s own `adapt`, which wraps `delegate` in a `Mono`
+without ever blocking. A synchronous-looking adapted return type (plain
+`Optional<T>`, a hypothetical `Try<T>`, …) always costs a blocking call
+somewhere in `adapt()` itself; only an inherently async/lazy wrapper type
+can adapt without one.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a factory that tries to dispatch its own HTTP call instead of
+// transforming the CompletableFuture RIP already produced.
+@Override
+public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+    return Optional.ofNullable(Unirest.get(someUrl).asString().getBody());   // never do this
+}
+```
+Not a validation error — but it breaks every documented guarantee
+`CallAdapter` makes: the call is now dispatched twice (once by RIP's
+normal pipeline to produce `delegate`, once more here), bypassing
+`@Retry`/cache/circuit-breaker/bulkhead/interceptors entirely for the
+second one. `adapt` must only ever transform `delegate` — never issue a
+new request.
+
+```java
+// WRONG — claiming a method whose return type RIP already handles natively.
+@Override
+public Optional<CallAdapter<?>> get(Method method) {
+    if (method.getReturnType() == byte[].class) {
+        return Optional.of(myByteArrayAdapter);   // never actually consulted
+    }
+    return Optional.empty();
+}
+```
+`byte[]`/`File`/`CompletableFuture<T>`/`RipResponse<T>` are checked by
+`RequestExecutor.processRestRequest` *before* any registered
+`CallAdapterFactory` is ever consulted, both at dispatch time and in
+`ReflectiveRestClientValidator`'s matching validation order — a factory
+"claiming" one of these built-in shapes passes validation (its
+`responseBodyType()` is checked and looks fine) but then silently never
+runs at dispatch time, since the built-in branch always wins first. Only
+claim a return type RIP has no built-in support for.
+
+```java
+// WRONG — registering a factory after building a client that uses it.
+UserApi api = RIP.getClient(UserApi.class);   // validated NOW, before the factory exists
+RIP.addCallAdapterFactory(new OptionalCallAdapterFactory());
+```
+`RIP.getClient(...)` validates the interface (including resolving any
+`CallAdapter` a registered factory would provide) at the moment it's
+called — a factory registered afterward doesn't retroactively validate or
+fix a client already built. Always call `RIP.addCallAdapterFactory(...)`
+for every factory you need before the first `RIP.getClient(...)` call that
+depends on it.
+
+</details>
+
 ## Reactive (Project Reactor)
 
 The `rest-in-peace-reactor` module ships real `CallAdapterFactory`
@@ -1302,6 +2395,50 @@ explicitly:
 A raw `Mono` (no type argument) fails validation by name, the same as an
 unclaimed `Mono<T>` with no factory registered.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — returning Mono<T> without calling RestInPeaceReactor.register() first.
+@GET("/users/{id}")
+Mono<User> getUser(@PathParam("id") String id);
+```
+```java
+UserApi api = RIP.getClient(UserApi.class);   // no RestInPeaceReactor.register() call anywhere yet
+```
+Fails validation: *"returns reactor.core.publisher.Mono, which RIP has no
+built-in support for and no registered CallAdapterFactory claims. If this
+is a Mono<T>/Flux<T>, add the rest-in-peace-reactor dependency and call
+RestInPeaceReactor.register() ... before building this client."*
+`RestInPeaceReactor.register()` has to run — once, at startup — before
+*any* `RIP.getClient(...)` call for an interface that returns `Mono<T>`/
+`Flux<T>`, not merely before the method is actually invoked.
+
+```java
+// WRONG — expecting subscribing twice to make two separate HTTP calls.
+Mono<User> userMono = userApi.getUser("42");   // the HTTP call already happened HERE
+userMono.subscribe(this::process);              // observes the one call's result
+userMono.subscribe(this::processAgain);         // observes the SAME result again, no new call
+```
+Because dispatch is eager (see above), `getUser("42")` makes exactly one
+HTTP call the moment it's invoked — every subscriber to the returned
+`Mono` shares that same single outcome. If you need a fresh call per
+subscription, wrap it yourself: `Mono.defer(() -> userApi.getUser("42"))`.
+
+```java
+// Easy to miss: disposing a Mono cancels the underlying HTTP call, which
+// can race a response that's already arriving.
+Disposable d = userApi.getUser("42").subscribe(this::process);
+d.dispose();   // best-effort cancel - if the response had already fully
+               // arrived microseconds earlier, process(...) may still run
+```
+Cancellation races the network the same way any cancellation does — it's
+not a guarantee that `process(...)` never runs, only that RIP stops
+waiting for (and attempting to cancel) a call that's still genuinely in
+flight.
+
+</details>
+
 ### `Flux<T>`
 
 `rest-in-peace-reactor` also registers `Flux<T>` support, in two genuinely
@@ -1349,6 +2486,55 @@ interface OrderApi {
 Both flavors decline a raw `Flux` (no type argument). The plain flavor then
 falls through to the by-name validation error; a raw `@Paginated Flux` is
 rejected by pagination validation as an unsupported paginated return type.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — assuming flavor 1's Flux<T> is backpressure-aware the same way
+// flavor 2 is, just because it's also a Flux.
+@GET("/orders")
+Flux<Order> listOrders();   // flavor 1 - NOT @Paginated
+```
+```java
+orderApi.listOrders().take(1).subscribe(this::process);
+// Still fetches and decodes EVERY order in the response body up front -
+// take(1) only limits how many of the already-decoded items get emitted
+// downstream, it doesn't make the server send fewer.
+```
+Only the `@Paginated` flavor (flavor 2) fetches lazily, page by page, in
+response to actual downstream demand. Flavor 1 is sugar over an
+already-fully-decoded `List<Order>` — reach for flavor 2 (add `@Paginated`
+and a `@PaginationCursor` parameter) whenever the actual memory/network
+cost of fetching everything up front matters.
+
+```java
+// WRONG — expecting .cancel()/.dispose() on flavor 2 to abort an
+// in-flight page fetch as reliably as Mono<T>'s does.
+Disposable d = orderApi.fluxOrders(null).subscribe(this::process);
+d.dispose();   // best-effort - the worker thread is interrupted, but the
+               // underlying blocking HTTP call (Page<T>.next()) may not
+               // actually abort mid-request the way CompletableFuture#cancel(true) does for Mono<T>
+```
+Flavor 2's page fetches run via `Page<T>.next()` (a plain blocking call)
+on a background thread, not via a cancellable `CompletableFuture` the way
+`Mono<T>`'s single dispatch is — disposal stops *further* pages from being
+fetched, but a fetch already in flight when disposal happens isn't
+guaranteed to abort early.
+
+```java
+// WRONG — a @Paginated Flux<T> combined with a plain (non-@PaginationCursor)
+// resend of the cursor by hand.
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Flux<Order> fluxOrders(@QueryParam("cursor") String cursor);   // missing @PaginationCursor
+```
+Fails the same `@Paginated` validation a `Page<T>`/`Stream<T>` method
+would for the identical mistake — see the [Pagination](#pagination)
+section's own "Common mistakes" above. The `Flux<T>` return type doesn't
+exempt a method from any of `@Paginated`'s usual validation rules.
+
+</details>
 
 Every numbered chunk of the rollout plan has now landed — see
 [`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
@@ -1405,6 +2591,65 @@ thread instead of blocking the caller. Every attempt, including ones that
 get retried, is still reported to any registered interceptor's
 `afterResponse`, so a `LoggingInterceptor` or similar sees each individual
 attempt, not just the final outcome.
+
+**Every attribute combined, and a fixed-delay variant:**
+
+```java
+// Fixed 500ms delay between all 5 attempts - backoffMultiplier = 1.0.
+@GET("https://api.example.com/users/{id}")
+@Retry(times = 5, delayMillis = 500, backoffMultiplier = 1.0, retryOnStatus = { 429, 503 })
+User getUser(@PathParam("id") String id);
+
+// A single retry, no backoff math needed at all.
+@GET("https://api.example.com/users/{id}")
+@Retry(times = 2)
+User getUserOnce(@PathParam("id") String id);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — times = 0.
+@Retry(times = 0)
+User getUser(@PathParam("id") String id);
+```
+Fails validation: *"is annotated with @Retry but times must be at least
+1."* `times` is the *total* attempt count, including the first — `times =
+1` means "no retries, just the one attempt" (a valid, if unusual, way to
+say that explicitly); `0` would mean "never even try," which RIP refuses
+to accept as almost certainly a typo for `1`.
+
+```java
+// WRONG — jitterFactor out of range.
+@Retry(times = 3, jitterFactor = 1.5)
+```
+Fails validation: *"is annotated with @Retry but jitterFactor must be
+between 0.0 and 1.0 inclusive."* A factor above `1.0` could make a
+computed delay go negative; RIP rejects it rather than silently clamping.
+
+```java
+// Compiles fine, almost certainly wrong: retrying a non-idempotent POST
+// without idempotent = true.
+@POST("https://api.example.com/charges")
+@Retry(times = 3)
+String createCharge(@Body Charge charge);
+```
+No validation error — RIP has no way to know your endpoint isn't
+idempotent from its signature alone. But a timeout *after* the server
+already processed the charge, followed by a retry, can double-charge a
+customer. Set `idempotent = true` (see below) for any `POST`/`PATCH`
+you put `@Retry` on, unless you're certain the endpoint is naturally
+idempotent (e.g. an upsert keyed by a client-supplied id).
+
+```java
+// RetryConfig.builder() throws the same way, for the same reasons, at
+// build() time instead of RIP.getClient(...) validation time:
+RetryConfig.builder().times(0).build();      // IllegalArgumentException: "times must be at least 1."
+RetryConfig.builder().jitterFactor(2.0).build(); // IllegalArgumentException: "jitterFactor must be between 0.0 and 1.0 inclusive."
+```
+
+</details>
 
 ### Idempotency keys
 
@@ -1532,6 +2777,54 @@ being thrown, and is likewise never retried by an async `@Retry`. See
 [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
 for the full design and every default's reasoning.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+CircuitBreakerConfig.builder().slidingWindowSize(0).build();
+// IllegalArgumentException: "size must be at least 1."
+
+CircuitBreakerConfig.builder().minimumNumberOfCalls(0).build();
+// IllegalArgumentException: "minimumNumberOfCalls must be at least 1."
+
+CircuitBreakerConfig.builder().failureRateThreshold(0).build();
+CircuitBreakerConfig.builder().failureRateThreshold(101).build();
+// Both: IllegalArgumentException: "failureRateThreshold must be between 1 and 100 inclusive."
+
+CircuitBreakerConfig.builder().waitDurationInOpenState(Duration.ZERO).build();
+// IllegalArgumentException: "waitDurationInOpenState must be positive."
+
+CircuitBreakerConfig.builder().permittedCallsInHalfOpenState(0).build();
+// IllegalArgumentException: "permittedCallsInHalfOpenState must be at least 1."
+```
+
+```java
+// Easy to get backwards: minimumNumberOfCalls bigger than slidingWindowSize.
+CircuitBreakerConfig.builder()
+        .slidingWindowSize(5)
+        .minimumNumberOfCalls(10)   // can never be reached by a window of 5
+        .build();
+```
+Not rejected by validation (both values are independently valid), but the
+breaker can never evaluate a failure rate at all — the window never holds
+enough calls to reach `minimumNumberOfCalls`. Keep
+`minimumNumberOfCalls <= slidingWindowSize`.
+
+```java
+// WRONG — setting both a CircuitBreakerConfig and a CircuitBreakerProvider
+// expecting them to combine.
+RipClientConfig.builder()
+        .circuitBreaker(CircuitBreakerConfig.builder().build())
+        .circuitBreaker(myResilience4jAdapter)   // silently replaces the config above
+        .build();
+```
+Not an error — but only the *last* `circuitBreaker(...)` call takes
+effect, same as any other builder setter. If you meant to configure RIP's
+built-in breaker AND delegate to resilience4j, that's a contradiction:
+pick exactly one implementation per client.
+
+</details>
+
 ### Bulkhead
 
 A circuit breaker reacts to a downstream *failing*; a bulkhead reacts to
@@ -1606,6 +2899,45 @@ the same builder — whichever you call last wins. `bulkhead(BulkheadProvider)`
 follows the identical shape (`tryAcquirePermission()`/`onComplete()`). See
 each interface's own javadoc for the full reasoning.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+BulkheadConfig.builder().maxConcurrentCalls(0).build();
+// IllegalArgumentException: "maxConcurrentCalls must be at least 1."
+
+BulkheadConfig.builder().maxWaitDuration(Duration.ofMillis(-1)).build();
+// IllegalArgumentException: "maxWaitDuration must not be negative."
+```
+
+```java
+// Easy to misdiagnose: blaming the circuit breaker for a BulkheadFullException.
+try {
+    api.getUser("42");
+} catch (CircuitOpenException e) {
+    // never reached — a full bulkhead throws BulkheadFullException, a
+    // completely different exception type with a different meaning
+    // (too much concurrent volume, not a failure-rate trip).
+}
+```
+The two resilience layers throw distinct exception types precisely so you
+can tell "the downstream is failing" (`CircuitOpenException`) apart from
+"we're sending it too much at once" (`BulkheadFullException`) — catch
+both separately if your error handling needs to react differently to each.
+
+```java
+// Setting an unrealistically small bulkhead for the traffic the client
+// actually sees - not a validation error, but a common production
+// surprise: every call now contends for 1 permit.
+RipClientConfig.builder().bulkhead(BulkheadConfig.builder().maxConcurrentCalls(1).build()).build();
+```
+`maxConcurrentCalls(1)` makes every call to this client fully
+serialized — the second concurrent caller always waits (or fails, with no
+`maxWaitDuration`) no matter how fast the downstream actually responds.
+Size this from real observed concurrency, not a guess.
+
+</details>
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for
@@ -1630,6 +2962,63 @@ Precedence overall: a method's own `@Timeout`, then the interface's
 [`RipClientConfig`](#per-client-configuration-timeout-and-proxy)'s timeout,
 then the shared client's own configured default. A negative value other
 than `-1` fails validation.
+
+**Setting only one of the two, and an interface-level default:**
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+@Timeout(connectMillis = 2_000, readMillis = 5_000)   // default for every method below
+public interface ReportApi {
+
+    @GET("/reports/{id}")
+    Report getReport(@PathParam("id") String id);   // uses the interface default
+
+    @GET("/reports/export")
+    @Timeout(readMillis = 120_000)                   // overrides readMillis only; connectMillis still -1
+    String exportReport();                           // (falls through to RipClientConfig/client default)
+
+    @GET("/health")
+    @Timeout(connectMillis = 500, readMillis = 500)  // fail fast, ignore the interface default entirely
+    RipResponse<Void> healthCheck();
+}
+```
+
+A method's `@Timeout(readMillis = 120_000)` with `connectMillis` left
+unset does **not** inherit `connectMillis` from the interface-level
+`@Timeout` above it — "a method's own `@Timeout` is used in full instead"
+means the whole annotation, not a field-by-field merge. `connectMillis`
+falls through past the interface annotation straight to
+`RipClientConfig`/the client default.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a negative value other than the -1 sentinel.
+@Timeout(readMillis = -5000)
+```
+Fails validation: *"is annotated with @Timeout but readMillis must be -1
+(unset) or a non-negative number of milliseconds."* Same check applies to
+`connectMillis`. Use exactly `-1` (or omit the attribute - it defaults to
+`-1`) to mean "unset," never another negative number.
+
+```java
+// Easy to misread as "inherits the rest": expecting field-level merging
+// between a method's @Timeout and its interface's.
+@RestClient
+@Timeout(connectMillis = 2_000, readMillis = 5_000)
+public interface ReportApi {
+    @GET("/reports/export")
+    @Timeout(readMillis = 120_000)   // connectMillis is -1 here, NOT 2_000
+    String exportReport();
+}
+```
+If you need both a specific `connectMillis` and a specific `readMillis` on
+one method, set both explicitly on that method's own `@Timeout` — don't
+rely on the interface-level one to fill the gap.
+
+</details>
 
 ## Per-client configuration: timeout and proxy
 
@@ -1737,6 +3126,82 @@ the default `Cache` implementation — zero new dependency. Implement `Cache`
 yourself (`get`/`put`/`evict`/`clear`) to back it with Redis, Caffeine, or
 anything else.
 
+**A `Vary`-sensitive endpoint, to see what a header mismatch actually does:**
+
+```java
+@GET("https://api.example.com/items")
+Item getItem(@HeaderParam("Accept-Language") String language);
+```
+
+```java
+// Response: Cache-Control: max-age=60
+//           Vary: Accept-Language
+api.getItem("en-US");   // network call; cached, tagged with Accept-Language: en-US
+api.getItem("en-US");   // served from cache - same Vary value
+api.getItem("fr-FR");   // different Vary value -> treated as a cache miss, network call again
+api.getItem("en-US");   // ALSO a network call now - the fr-FR response replaced the en-US entry
+```
+
+The cache holds exactly **one** entry per `(HTTP method, URL)` — there's no
+per-`Vary`-value multi-entry store. `Vary` only decides whether *that one*
+entry is usable for the *current* request (its own `matchesVary` check
+compares the entry's originally-captured header values against the
+request about to be sent); a mismatch is treated as a miss, and the
+response that comes back **overwrites** the existing entry rather than
+being stored alongside it. An endpoint whose clients alternate between
+several `Vary`-distinguished values (several locales, say) will see a
+real cache hit rate near zero — every alternation evicts the previous
+variant. `Vary` here guards against ever *serving the wrong variant*, not
+against *refetching an already-seen one* — those are different
+guarantees, and RIP only makes the first one.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// Not a bug, but the single most common "why isn't this cached" surprise:
+// a response with NO Cache-Control/ETag/Last-Modified at all.
+@GET("https://api.example.com/items")
+Item getItem();
+// Response headers: Content-Type: application/json   (nothing else)
+```
+Never cached, by design — RIP never invents freshness the server didn't
+declare. If you control the server, add `Cache-Control: max-age=N`; if you
+don't, `negativeCacheTtlMillis`-style unconditional caching isn't
+available for a 2xx response (only for a confirmed `404` — see
+[Negative caching](#negative-caching)) precisely because assuming a
+*successful* response is safe to reuse without the server's own say-so is
+a much easier way to serve stale/wrong data by accident.
+
+```java
+// WRONG — assuming a POST/PUT/DELETE participates in caching at all.
+@POST("https://api.example.com/items")
+Item create(@Body Item item);
+```
+Only `GET` responses are ever cached — a `POST`/`PUT`/`PATCH`/`DELETE`'s
+response is never stored and never served from cache, whatever headers it
+returns. This is intentional (caching a mutation's response is a different,
+unsafe-by-default problem - see `@NoCache` below for the opposite
+direction) but worth stating explicitly since nothing stops you from
+attaching `Cache-Control` headers to a write endpoint's response
+server-side and expecting RIP to honor them the way it does for `GET`.
+
+```java
+// Attaching a Cache but forgetting it's per-CLIENT, not per-interface.
+UserApi cachedApi = RIP.getClient(UserApi.class, RipClientConfig.builder().cache(new InMemoryCache()).build());
+UserApi uncachedApi = RIP.getClient(UserApi.class);   // no RipClientConfig at all
+
+cachedApi.getUser("42");     // may be served from cache on a later call
+uncachedApi.getUser("42");   // always a real network call - a completely separate client instance
+```
+Two `RIP.getClient(...)` calls for the same interface, one with a `Cache`
+and one without, are two unrelated client instances with their own
+independent caches (or none) — caching is never shared automatically
+across every call to the same interface class unless they're all made
+through the exact same configured client.
+
+</details>
+
 ### Stale-while-revalidate
 
 A stale entry normally blocks the caller on a synchronous revalidation
@@ -1790,6 +3255,36 @@ Or as a shared default for every client without its own, via
 `Cache` configured at all, and is skipped the same way as ordinary caching
 by `@NoCache`.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a non-positive TTL.
+RipClientConfig.builder().negativeCacheTtlMillis(0).build();
+```
+Throws `IllegalArgumentException`: *"ttlMillis must be positive."* `0`
+would mean "cache for zero milliseconds," which is indistinguishable from
+not caching at all — pass a real positive duration or don't call this
+setter.
+
+```java
+// Easy mistake: expecting negative caching to apply to every error status.
+RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .negativeCacheTtlMillis(60_000)
+        .build());
+
+api.getUser("rate-limited");   // a 429, NOT a 404 - never negatively cached
+```
+`negativeCacheTtlMillis` only ever applies to a confirmed `404` — a `429`,
+`500`, or any other non-2xx status is never cached under this mechanism
+(or any other), since those aren't a confirmed "this doesn't exist," just
+a transient failure. A client-side cache can't tell "rate limited right
+now" from "might succeed on the very next call," so RIP never assumes it's
+safe to serve a stale error for anything but the one unambiguous case.
+
+</details>
+
 ### `@NoCache`
 
 Opts a single method out of caching even when its client has one
@@ -1805,6 +3300,39 @@ Price getLivePrice(@PathParam("symbol") String symbol);
 
 Response caching is scoped to `String`/POJO `GET` responses for now — not
 `byte[]`/`File` downloads.
+
+**On the interface vs. one specific call site** — `@NoCache` only has a
+method-level form, deliberately: an interface-wide "never cache anything
+from this client" is already just "don't attach a `Cache` to it" (no
+annotation needed):
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface CatalogApi {
+
+    @GET("/items/{id}")
+    Item getItem(@PathParam("id") String id);   // cacheable, if this client has a Cache
+
+    @GET("/prices/{symbol}")
+    @NoCache
+    Price getLivePrice(@PathParam("symbol") String symbol);   // always live, even on a cached client
+}
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// Not actually a mistake, just a frequent question: does @NoCache need a
+// Cache configured to do anything?
+UserApi api = RIP.getClient(UserApi.class);   // no .cache(...) at all
+```
+`@NoCache` is a no-op on a client with no `Cache` attached in the first
+place — there's nothing to opt out of. It only matters on a client that
+*does* have one, for the one method that shouldn't participate.
+
+</details>
 
 ### Time-based and manual eviction
 
@@ -1837,6 +3365,32 @@ entries a given write should invalidate is a heuristic that's wrong in
 either direction (URLs that look related but aren't, and unrelated-looking
 URLs that actually are). `cache.clear()` drops every entry unconditionally.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a non-positive max-age for InMemoryCache's eviction constructor.
+new InMemoryCache(0);
+```
+Throws `IllegalArgumentException`: *"maxEntryAgeMillis must be positive."*
+Use the no-arg `InMemoryCache()` constructor if you don't want age-based
+eviction at all, rather than trying to express "never evict" as `0`.
+
+```java
+// WRONG — building the eviction key from a URL that doesn't match what
+// was actually cached (missing query string, wrong casing, trailing slash).
+cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42/"));  // trailing slash
+// ...but the cached entry was stored under the URL with no trailing slash.
+```
+`Cache.key(...)` does no normalization — it's a literal
+`"<method> <url>"` string. If the URL you evict doesn't match the exact
+URL that was requested (including query string, when
+`cacheKeyIncludesQueryString` is on), the eviction silently misses and the
+stale entry stays cached. Build the eviction key from the same literal URL
+your `@RestClient` method actually calls, not a hand-typed guess at it.
+
+</details>
+
 ### Query string in the cache key
 
 By default the cache key includes the query string, so `/items?page=1` and
@@ -1861,6 +3415,43 @@ effect on a client with no `Cache` configured at all, and (per the
 per-client/shared-default precedence every other `RipClientConfig` setting
 follows) a client's own `cacheKeyIncludesQueryString(...)` wins over
 `RIP.setCacheKeyIncludesQueryString(...)`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — turning this off for an endpoint where the query string DOES
+// change the response.
+RIP.getClient(SearchApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .cacheKeyIncludesQueryString(false)
+        .build());
+
+api.search("laptops");   // cached under just the path
+api.search("phones");    // served the CACHED "laptops" RESPONSE instead of a fresh search
+```
+This is the sharpest footgun in the whole caching feature: turning off
+query-string-awareness for a client whose query params genuinely change
+the response silently serves the wrong data with no error, no exception,
+and no log line — it looks exactly like a correct cache hit. Only disable
+this for a client where you've confirmed every cached endpoint's query
+params are either absent or provably irrelevant to the response body
+(pure tracking/analytics params the server ignores).
+
+```java
+// Misreading scope: expecting this to be settable per-METHOD like @NoCache.
+@GET("/items")
+@CacheKeyIncludesQueryString(false)   // doesn't exist — no such annotation
+List<Item> listItems();
+```
+There's no method-level override for this setting — it's per-client
+(`RipClientConfig`) or global (`RIP.setCacheKeyIncludesQueryString`) only.
+If different methods on the same interface need different behavior here,
+split them across two differently-configured clients for the same
+interface, or avoid relying on query-string-insensitive caching at all for
+the ones that need the query string to matter.
+
+</details>
 
 ## Interceptors
 
@@ -1907,6 +3498,92 @@ else's work (e.g. a timer measuring total call overhead); register it last if
 it needs to sit closest to the actual network call (e.g. a timer measuring
 only network latency).
 
+**Aborting a call from `beforeRequest`**, and ordering two interceptors
+deliberately:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {   // registered FIRST: outermost
+    @Override
+    public void beforeRequest(RequestContext context) {
+        if (!context.getUrl().startsWith("https://")) {
+            throw new IllegalStateException("Refusing a non-HTTPS call: " + context.getUrl());
+        }
+    }
+});
+
+RIP.addInterceptor(new RequestInterceptor() {   // registered SECOND: innermost
+    @Override
+    public void beforeRequest(RequestContext context) {
+        context.addHeader("Authorization", "Bearer " + currentToken());
+    }
+});
+// beforeRequest order: HTTPS check, then auth header.
+// afterResponse order (if the call proceeds): reversed - auth interceptor's
+// afterResponse runs first, the HTTPS-check interceptor's runs last.
+```
+
+A `beforeRequest` throwing propagates straight out of the `@RestClient`
+method call as whatever exception type it threw — it is **not** wrapped in
+`RestInPeaceHttpException` (no HTTP response ever happened), and no later
+interceptor's `beforeRequest`/`afterResponse` runs for that call at all.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — expecting context.setBody(...) to change what's sent.
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void beforeRequest(RequestContext context) {
+        context.setBody(redact(context.getBody()));   // has no effect on the wire
+    }
+});
+```
+`RequestContext` is built for *observation* by the time interceptors run —
+the actual `HttpRequest` has already been constructed. `setBody(...)`
+updates what `RequestContext` itself reports (to a *later* interceptor
+reading `getBody()` in the same chain, or to your own code inspecting it),
+not the bytes Unirest actually sends. There's no interceptor-level request
+body rewriting in RIP today - if you need to mutate the actual body sent
+over the wire, that has to happen before the call (e.g. in your own code
+building the `@Body` argument), not from an interceptor.
+
+```java
+// WRONG — assuming afterResponse runs for a transport failure.
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void afterResponse(RequestContext context, int status, Object body) {
+        metrics.recordLatency(status);   // never called for a connection refused/timeout
+    }
+});
+```
+A transport-level failure (connection refused, DNS failure, a timeout with
+no response at all) never produces a response, so `afterResponse` is never
+invoked for it — only `beforeRequest` ran. If you need to observe *every*
+attempt including transport failures, wrap the call site in your own
+try/catch instead of relying on `afterResponse` alone.
+
+```java
+// Subtle: mutating interceptor-local state without thread-safety, for a
+// client used from multiple threads (the common case - RIP clients are
+// meant to be shared/reused, not built per-call).
+RIP.addInterceptor(new RequestInterceptor() {
+    private int callCount = 0;   // NOT thread-safe
+
+    @Override
+    public void beforeRequest(RequestContext context) {
+        callCount++;   // a plain int increment races under concurrent calls
+    }
+});
+```
+An interceptor instance is shared across every concurrent call through
+every client it's registered on — plain mutable fields need the same
+thread-safety discipline as any other shared object (an `AtomicInteger`
+here, for instance). RIP doesn't serialize calls through the interceptor
+chain for you.
+
+</details>
+
 ### Short-circuiting a request
 
 `shortCircuit` skips the network call entirely, handing back a synthetic
@@ -1942,6 +3619,56 @@ cached if it carries cacheable headers, or "retried" if its status matches
 `@Retry#retryOnStatus()` (which just re-invokes `shortCircuit` again
 instead of a real network call — harmless, if a little redundant, since no
 network round trip happens either way).
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — returning null from shortCircuit expecting it to short-circuit
+// with an empty response.
+@Override
+public ShortCircuitResponse shortCircuit(RequestContext context) {
+    return null;   // means "let the real call proceed," not "short-circuit with nothing"
+}
+```
+`null` is the explicit "don't short-circuit, make the real call" signal —
+there's no way to short-circuit with an intentionally empty/absent
+response via `null`. Use `ShortCircuitResponse.status(204, "")` (or
+whatever status/body combination you actually want) instead.
+
+```java
+// Easy to get backwards: assuming the FIRST registered interceptor's
+// shortCircuit always wins, matching beforeRequest's own ordering.
+RIP.addInterceptor(interceptorA);   // registered first
+RIP.addInterceptor(interceptorB);   // registered second
+```
+`shortCircuit` is consulted in the same FIFO registration order as
+`beforeRequest` (interceptorA's `shortCircuit` is checked before
+interceptorB's) — that part matches intuition. What's easy to forget is
+that it only runs *after every* interceptor's `beforeRequest` has already
+executed, so a later interceptor's `beforeRequest` side effects (adding a
+header, say) have already happened even if an earlier interceptor ends up
+short-circuiting the call entirely — those side effects are simply never
+observed on the wire, but they did run.
+
+```java
+// WRONG — expecting a short-circuited call to skip @Retry entirely.
+@GET("https://api.example.com/items")
+@Retry(times = 3, retryOnStatus = { 503 })
+String getItems();
+```
+```java
+@Override
+public ShortCircuitResponse shortCircuit(RequestContext context) {
+    return ShortCircuitResponse.status(503, "simulated outage");
+}
+```
+This retries 3 times, each one re-invoking `shortCircuit` (not a real
+network call) - useful for testing retry behavior without a server, but
+easy to mistake for a single short-circuited response if you forgot the
+method also carries `@Retry`.
+
+</details>
 
 ### Reproducing a call with `curl`
 
@@ -2091,6 +3818,68 @@ itself a nested object or array. The request body comes from
 its own `toString()` happening to render matching `"fieldName": value`
 pairs.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — using HeaderInterceptor's plain-value constructor for a token
+// that expires/rotates.
+RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + currentToken()));
+```
+`currentToken()` is called exactly once, at registration time, to build
+this fixed `String` — every later call sends that same original token,
+even long after it's expired. Use the `Supplier<String>` constructor
+(`new HeaderInterceptor("Authorization", () -> currentToken())`) whenever
+the value can legitimately change between calls — `currentToken()` is then
+re-evaluated on every single request.
+
+```java
+// WRONG — assuming RedactingLoggingInterceptor replaces LoggingInterceptor's
+// own non-body logging, and registering both expecting no duplication.
+RIP.addInterceptor(new LoggingInterceptor());
+RIP.addInterceptor(new RedactingLoggingInterceptor());
+```
+Not an error, but produces two separate method/URL/status/duration log
+lines per call (one from each interceptor) plus `RedactingLoggingInterceptor`'s
+own body lines — `RedactingLoggingInterceptor` is a superset, not a
+complement. Register one or the other, not both, unless duplicate
+non-body log lines are actually what you want.
+
+```java
+// Trusting RedactingLoggingInterceptor's masking as a real security
+// boundary for a deeply nested or array-shaped secret.
+Set<String> sensitiveFields = Collections.singleton("token");
+RIP.addInterceptor(new RedactingLoggingInterceptor(sensitiveFields, logger::info));
+
+// Body: {"user": {"credentials": {"token": "abc123"}}}
+// Masked correctly - matches "token": "..." regardless of nesting depth.
+
+// Body: {"tokens": ["abc123", "def456"]}
+// NOT masked - the regex expects "fieldName": value, not "fieldName": [...]
+```
+The masking regex matches a scalar `"fieldName": value` shape - an array
+or deeply-structured value under a sensitive key isn't guaranteed to
+match. Don't rely on this for genuinely high-value secrets in a body shape
+you haven't specifically verified gets masked — prefer never logging that
+field's container at all (keep it out of what gets passed to
+`afterResponse`-driven logging in the first place) over trusting a
+regex to catch every shape.
+
+```java
+// WRONG — assuming MetricsInterceptor's sample count equals the number of
+// logical calls made, for a client with @Retry configured.
+RIP.addInterceptor(new MetricsInterceptor(metricsSink));
+```
+```java
+// One logical call that retries twice before succeeding (503, 503, 200)
+// reports THREE samples to the sink, not one - each attempt gets its own
+// afterResponse notification. Aggregate by correlation ID (pair it with
+// CorrelationIdInterceptor) if you need "per logical call" metrics rather
+// than "per HTTP attempt."
+```
+
+</details>
+
 ## Compile-time proxy generation
 
 Every `@RestClient` interface works out of the box via a reflective JDK
@@ -2159,6 +3948,76 @@ for a standalone project showing exactly what a downstream consumer sees —
 including a GraalVM native-image build and run, exercised by CI's
 `native-image-smoke-test` job on every push.
 
+**Mixed coverage on one interface**, to see the per-method fallback in
+practice:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface UserApi {
+
+    @GET("/users/{id}")
+    User getUser(@PathParam("id") String id);        // real generated implementation
+
+    @GET("/users")
+    List<User> listUsers();                           // falls back to the reflective proxy (List<T>)
+
+    @POST("/users")
+    CompletableFuture<User> createUser(@Body User u);  // real generated implementation (CompletableFuture<T> is covered)
+}
+```
+
+Calling any of the three methods above looks identical from the outside —
+`RIP.getClient(UserApi.class)` returns one object either way, and nothing
+in calling code reveals which methods are generated and which fell back.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — hand-editing or depending on the generated <Interface>_RipImpl
+// class's name/shape directly.
+UserApi_RipImpl impl = new UserApi_RipImpl();   // don't do this
+```
+The generated class is an implementation detail `RIP.getClient(...)` looks
+up for you — its name, package, and constructor shape aren't a committed
+public API and can change between releases. Always go through
+`RIP.getClient(UserApi.class)`, never construct or reference the generated
+class directly.
+
+```java
+// A nested or private @RestClient interface still falls back entirely -
+// not a validation error, just silently slower (reflective) than expected.
+public class Container {
+    @RestClient
+    private interface InnerApi {   // nested AND private
+        @GET("/ping")
+        String ping();
+    }
+}
+```
+A nested/private interface declaration is a separate precondition that
+disqualifies codegen for the *whole* interface, regardless of how simple
+its methods are — `RestClientProcessor` can't generate a top-level
+`.java` file implementing a type it has no public, top-level access path
+to. This still works correctly via the reflective proxy; it just never
+gets the compile-time fast path. Declare `@RestClient` interfaces as
+top-level (or nested-and-`public`, in a `public` enclosing class) if the
+GraalVM/cold-start benefits matter for that interface.
+
+```java
+// Expecting codegen to kick in without annotation processing enabled -
+// e.g. a Gradle build that explicitly disabled it, or an IDE run
+// configuration that skips the annotation processing step.
+```
+If your build doesn't run annotation processing at all for this
+dependency, every `@RestClient` interface silently falls back to the
+reflective proxy in its entirety — correctly, just without the
+compile-time benefits. There's no error or warning for this, since the
+reflective path is a fully supported fallback, not a degraded mode.
+
+</details>
+
 ## OpenAPI to `@RestClient` generator
 
 The opposite direction: instead of hand-writing an interface and letting
@@ -2200,6 +4059,50 @@ Also runnable from the command line — `java -cp ... com.shri.restinpeace.codeg
 <specFile> <outputDirectory> <packageName> <interfaceName>` — for wiring
 into a build via `exec-maven-plugin`/a Gradle `JavaExec` task, or just
 running it once by hand and committing the result.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — pointing it at a YAML spec.
+OpenApiClientGenerator.generate(new File("openapi.yaml"), outDir, pkg, name);
+```
+Only JSON specs are supported — convert a YAML OpenAPI document to JSON
+first (most OpenAPI tooling, including Swagger Editor, can export either
+format) before pointing the generator at it.
+
+```java
+// Expecting a generated interface to need no further edits for a
+// non-trivial API.
+```
+Every parameter and body is generated as `String` — this is a skeleton,
+not a full schema-to-POJO generator. Treat the generated file as a
+*starting point* that gets the tedious, error-prone part right (every
+path, HTTP method, and parameter name/location) — narrowing specific
+parameter types and replacing `@Body String` with a real POJO is an
+expected, normal hand-edit afterward, not a sign something went wrong.
+
+```java
+// Expecting a header/cookie parameter from the spec to show up on the
+// generated interface.
+```
+A `parameters` entry with `in: header` or `in: cookie` is silently
+skipped — these are modeled as a per-call/interceptor concern in RIP
+(`@HeaderParam`, a `HeaderInterceptor`), not baked into the generated
+method signature. Add them to the generated interface by hand, or attach
+them via a global/per-client interceptor instead.
+
+```java
+// Expecting a non-JSON request body (e.g. multipart/form-data,
+// application/x-www-form-urlencoded) to generate as @Multipart/@FormUrlEncoded.
+```
+Any `requestBody` at all becomes one `@Body String` parameter regardless
+of its declared `content` media type — the generator doesn't inspect
+whether a spec's body is actually JSON-shaped. Convert the generated
+`@Body String` parameter to `@Multipart`/`@FormUrlEncoded` by hand for an
+operation whose real body isn't JSON.
+
+</details>
 
 ## Testing with `MockRestServer`
 
@@ -2267,6 +4170,152 @@ exposes exactly what was actually sent — path, query params, headers, body
 `getFormFields()` for a decoded `@FormUrlEncoded` one) — for asserting on
 what your code actually sent, not just what came back.
 
+**Every response shape, matching on more than just the path, and
+simulating transport-level failure:**
+
+```java
+server.on(HTTPMethod.GET, "/items", MockResponse.noContent());                     // 204, empty body
+server.on(HTTPMethod.GET, "/items/1", MockResponse.notModified());                 // 304
+server.on(HTTPMethod.GET, "/items/2", MockResponse.status(404, "not found"));       // arbitrary status + body
+server.on(HTTPMethod.GET, "/items/3", MockResponse.status(200, pngBytes));          // binary body
+server.on(HTTPMethod.GET, "/items/4", MockResponse.ok("{...}").delay(300));         // simulate a slow server
+server.on(HTTPMethod.GET, "/items/5", MockResponse.connectionFailure());            // simulate "no response at all"
+
+// Exact query-param match - a request missing status=active, or with a
+// different value, falls through to no match (or a different registered
+// route) instead of this one.
+Map<String, String> activeOnly = Collections.singletonMap("status", "active");
+server.on(HTTPMethod.GET, "/orders", activeOnly, MockResponse.json(activeOrders));
+
+// A fully general predicate - header value, body content, or any
+// combination - for a constraint requiredQueryParams can't express.
+server.on(HTTPMethod.GET, "/orders", request -> "v2".equals(request.getHeader("X-Api-Version")),
+        MockResponse.json(v2Orders));
+```
+
+`MockResponse.connectionFailure()` closes the connection before sending
+anything, proving RIP's "no response at all" transport-failure path
+(unconditionally retried by `@Retry`, regardless of `retryOnStatus`) —
+distinct from `.status(503, ...)`, which *is* a real HTTP response and
+only retried if `503` is in `retryOnStatus`. `.delay(millis)` is the only
+way to prove a `@Timeout`/`RipClientConfig` read timeout actually fires,
+rather than assuming it does because the annotation is present.
+
+**`enqueue(...)` vs. `enqueueFor(...)`** — easy to reach for the wrong
+one: `enqueue(...)` only ever answers a path with *no* route registered
+via `on(...)` at all (route matching always happens first and
+unconditionally shadows the plain queue for a path that has one);
+`enqueueFor(...)` scripts a one-time response *ahead of* an existing
+route's own sticky response, for a route that also needs a final steady-
+state answer:
+
+```java
+// WRONG tool for this job - /orders already has a sticky route below, so
+// this queued response is NEVER consulted; every request keeps hitting
+// the sticky one instead.
+server.on(HTTPMethod.GET, "/orders", MockResponse.json(allOrders));
+server.enqueue(MockResponse.status(503, ""));   // dead - on(...) already claims every GET /orders
+
+// RIGHT tool: enqueueFor targets the already-registered route directly.
+server.enqueueFor(HTTPMethod.GET, "/orders", MockResponse.status(503, ""));
+server.getOrder("...");   // first call gets the 503, second gets allOrders
+```
+
+`RecordedRequest.getReceivedAt()` times each request as it's captured —
+the only way to directly verify `@Retry`'s backoff actually *grows*
+between attempts, rather than just counting that N attempts happened:
+
+```java
+server.onFlaky(HTTPMethod.GET, "/orders/{id}", 2, MockResponse.status(503, ""), MockResponse.json(order));
+orderApi.getOrder("42");
+
+List<RecordedRequest> attempts = server.getRecordedRequests();
+Duration firstGap = Duration.between(attempts.get(0).getReceivedAt(), attempts.get(1).getReceivedAt());
+Duration secondGap = Duration.between(attempts.get(1).getReceivedAt(), attempts.get(2).getReceivedAt());
+assertTrue(secondGap.compareTo(firstGap) > 0);   // backoffMultiplier actually grew the wait
+```
+
+`getUnhitRoutes()` catches a route left registered after the code path
+that used to exercise it was removed — otherwise silent dead test setup:
+
+```java
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
+server.on(HTTPMethod.GET, "/orders/{id}/invoice", MockResponse.json(invoice));   // never actually called below
+
+orderApi.getOrder("42");
+
+assertEquals(Collections.emptyList(), server.getUnhitRoutes());   // fails - "/invoice" route was never hit
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — forgetting server.close(), leaking a real bound socket per test.
+@Test
+void getOrder_works() {
+    MockRestServer server = MockRestServer.start();
+    // ... test body, no server.close() anywhere ...
+}
+```
+Each `MockRestServer.start()` binds a real local port — forgetting to
+close it leaks a socket for the lifetime of the JVM. Use
+`MockRestServerExtension` (below) or a `@BeforeEach`/`@AfterEach` pair so
+`close()` always runs, even if the test body throws.
+
+```java
+// WRONG — re-registering a @RestClient proxy for every test instead of
+// reusing one bound to the shared server's base URL.
+MockRestServer server = MockRestServer.start();
+// ... 10 tests, each calling RIP.getClient(OrderApi.class, server.baseUrl()) again ...
+```
+Not incorrect, just wasteful — `server.baseUrl()` is stable for the
+server's whole lifetime, so the client only needs building once (a
+`@BeforeEach`-built field, or captured once per test class with
+`MockRestServerExtension`'s class-scoped server). Rebuilding it per test
+re-validates the interface every time for no benefit.
+
+```java
+// Both of these pass - countOf compiles WHATEVER string you give it into
+// its own matching pattern (treating {name} as a wildcard, same as a
+// registered route) and checks it against each recorded request's actual
+// path - it has no idea what route(s) are registered at all.
+server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
+api.getOrder("42");                                             // actual request path: /orders/42
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}"));  // wildcard pattern matches
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/42"));    // literal pattern ALSO matches
+```
+Don't confuse this with `getUnhitRoutes()` (no argument at all) — that
+one returns *registered routes themselves* that never matched any
+request, as `"METHOD pathTemplate"` strings exactly as registered; it
+tells you about routes, not about recorded requests, which is why it
+takes no path argument to match against at all.
+
+```java
+// WRONG — assuming two on(...) calls for the same (method, pathTemplate,
+// requiredQueryParams) key both stay registered.
+server.on(HTTPMethod.GET, "/orders", MockResponse.json(ordersV1));
+server.on(HTTPMethod.GET, "/orders", MockResponse.json(ordersV2));   // REPLACES the first, same position
+```
+`on(...)` upserts by key — the second call replaces the first route's
+response in place rather than appending a second, permanently-shadowed
+one. This is usually what you want (re-registering mid-test to change
+behavior), but surprising if you expected the *first* registration to win
+the way it did in older RIP versions (or the way a `Predicate`-based
+matcher route still behaves, below).
+
+```java
+// A matcher-based route (the Predicate overload) does NOT upsert, unlike
+// the plain/requiredQueryParams overloads - two Predicates can't be
+// compared for equality, so re-registering always appends.
+server.on(HTTPMethod.GET, "/orders", req -> true, MockResponse.json(a));
+server.on(HTTPMethod.GET, "/orders", req -> true, MockResponse.json(b));
+// Both routes exist - the FIRST one registered (a) still wins, since
+// routes match in registration order and this one was never replaced.
+```
+
+</details>
+
 ### JUnit 5 extension
 
 `MockRestServerExtension` removes the `start()`/`close()` and
@@ -2308,6 +4357,56 @@ class OrderApiTest {
     }
 }
 ```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — calling reportUnhitRoutes() on the plain @ExtendWith style.
+@ExtendWith(MockRestServerExtension.class)
+class OrderApiTest {
+    // No way to reach the extension instance here to call reportUnhitRoutes() -
+    // JUnit constructs it itself via the no-arg constructor.
+}
+```
+`reportUnhitRoutes()` only works with the `@RegisterExtension` static-field
+style shown above, since that's the only style where your own code
+constructs the extension (and can therefore call a method on it) before
+JUnit uses it. `@ExtendWith(MockRestServerExtension.class)` works fine for
+everything else — just not this one opt-in diagnostic.
+
+```java
+// WRONG — assuming routes/recorded requests carry over between test
+// methods in the same class.
+@ExtendWith(MockRestServerExtension.class)
+class OrderApiTest {
+    @Test
+    void first(MockRestServer server) {
+        server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
+    }
+
+    @Test
+    void second(MockRestServer server) {
+        // The route registered in first() is GONE here - the extension
+        // calls reset() before every test, clearing routes, queued
+        // responses, and recorded requests alike. Register what this
+        // test needs again, from scratch.
+    }
+}
+```
+
+```java
+// WRONG — relying on shared-server reuse under parallel test execution
+// within the same class.
+```
+One `MockRestServer` per test class (not per test method) isn't safe under
+JUnit 5's parallel-within-a-class execution — concurrent tests would
+register routes and read recorded requests against the same shared server
+at the same time. Fine for the default sequential-within-a-class
+execution; disable parallelism for a test class using this extension if
+your build enables it project-wide.
+
+</details>
 
 ## Integrating with your project
 
@@ -2402,6 +4501,85 @@ public class RipClientsConfig {
 Global interceptors (`RIP.addInterceptor(...)`) are a natural fit for an
 `ApplicationRunner`/`@PostConstruct` hook that runs once at startup, before
 any client is used.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @RestClient interfaces exist on the classpath but
+// @EnableRestInPeaceClients is missing from any configuration class.
+@SpringBootApplication
+public class Application { ... }   // no @EnableRestInPeaceClients anywhere
+```
+No beans are registered at all — `UserApi` (and every other `@RestClient`
+interface) simply isn't available for injection, surfacing as Spring's
+own `NoSuchBeanDefinitionException` wherever you try to `@Autowired`/
+constructor-inject it. `@EnableRestInPeaceClients` is what triggers the
+classpath scan; nothing happens automatically just because the starter
+dependency is on the classpath.
+
+```java
+// WRONG — baseUrlProperty names a property that doesn't exist in any
+// active profile/application.yml.
+@RestClient(baseUrlProperty = "user-api.base-url")
+public interface UserApi { ... }
+```
+```yaml
+# application.yml - "user-api.base-url" was never set
+spring:
+  application:
+    name: my-app
+```
+Fails Spring Boot startup entirely with `IllegalStateException: Required
+key 'user-api.base-url' not found` — the whole application context fails
+to refresh, not just this one bean. The property name in `baseUrlProperty`
+has to match an actual configured property exactly (`user-api.base-url`,
+not `userApi.baseUrl` — kebab-case, matching Spring's own relaxed binding
+for `.yml` keys).
+
+```java
+// Ambiguous bean wiring: two ObjectMapper beans in the context, neither
+// qualified for a specific client, expecting one to "just work" for all clients.
+@Bean
+public ObjectMapper strictMapper() { ... }
+
+@Bean
+public ObjectMapper lenientMapper() { ... }
+```
+With more than one unqualified `ObjectMapper`/`Cache` bean in the context,
+the starter's own bean-resolution logic (`findQualifiedOrSharedBean`) finds
+none of them usable as the shared default — it only ever falls back to an
+unqualified bean when there's *exactly one* candidate; with two or more it
+resolves to nothing, silently leaving every client without its own
+qualifier unconfigured for that bean type. **`@Primary` has no effect
+here** — this isn't ordinary Spring dependency injection the starter is
+doing, it's its own qualifier-reading logic that never consults
+`@Primary` at all. Qualify each one to the specific client it belongs to
+via `@Qualifier("<kebab-case-bean-name>")`, matching the exact qualifier
+convention the starter resolves clients under, and leave at most one
+genuinely unqualified if it's meant to be every other client's shared
+default. `RequestInterceptor` beans have no shared-default fallback at
+all, qualified or not — an unqualified interceptor bean is simply never
+wired into any client by this mechanism; every interceptor meant for a
+specific client needs its own `@Qualifier`, and a global one still goes
+through `RIP.addInterceptor(...)` directly (see
+[Global interceptors](#interceptors) above), not an unqualified `@Bean`.
+
+```java
+// WRONG — assuming @AutoConfigureMockRestServer also starts the server
+// for you per-test, the way MockRestServerExtension does.
+@SpringBootTest
+@AutoConfigureMockRestServer
+class UserApiIntegrationTest {
+    @Autowired UserApi userApi;
+    // Forgetting to register any routes at all before calling userApi
+    // methods still fails loudly (MockRestServer's own unmatched-request
+    // error) - @AutoConfigureMockRestServer only redirects clients to a
+    // MockRestServer instance; it doesn't pre-populate any responses.
+}
+```
+
+</details>
 
 ### Plain Java, CLI tools, and scripts
 
