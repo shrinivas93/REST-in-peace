@@ -3188,6 +3188,92 @@ else's work (e.g. a timer measuring total call overhead); register it last if
 it needs to sit closest to the actual network call (e.g. a timer measuring
 only network latency).
 
+**Aborting a call from `beforeRequest`**, and ordering two interceptors
+deliberately:
+
+```java
+RIP.addInterceptor(new RequestInterceptor() {   // registered FIRST: outermost
+    @Override
+    public void beforeRequest(RequestContext context) {
+        if (!context.getUrl().startsWith("https://")) {
+            throw new IllegalStateException("Refusing a non-HTTPS call: " + context.getUrl());
+        }
+    }
+});
+
+RIP.addInterceptor(new RequestInterceptor() {   // registered SECOND: innermost
+    @Override
+    public void beforeRequest(RequestContext context) {
+        context.addHeader("Authorization", "Bearer " + currentToken());
+    }
+});
+// beforeRequest order: HTTPS check, then auth header.
+// afterResponse order (if the call proceeds): reversed - auth interceptor's
+// afterResponse runs first, the HTTPS-check interceptor's runs last.
+```
+
+A `beforeRequest` throwing propagates straight out of the `@RestClient`
+method call as whatever exception type it threw — it is **not** wrapped in
+`RestInPeaceHttpException` (no HTTP response ever happened), and no later
+interceptor's `beforeRequest`/`afterResponse` runs for that call at all.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — expecting context.setBody(...) to change what's sent.
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void beforeRequest(RequestContext context) {
+        context.setBody(redact(context.getBody()));   // has no effect on the wire
+    }
+});
+```
+`RequestContext` is built for *observation* by the time interceptors run —
+the actual `HttpRequest` has already been constructed. `setBody(...)`
+updates what `RequestContext` itself reports (to a *later* interceptor
+reading `getBody()` in the same chain, or to your own code inspecting it),
+not the bytes Unirest actually sends. There's no interceptor-level request
+body rewriting in RIP today - if you need to mutate the actual body sent
+over the wire, that has to happen before the call (e.g. in your own code
+building the `@Body` argument), not from an interceptor.
+
+```java
+// WRONG — assuming afterResponse runs for a transport failure.
+RIP.addInterceptor(new RequestInterceptor() {
+    @Override
+    public void afterResponse(RequestContext context, int status, Object body) {
+        metrics.recordLatency(status);   // never called for a connection refused/timeout
+    }
+});
+```
+A transport-level failure (connection refused, DNS failure, a timeout with
+no response at all) never produces a response, so `afterResponse` is never
+invoked for it — only `beforeRequest` ran. If you need to observe *every*
+attempt including transport failures, wrap the call site in your own
+try/catch instead of relying on `afterResponse` alone.
+
+```java
+// Subtle: mutating interceptor-local state without thread-safety, for a
+// client used from multiple threads (the common case - RIP clients are
+// meant to be shared/reused, not built per-call).
+RIP.addInterceptor(new RequestInterceptor() {
+    private int callCount = 0;   // NOT thread-safe
+
+    @Override
+    public void beforeRequest(RequestContext context) {
+        callCount++;   // a plain int increment races under concurrent calls
+    }
+});
+```
+An interceptor instance is shared across every concurrent call through
+every client it's registered on — plain mutable fields need the same
+thread-safety discipline as any other shared object (an `AtomicInteger`
+here, for instance). RIP doesn't serialize calls through the interceptor
+chain for you.
+
+</details>
+
 ### Short-circuiting a request
 
 `shortCircuit` skips the network call entirely, handing back a synthetic
@@ -3223,6 +3309,56 @@ cached if it carries cacheable headers, or "retried" if its status matches
 `@Retry#retryOnStatus()` (which just re-invokes `shortCircuit` again
 instead of a real network call — harmless, if a little redundant, since no
 network round trip happens either way).
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — returning null from shortCircuit expecting it to short-circuit
+// with an empty response.
+@Override
+public ShortCircuitResponse shortCircuit(RequestContext context) {
+    return null;   // means "let the real call proceed," not "short-circuit with nothing"
+}
+```
+`null` is the explicit "don't short-circuit, make the real call" signal —
+there's no way to short-circuit with an intentionally empty/absent
+response via `null`. Use `ShortCircuitResponse.status(204, "")` (or
+whatever status/body combination you actually want) instead.
+
+```java
+// Easy to get backwards: assuming the FIRST registered interceptor's
+// shortCircuit always wins, matching beforeRequest's own ordering.
+RIP.addInterceptor(interceptorA);   // registered first
+RIP.addInterceptor(interceptorB);   // registered second
+```
+`shortCircuit` is consulted in the same FIFO registration order as
+`beforeRequest` (interceptorA's `shortCircuit` is checked before
+interceptorB's) — that part matches intuition. What's easy to forget is
+that it only runs *after every* interceptor's `beforeRequest` has already
+executed, so a later interceptor's `beforeRequest` side effects (adding a
+header, say) have already happened even if an earlier interceptor ends up
+short-circuiting the call entirely — those side effects are simply never
+observed on the wire, but they did run.
+
+```java
+// WRONG — expecting a short-circuited call to skip @Retry entirely.
+@GET("https://api.example.com/items")
+@Retry(times = 3, retryOnStatus = { 503 })
+String getItems();
+```
+```java
+@Override
+public ShortCircuitResponse shortCircuit(RequestContext context) {
+    return ShortCircuitResponse.status(503, "simulated outage");
+}
+```
+This retries 3 times, each one re-invoking `shortCircuit` (not a real
+network call) - useful for testing retry behavior without a server, but
+easy to mistake for a single short-circuited response if you forgot the
+method also carries `@Retry`.
+
+</details>
 
 ### Reproducing a call with `curl`
 
@@ -3371,6 +3507,68 @@ itself a nested object or array. The request body comes from
 `String.valueOf(...)` first, so masking a decoded POJO response depends on
 its own `toString()` happening to render matching `"fieldName": value`
 pairs.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — using HeaderInterceptor's plain-value constructor for a token
+// that expires/rotates.
+RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + currentToken()));
+```
+`currentToken()` is called exactly once, at registration time, to build
+this fixed `String` — every later call sends that same original token,
+even long after it's expired. Use the `Supplier<String>` constructor
+(`new HeaderInterceptor("Authorization", () -> currentToken())`) whenever
+the value can legitimately change between calls — `currentToken()` is then
+re-evaluated on every single request.
+
+```java
+// WRONG — assuming RedactingLoggingInterceptor replaces LoggingInterceptor's
+// own non-body logging, and registering both expecting no duplication.
+RIP.addInterceptor(new LoggingInterceptor());
+RIP.addInterceptor(new RedactingLoggingInterceptor());
+```
+Not an error, but produces two separate method/URL/status/duration log
+lines per call (one from each interceptor) plus `RedactingLoggingInterceptor`'s
+own body lines — `RedactingLoggingInterceptor` is a superset, not a
+complement. Register one or the other, not both, unless duplicate
+non-body log lines are actually what you want.
+
+```java
+// Trusting RedactingLoggingInterceptor's masking as a real security
+// boundary for a deeply nested or array-shaped secret.
+Set<String> sensitiveFields = Collections.singleton("token");
+RIP.addInterceptor(new RedactingLoggingInterceptor(sensitiveFields, logger::info));
+
+// Body: {"user": {"credentials": {"token": "abc123"}}}
+// Masked correctly - matches "token": "..." regardless of nesting depth.
+
+// Body: {"tokens": ["abc123", "def456"]}
+// NOT masked - the regex expects "fieldName": value, not "fieldName": [...]
+```
+The masking regex matches a scalar `"fieldName": value` shape - an array
+or deeply-structured value under a sensitive key isn't guaranteed to
+match. Don't rely on this for genuinely high-value secrets in a body shape
+you haven't specifically verified gets masked — prefer never logging that
+field's container at all (keep it out of what gets passed to
+`afterResponse`-driven logging in the first place) over trusting a
+regex to catch every shape.
+
+```java
+// WRONG — assuming MetricsInterceptor's sample count equals the number of
+// logical calls made, for a client with @Retry configured.
+RIP.addInterceptor(new MetricsInterceptor(metricsSink));
+```
+```java
+// One logical call that retries twice before succeeding (503, 503, 200)
+// reports THREE samples to the sink, not one - each attempt gets its own
+// afterResponse notification. Aggregate by correlation ID (pair it with
+// CorrelationIdInterceptor) if you need "per logical call" metrics rather
+// than "per HTTP attempt."
+```
+
+</details>
 
 ## Compile-time proxy generation
 
