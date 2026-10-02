@@ -1026,25 +1026,30 @@ A `null` `@Body` argument sends the request with **no body at all** —
 both the reflective (`RequestExecutor`) and generated (`RestClientProcessor`)
 dispatch paths skip applying a body entirely when the argument is `null`,
 rather than serializing it as the JSON literal `null`. If an endpoint
-distinguishes "no body sent" from a body containing `"field": null`, two
-things have to be true to produce the second case, not just one:
+distinguishes "no body sent" from a body containing `"field": null`, the
+simplest way to produce the second case is a raw `@Body String` — sent
+as-is with no `ObjectMapper` involved at all (see the plain `@Body`
+example above), so `createRaw("{\"field\": null}")` sends exactly that:
 
-1. The object itself must actually carry that field with a `null` value —
-   an empty `Map` (or a POJO with the field simply left unset) serializes
-   as `{}`, not `{"field": null}`. Use
-   `Collections.singletonMap("field", null)` (or equivalent) so the key is
-   genuinely present.
-2. The configured [`ObjectMapper`](#json-objectmapper) has to actually be
-   willing to emit a `null` value at all. The zero-config default,
-   `kong.unirest.JsonObjectMapper`, builds its `Gson` instance internally
-   with no `serializeNulls()` call and no way to inject a custom `Gson`
-   into it — Gson's own default (omit a `null`-valued field from the
-   output entirely) applies unconditionally, so `{"field": null}` is
-   **not achievable with the default mapper at all**, no matter what you
-   pass as `@Body`. Getting it requires implementing your own
-   `kong.unirest.ObjectMapper` (`readValue`/`writeValue`) wrapping a
-   `Gson` built via `new GsonBuilder().serializeNulls().create()`, then
-   registering it with `RIP.setObjectMapper(...)`.
+```java
+api.createRaw("{\"field\": null}");   // sent verbatim, bypassing the ObjectMapper entirely
+```
+
+Auto-serializing a `Map`/POJO into that same shape is less
+straightforward than it looks, for two independent reasons: an empty
+`Map` (or a POJO with the field simply left unset) serializes as `{}`,
+not `{"field": null}` — the field has to actually be present with a
+`null` value (`Collections.singletonMap("field", null)`, say) — and even
+then, the zero-config default [`ObjectMapper`](#json-objectmapper)
+(`kong.unirest.JsonObjectMapper`) builds its `Gson` instance internally
+with no `serializeNulls()` call and no way to inject a custom `Gson` into
+it, so Gson's own default (omit a `null`-valued field entirely) still
+applies regardless of what the `Map`/POJO itself contains. Reach for the
+raw-`String` approach above unless you have a specific reason to keep the
+request POJO-typed — producing `{"field": null}` through auto-
+serialization requires implementing your own `kong.unirest.ObjectMapper`
+wrapping a `Gson` built via `new GsonBuilder().serializeNulls().create()`
+and registering it with `RIP.setObjectMapper(...)`.
 
 <details>
 <summary><strong>❌ Common mistakes</strong></summary>
