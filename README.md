@@ -2888,6 +2888,7 @@ RipClientConfig config = RipClientConfig.builder()
             }
         })
         .build();
+UserApi api = RIP.getClient(UserApi.class, config);
 ```
 
 Passing the status code to `onSuccess` (rather than RIP guessing at its

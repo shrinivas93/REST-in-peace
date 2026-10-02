@@ -31,6 +31,7 @@ package com.shri.restinpeace;
  *             }
  *         })
  *         .build();
+ * UserApi api = RIP.getClient(UserApi.class, config);
  * </pre>
  *
  * <p>

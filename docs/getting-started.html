@@ -1304,7 +1304,8 @@ RipClientConfig config = RipClientConfig.builder().circuitBreaker(new CircuitBre
         else r4jBreaker.onSuccess(durationNanos, TimeUnit.NANOSECONDS);
     }
     public void onError(long durationNanos, Throwable t) { r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t); }
-}).build();</code></pre>
+}).build();
+UserApi api = RIP.getClient(UserApi.class, config);</code></pre>
           </div>
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
