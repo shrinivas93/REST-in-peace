@@ -1026,9 +1026,25 @@ A `null` `@Body` argument sends the request with **no body at all** —
 both the reflective (`RequestExecutor`) and generated (`RestClientProcessor`)
 dispatch paths skip applying a body entirely when the argument is `null`,
 rather than serializing it as the JSON literal `null`. If an endpoint
-distinguishes "no body sent" from a body containing `"field": null`, pass
-an actual object with that field set to `null` (or an empty `Map`/POJO) —
-never rely on a `null` `@Body` argument to produce either.
+distinguishes "no body sent" from a body containing `"field": null`, two
+things have to be true to produce the second case, not just one:
+
+1. The object itself must actually carry that field with a `null` value —
+   an empty `Map` (or a POJO with the field simply left unset) serializes
+   as `{}`, not `{"field": null}`. Use
+   `Collections.singletonMap("field", null)` (or equivalent) so the key is
+   genuinely present.
+2. The configured [`ObjectMapper`](#json-objectmapper) has to actually be
+   willing to emit a `null` value at all. The zero-config default,
+   `kong.unirest.JsonObjectMapper`, builds its `Gson` instance internally
+   with no `serializeNulls()` call and no way to inject a custom `Gson`
+   into it — Gson's own default (omit a `null`-valued field from the
+   output entirely) applies unconditionally, so `{"field": null}` is
+   **not achievable with the default mapper at all**, no matter what you
+   pass as `@Body`. Getting it requires implementing your own
+   `kong.unirest.ObjectMapper` (`readValue`/`writeValue`) wrapping a
+   `Gson` built via `new GsonBuilder().serializeNulls().create()`, then
+   registering it with `RIP.setObjectMapper(...)`.
 
 <details>
 <summary><strong>❌ Common mistakes</strong></summary>
