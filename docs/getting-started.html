@@ -462,7 +462,7 @@ String search(@HeaderParam(value = "Authorization", required = true) String toke
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">calling a required param with null</span></div>
-            <pre><code class="language-java">api.search(null, 1, null);</code></pre>
+            <pre><code class="language-java">api.search(null, 1);</code></pre>
             <p class="mistake-why">Throws <code>RestInPeaceException: "Missing required value for param 'q'."</code> — <code>required = true</code> is enforced on every call, not just checked once at validation time.</p>
           </div>
         </div>
@@ -485,7 +485,7 @@ User getUser(@PathParam("id") String id, @HeaderMap Map<String, String> extraHea
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">two @QueryMap parameters on one method</span></div>
-            <pre><code class="language-java">String search(@QueryMap Map<String, Object> a, @QueryMap Map<String, Object> b);</code></pre>
+            <pre><code class="language-java">String search(@QueryMap Map&lt;String, Object&gt; a, @QueryMap Map&lt;String, Object&gt; b);</code></pre>
             <p class="mistake-why">Fails validation: <em>"has more than one parameter annotated with @QueryMap."</em> Merge into one <code>Map</code> before calling instead.</p>
           </div>
         </div>
@@ -728,7 +728,7 @@ User user = response.getBody();</code></pre>
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">RipResponse&lt;File&gt;</span></div>
-            <pre><code class="language-java">RipResponse<File> downloadReport(@PathParam("id") String id);</code></pre>
+            <pre><code class="language-java">RipResponse&lt;File&gt; downloadReport(@PathParam("id") String id);</code></pre>
             <p class="mistake-why">Fails validation: <em>"returns RipResponse&lt;File&gt;, which is not supported - use a plain File return type with @Destination instead."</em> <code>RipResponse&lt;byte[]&gt;</code> works fine if you need both the bytes and the headers.</p>
           </div>
         </div>
@@ -767,13 +767,13 @@ userApi.getUserAsync("42").thenAccept(user -> System.out.println(user.name));</c
         <div class="snippets">
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">The SPI</span></div>
-            <pre><code class="language-java">public interface CallAdapter<T> {
+            <pre><code class="language-java">public interface CallAdapter&lt;T&gt; {
     Type responseBodyType();                       // what to decode the response body into
-    T adapt(CompletableFuture<Object> delegate);    // wraps the call RIP already dispatched
+    T adapt(CompletableFuture&lt;Object&gt; delegate);    // wraps the call RIP already dispatched
 }
 
 public interface CallAdapterFactory {
-    Optional<CallAdapter<?>> get(Method method);    // recognize a method's return type, or decline
+    Optional&lt;CallAdapter&lt;?&gt;&gt; get(Method method);    // recognize a method's return type, or decline
 }</code></pre>
           </div>
           <div class="snippet java">
@@ -781,14 +781,14 @@ public interface CallAdapterFactory {
               <span class="snippet-caption">a 404 becomes Optional.empty() instead of a thrown exception</span></div>
             <pre><code class="language-java">public final class OptionalCallAdapterFactory implements CallAdapterFactory {
     @Override
-    public Optional<CallAdapter<?>> get(Method method) {
+    public Optional&lt;CallAdapter&lt;?&gt;&gt; get(Method method) {
         if (method.getReturnType() != Optional.class) return Optional.empty();
         Type genericReturnType = method.getGenericReturnType();
         if (!(genericReturnType instanceof ParameterizedType)) return Optional.empty();
         Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
-        return Optional.of(new CallAdapter<Optional<Object>>() {
+        return Optional.of(new CallAdapter&lt;Optional&lt;Object&gt;&gt;() {
             public Type responseBodyType() { return innerType; }
-            public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+            public Optional&lt;Object&gt; adapt(CompletableFuture&lt;Object&gt; delegate) {
                 try {
                     return Optional.ofNullable(delegate.join());
                 } catch (CompletionException e) {
@@ -806,12 +806,12 @@ public interface CallAdapterFactory {
 RIP.addCallAdapterFactory(new OptionalCallAdapterFactory());   // once, at startup
 
 @GET("/users/{id}")
-Optional<User> findUser(@PathParam("id") String id);</code></pre>
+Optional&lt;User&gt; findUser(@PathParam("id") String id);</code></pre>
           </div>
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">claiming a return type RIP already handles</span></div>
-            <pre><code class="language-java">public Optional<CallAdapter<?>> get(Method method) {
+            <pre><code class="language-java">public Optional&lt;CallAdapter&lt;?&gt;&gt; get(Method method) {
     if (method.getReturnType() == byte[].class) {
         return Optional.of(myByteArrayAdapter);   // never actually consulted
     }
@@ -822,7 +822,7 @@ Optional<User> findUser(@PathParam("id") String id);</code></pre>
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">dispatching a second HTTP call from inside adapt()</span></div>
-            <pre><code class="language-java">public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+            <pre><code class="language-java">public Optional&lt;Object&gt; adapt(CompletableFuture&lt;Object&gt; delegate) {
     return Optional.ofNullable(Unirest.get(someUrl).asString().getBody());   // never do this
 }</code></pre>
             <p class="mistake-why">Bypasses <code>@Retry</code>/cache/circuit-breaker/bulkhead/interceptors entirely for the second call. <code>adapt</code> must only ever transform <code>delegate</code> — never issue a new request.</p>
@@ -896,7 +896,7 @@ meta.getHeader("ETag");</code></pre>
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">Page&lt;T&gt; with no @Paginated and no PaginationStrategy&lt;T&gt;</span></div>
             <pre><code class="language-java">@GET("/orders")
-Page<Order> listOrders();   // missing @Paginated</code></pre>
+Page&lt;Order&gt; listOrders();   // missing @Paginated</code></pre>
             <p class="mistake-why">Fails validation: <em>"returns Page&lt;T&gt; but is not annotated with @Paginated and has no PaginationStrategy&lt;T&gt; parameter."</em> <code>Page&lt;T&gt;</code> alone doesn't tell RIP how to find the next page.</p>
           </div>
         </div>
@@ -929,9 +929,9 @@ while (it.hasNext()) {
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">@Paginated combined with @Url</span></div>
-            <pre><code class="language-java">@GET
+            <pre><code class="language-java">@GET   // no @BaseUrl needed - a @Url parameter bypasses that check entirely
 @Paginated(itemsField = "orders", pointerField = "next_cursor")
-Page<Order> listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+Page&lt;Order&gt; listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
             <p class="mistake-why">Fails validation: <em>"is annotated with both @Paginated and @Url - remove one or the other."</em></p>
           </div>
         </div>
@@ -993,7 +993,7 @@ Page<Order> page = orderApi.searchOrders(body);
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">empty bodyField</span></div>
-            <pre><code class="language-java">Page<Order> searchOrders(@Body @PaginationCursor Map<String, Object> body);   // bodyField not set</code></pre>
+            <pre><code class="language-java">Page&lt;Order&gt; searchOrders(@Body @PaginationCursor Map&lt;String, Object&gt; body);   // bodyField not set</code></pre>
             <p class="mistake-why">Fails validation: <em>"has a @PaginationCursor stacked on @Body but bodyField is empty - set it to the JSON path inside the body to write the next-page value to."</em></p>
           </div>
         </div>
@@ -1022,7 +1022,7 @@ Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
               <span class="snippet-caption">cursor-parameter count doesn't match pointerField's entries</span></div>
             <pre><code class="language-java">@Paginated(itemsField = "events", pointerSource = PaginationSignalSource.ITEM_FIELD,
         pointerField = "id,createdAt")   // 2 entries
-Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId);   // only 1 @PaginationCursor</code></pre>
+Page&lt;Event&gt; listEvents(@QueryParam("lastId") @PaginationCursor String lastId);   // only 1 @PaginationCursor</code></pre>
             <p class="mistake-why">Fails validation: <em>"needs 2 @PaginationCursor parameter(s) (matching pointerField's 2 comma-separated entries) - found 1."</em></p>
           </div>
         </div>
@@ -1044,7 +1044,7 @@ Page<Repo> listRepos();</code></pre>
               <span class="snippet-caption">FULL_URL with a @PaginationCursor parameter too</span></div>
             <pre><code class="language-java">@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
         pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
-Page<Repo> listRepos(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+Page&lt;Repo&gt; listRepos(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
             <p class="mistake-why">Fails validation: <em>"has pointerKind = FULL_URL but also has a @PaginationCursor parameter - a full URL is followed as-is, with nothing to inject."</em></p>
           </div>
         </div>
@@ -1118,8 +1118,8 @@ Page<Order> page = api.listOrders("active", strategy);</code></pre>
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
               <span class="snippet-caption">@Paginated AND a PaginationStrategy&lt;T&gt; on one method</span></div>
             <pre><code class="language-java">@Paginated(itemsField = "orders", pointerField = "next_cursor")
-Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor,
-        PaginationStrategy<Order> strategy);</code></pre>
+Page&lt;Order&gt; listOrders(@QueryParam("cursor") @PaginationCursor String cursor,
+        PaginationStrategy&lt;Order&gt; strategy);</code></pre>
             <p class="mistake-why">Fails validation: <em>"is annotated with @Paginated and also has a PaginationStrategy&lt;T&gt; parameter - use one or the other."</em> Declarative and programmatic pagination are mutually exclusive.</p>
           </div>
         </div>

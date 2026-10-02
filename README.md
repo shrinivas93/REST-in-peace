@@ -865,10 +865,10 @@ String search(@QueryParam("q") String query,
 ```java
 Map<String, Object> filters = new LinkedHashMap<>();
 filters.put("category", "electronics");
-filters.put("tag", List.of("sale", "new"));   // repeats: &tag=sale&tag=new
-filters.put("inStock", null);                  // skipped entirely
+filters.put("tag", Arrays.asList("sale", "new"));   // repeats: &tag=sale&tag=new
+filters.put("inStock", null);                        // skipped entirely
 
-api.search("laptop", "tenant-42", filters, Map.of("X-Debug", "true"));
+api.search("laptop", "tenant-42", filters, Collections.singletonMap("X-Debug", "true"));
 ```
 
 <details>
@@ -924,21 +924,42 @@ List<Item> listItems(@HeaderParam("X-Api-Version") String overrideVersion);
 // listItems("2")    -> sends X-Api-Version: 2         (the per-call value wins)
 ```
 
-Interface-level `@Headers` on `@RestClient` itself applies to every method
-on the interface, same precedence rules:
+`@Headers` is method-only (`@Target(ElementType.METHOD)`) — there's no
+interface-level form the way `@BaseUrl`/`@Retry`/`@Timeout` have one.
+Repeat it on each method that needs the same fixed headers, or reach for a
+global/per-client `HeaderInterceptor`/custom `RequestInterceptor` (see
+[Interceptors](#interceptors)) when the same fixed set genuinely belongs
+to every method on an interface:
 
 ```java
 @RestClient
 @BaseUrl("https://api.example.com")
-@Headers({ "Accept: application/json", "X-Client: rest-in-peace" })
 public interface ItemApi {
     @GET("/items")
-    List<Item> listItems();   // always sends both headers
+    @Headers({ "Accept: application/json", "X-Client: rest-in-peace" })
+    List<Item> listItems();
+
+    @GET("/items/{id}")
+    @Headers({ "Accept: application/json", "X-Client: rest-in-peace" })
+    Item getItem(@PathParam("id") String id);
 }
 ```
 
 <details>
 <summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Headers on the interface itself, expecting it to apply to
+// every method the way @BaseUrl/@Retry/@Timeout do.
+@RestClient
+@Headers({ "Accept: application/json" })
+public interface ItemApi { ... }
+```
+Does not compile — `@Headers` is `@Target(ElementType.METHOD)` only,
+so placing it on a type (an interface) is a Java compilation error, not a
+RIP validation error. Put it on each method instead, or use a
+`HeaderInterceptor`/custom interceptor for a value that's genuinely
+constant across an entire client.
 
 ```java
 // WRONG — missing the ':' separator entirely.
@@ -1001,11 +1022,13 @@ Item patch(@PathParam("id") String id, @Body Map<String, Object> partialFields);
 BatchResult createMany(@Body List<Item> items);   // a generic collection as the BODY, not the return type
 ```
 
-A `null` `@Body` argument is sent as a JSON `null` body (via the same
-`ObjectMapper` every other body goes through), not an empty/missing one —
-useful for an endpoint that genuinely distinguishes "no body" from
-`"field": null`; check your server's own handling if that distinction
-matters.
+A `null` `@Body` argument sends the request with **no body at all** —
+both the reflective (`RequestExecutor`) and generated (`RestClientProcessor`)
+dispatch paths skip applying a body entirely when the argument is `null`,
+rather than serializing it as the JSON literal `null`. If an endpoint
+distinguishes "no body sent" from a body containing `"field": null`, pass
+an actual object with that field set to `null` (or an empty `Map`/POJO) —
+never rely on a `null` `@Body` argument to produce either.
 
 <details>
 <summary><strong>❌ Common mistakes</strong></summary>
@@ -1807,9 +1830,12 @@ mechanisms has to be present to say *how* to find the next page.
 
 ```java
 // WRONG — @Paginated combined with @Url.
-@GET
-@Paginated(itemsField = "orders", pointerField = "next_cursor")
-Page<Order> listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);
+@RestClient
+interface OrderApi {
+    @GET   // no @BaseUrl needed here - a @Url parameter bypasses it entirely
+    @Paginated(itemsField = "orders", pointerField = "next_cursor")
+    Page<Order> listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);
+}
 ```
 Fails validation: *"is annotated with both @Paginated and @Url - remove
 one or the other."*
@@ -1858,7 +1884,12 @@ template left for a cursor value to be substituted into.
 
 ```java
 // WRONG — a @PaginationCursor stacked on something other than
-// @QueryParam/@PathParam/@HeaderParam/@Body.
+// @QueryParam/@PathParam/@HeaderParam/@Body. (@Paginated itself must be
+// present and otherwise valid for this specific check to be the one that
+// fires - without it, validation stops earlier at "not annotated with
+// @Paginated" instead, per the first example in this section.)
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
 Page<Order> listOrders(@PaginationCursor String cursor);
 ```
 Fails validation: *"has a @PaginationCursor parameter that must be
@@ -2180,7 +2211,11 @@ public interface UserApi {
 
 ```java
 Optional<User> user = userApi.findUser("does-not-exist");
-user.ifPresentOrElse(this::process, () -> System.out.println("no such user"));
+if (user.isPresent()) {
+    process(user.get());
+} else {
+    System.out.println("no such user");
+}
 ```
 
 Note what this example deliberately does *not* do: `adapt(...)` blocks the
@@ -2528,6 +2563,7 @@ attempt, not just the final outcome.
 User getUser(@PathParam("id") String id);
 
 // A single retry, no backoff math needed at all.
+@GET("https://api.example.com/users/{id}")
 @Retry(times = 2)
 User getUserOnce(@PathParam("id") String id);
 ```
@@ -3052,7 +3088,7 @@ the default `Cache` implementation — zero new dependency. Implement `Cache`
 yourself (`get`/`put`/`evict`/`clear`) to back it with Redis, Caffeine, or
 anything else.
 
-**A `Vary`-sensitive endpoint, to see cache-key splitting in action:**
+**A `Vary`-sensitive endpoint, to see what a header mismatch actually does:**
 
 ```java
 @GET("https://api.example.com/items")
@@ -3062,10 +3098,24 @@ Item getItem(@HeaderParam("Accept-Language") String language);
 ```java
 // Response: Cache-Control: max-age=60
 //           Vary: Accept-Language
-api.getItem("en-US");   // network call, cached under (url, Accept-Language: en-US)
-api.getItem("en-US");   // served from cache
-api.getItem("fr-FR");   // different Vary value -> network call again, cached separately
+api.getItem("en-US");   // network call; cached, tagged with Accept-Language: en-US
+api.getItem("en-US");   // served from cache - same Vary value
+api.getItem("fr-FR");   // different Vary value -> treated as a cache miss, network call again
+api.getItem("en-US");   // ALSO a network call now - the fr-FR response replaced the en-US entry
 ```
+
+The cache holds exactly **one** entry per `(HTTP method, URL)` — there's no
+per-`Vary`-value multi-entry store. `Vary` only decides whether *that one*
+entry is usable for the *current* request (its own `matchesVary` check
+compares the entry's originally-captured header values against the
+request about to be sent); a mismatch is treated as a miss, and the
+response that comes back **overwrites** the existing entry rather than
+being stored alongside it. An endpoint whose clients alternate between
+several `Vary`-distinguished values (several locales, say) will see a
+real cache hit rate near zero — every alternation evicts the previous
+variant. `Vary` here guards against ever *serving the wrong variant*, not
+against *refetching an already-seen one* — those are different
+guarantees, and RIP only makes the first one.
 
 <details>
 <summary><strong>❌ Common mistakes</strong></summary>
@@ -4188,17 +4238,20 @@ server's whole lifetime, so the client only needs building once (a
 re-validates the interface every time for no benefit.
 
 ```java
-// WRONG — expecting a path TEMPLATE mismatch with the actual recorded
-// path to still match in countOf/getUnhitRoutes.
+// Both of these pass - countOf compiles WHATEVER string you give it into
+// its own matching pattern (treating {name} as a wildcard, same as a
+// registered route) and checks it against each recorded request's actual
+// path - it has no idea what route(s) are registered at all.
 server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.json(order));
-api.getOrder("42");                                            // actual request path: /orders/42
-assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/42"));  // WRONG - pass the TEMPLATE, not a resolved path
+api.getOrder("42");                                             // actual request path: /orders/42
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/{id}"));  // wildcard pattern matches
+assertEquals(1, server.countOf(HTTPMethod.GET, "/orders/42"));    // literal pattern ALSO matches
 ```
-`countOf`/`getUnhitRoutes` match against the same `{name}`-templated
-string you registered the route with (`"/orders/{id}"`), not a specific
-resolved path — passing a literal resolved path here always reports zero
-matches, since it's compared against the stored route template, not
-re-matched against recorded requests' actual paths.
+Don't confuse this with `getUnhitRoutes()` (no argument at all) — that
+one returns *registered routes themselves* that never matched any
+request, as `"METHOD pathTemplate"` strings exactly as registered; it
+tells you about routes, not about recorded requests, which is why it
+takes no path argument to match against at all.
 
 ```java
 // WRONG — assuming two on(...) calls for the same (method, pathTemplate,
@@ -4455,14 +4508,24 @@ public ObjectMapper strictMapper() { ... }
 @Bean
 public ObjectMapper lenientMapper() { ... }
 ```
-With more than one unqualified `ObjectMapper` bean (or `Cache`/
-`RequestInterceptor`) in the context, Spring's own ambiguous-dependency
-resolution applies — wiring becomes unpredictable rather than "the first
-one defined." Qualify each one to the specific client it belongs to via
-`@Qualifier("<kebab-case-bean-name>")`, matching the exact qualifier
-convention the starter resolves clients under, or mark exactly one
-`@Primary` if it's genuinely meant to be the shared default for every
-client without its own.
+With more than one unqualified `ObjectMapper`/`Cache` bean in the context,
+the starter's own bean-resolution logic (`findQualifiedOrSharedBean`) finds
+none of them usable as the shared default — it only ever falls back to an
+unqualified bean when there's *exactly one* candidate; with two or more it
+resolves to nothing, silently leaving every client without its own
+qualifier unconfigured for that bean type. **`@Primary` has no effect
+here** — this isn't ordinary Spring dependency injection the starter is
+doing, it's its own qualifier-reading logic that never consults
+`@Primary` at all. Qualify each one to the specific client it belongs to
+via `@Qualifier("<kebab-case-bean-name>")`, matching the exact qualifier
+convention the starter resolves clients under, and leave at most one
+genuinely unqualified if it's meant to be every other client's shared
+default. `RequestInterceptor` beans have no shared-default fallback at
+all, qualified or not — an unqualified interceptor bean is simply never
+wired into any client by this mechanism; every interceptor meant for a
+specific client needs its own `@Qualifier`, and a global one still goes
+through `RIP.addInterceptor(...)` directly (see
+[Global interceptors](#interceptors) above), not an unqualified `@Bean`.
 
 ```java
 // WRONG — assuming @AutoConfigureMockRestServer also starts the server
