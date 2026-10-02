@@ -1606,6 +1606,22 @@ RIP.clearInterceptors();   // removes everything registered</code></pre>
     return null;   // let the call proceed normally
 }</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">expecting setBody() to change what's sent</span></div>
+            <pre><code class="language-java">public void beforeRequest(RequestContext ctx) {
+    ctx.setBody(redact(ctx.getBody()));   // has NO effect on the wire
+}</code></pre>
+            <p class="mistake-why">The actual request is already built by the time interceptors run — <code>setBody(...)</code> only updates what <code>RequestContext</code> itself reports to a later interceptor/your own code, never the bytes Unirest sends.</p>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">null doesn't mean "short-circuit with nothing"</span></div>
+            <pre><code class="language-java">public ShortCircuitResponse shortCircuit(RequestContext ctx) {
+    return null;   // means "make the real call" - NOT "short-circuit with an empty response"
+}</code></pre>
+            <p class="mistake-why">Use <code>ShortCircuitResponse.status(204, "")</code> (or whatever you actually want) to short-circuit with an intentionally empty response — <code>null</code> always means "let the real call proceed."</p>
+          </div>
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Alternate · reproduce a call with curl</span>
               <span class="snippet-caption">CurlVerbosity: NONE, VERBOSE (-v), VV (-vv), VVV (-vvv), VVVV (-vvvv), or TRACE (--trace-ascii - --trace-time)</span></div>
@@ -1682,6 +1698,14 @@ RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGener
               <span class="snippet-caption">one sample per attempt, incl. retries</span></div>
             <pre><code class="language-java">RIP.addInterceptor(new MetricsInterceptor((method, url, status, ms) ->
         System.out.printf("%s %s -> %d (%dms)%n", method, url, status, ms)));</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">the fixed-value constructor for a token that expires</span></div>
+            <pre><code class="language-java">RIP.addInterceptor(new HeaderInterceptor("Authorization", "Bearer " + currentToken()));
+// currentToken() is called ONCE, at registration time - every later call
+// sends that same original token, even long after it's expired.</code></pre>
+            <p class="mistake-why">Use the <code>Supplier&lt;String&gt;</code> constructor whenever the value can change between calls — it's re-evaluated on every request.</p>
           </div>
         </div>
       </div>
