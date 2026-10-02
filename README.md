@@ -2830,6 +2830,68 @@ the default `Cache` implementation — zero new dependency. Implement `Cache`
 yourself (`get`/`put`/`evict`/`clear`) to back it with Redis, Caffeine, or
 anything else.
 
+**A `Vary`-sensitive endpoint, to see cache-key splitting in action:**
+
+```java
+@GET("https://api.example.com/items")
+Item getItem(@HeaderParam("Accept-Language") String language);
+```
+
+```java
+// Response: Cache-Control: max-age=60
+//           Vary: Accept-Language
+api.getItem("en-US");   // network call, cached under (url, Accept-Language: en-US)
+api.getItem("en-US");   // served from cache
+api.getItem("fr-FR");   // different Vary value -> network call again, cached separately
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// Not a bug, but the single most common "why isn't this cached" surprise:
+// a response with NO Cache-Control/ETag/Last-Modified at all.
+@GET("https://api.example.com/items")
+Item getItem();
+// Response headers: Content-Type: application/json   (nothing else)
+```
+Never cached, by design — RIP never invents freshness the server didn't
+declare. If you control the server, add `Cache-Control: max-age=N`; if you
+don't, `negativeCacheTtlMillis`-style unconditional caching isn't
+available for a 2xx response (only for a confirmed `404` — see
+[Negative caching](#negative-caching)) precisely because assuming a
+*successful* response is safe to reuse without the server's own say-so is
+a much easier way to serve stale/wrong data by accident.
+
+```java
+// WRONG — assuming a POST/PUT/DELETE participates in caching at all.
+@POST("https://api.example.com/items")
+Item create(@Body Item item);
+```
+Only `GET` responses are ever cached — a `POST`/`PUT`/`PATCH`/`DELETE`'s
+response is never stored and never served from cache, whatever headers it
+returns. This is intentional (caching a mutation's response is a different,
+unsafe-by-default problem - see `@NoCache` below for the opposite
+direction) but worth stating explicitly since nothing stops you from
+attaching `Cache-Control` headers to a write endpoint's response
+server-side and expecting RIP to honor them the way it does for `GET`.
+
+```java
+// Attaching a Cache but forgetting it's per-CLIENT, not per-interface.
+UserApi cachedApi = RIP.getClient(UserApi.class, RipClientConfig.builder().cache(new InMemoryCache()).build());
+UserApi uncachedApi = RIP.getClient(UserApi.class);   // no RipClientConfig at all
+
+cachedApi.getUser("42");     // may be served from cache on a later call
+uncachedApi.getUser("42");   // always a real network call - a completely separate client instance
+```
+Two `RIP.getClient(...)` calls for the same interface, one with a `Cache`
+and one without, are two unrelated client instances with their own
+independent caches (or none) — caching is never shared automatically
+across every call to the same interface class unless they're all made
+through the exact same configured client.
+
+</details>
+
 ### Stale-while-revalidate
 
 A stale entry normally blocks the caller on a synchronous revalidation
@@ -2883,6 +2945,36 @@ Or as a shared default for every client without its own, via
 `Cache` configured at all, and is skipped the same way as ordinary caching
 by `@NoCache`.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a non-positive TTL.
+RipClientConfig.builder().negativeCacheTtlMillis(0).build();
+```
+Throws `IllegalArgumentException`: *"ttlMillis must be positive."* `0`
+would mean "cache for zero milliseconds," which is indistinguishable from
+not caching at all — pass a real positive duration or don't call this
+setter.
+
+```java
+// Easy mistake: expecting negative caching to apply to every error status.
+RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .negativeCacheTtlMillis(60_000)
+        .build());
+
+api.getUser("rate-limited");   // a 429, NOT a 404 - never negatively cached
+```
+`negativeCacheTtlMillis` only ever applies to a confirmed `404` — a `429`,
+`500`, or any other non-2xx status is never cached under this mechanism
+(or any other), since those aren't a confirmed "this doesn't exist," just
+a transient failure. A client-side cache can't tell "rate limited right
+now" from "might succeed on the very next call," so RIP never assumes it's
+safe to serve a stale error for anything but the one unambiguous case.
+
+</details>
+
 ### `@NoCache`
 
 Opts a single method out of caching even when its client has one
@@ -2898,6 +2990,39 @@ Price getLivePrice(@PathParam("symbol") String symbol);
 
 Response caching is scoped to `String`/POJO `GET` responses for now — not
 `byte[]`/`File` downloads.
+
+**On the interface vs. one specific call site** — `@NoCache` only has a
+method-level form, deliberately: an interface-wide "never cache anything
+from this client" is already just "don't attach a `Cache` to it" (no
+annotation needed):
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface CatalogApi {
+
+    @GET("/items/{id}")
+    Item getItem(@PathParam("id") String id);   // cacheable, if this client has a Cache
+
+    @GET("/prices/{symbol}")
+    @NoCache
+    Price getLivePrice(@PathParam("symbol") String symbol);   // always live, even on a cached client
+}
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// Not actually a mistake, just a frequent question: does @NoCache need a
+// Cache configured to do anything?
+UserApi api = RIP.getClient(UserApi.class);   // no .cache(...) at all
+```
+`@NoCache` is a no-op on a client with no `Cache` attached in the first
+place — there's nothing to opt out of. It only matters on a client that
+*does* have one, for the one method that shouldn't participate.
+
+</details>
 
 ### Time-based and manual eviction
 
@@ -2930,6 +3055,32 @@ entries a given write should invalidate is a heuristic that's wrong in
 either direction (URLs that look related but aren't, and unrelated-looking
 URLs that actually are). `cache.clear()` drops every entry unconditionally.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a non-positive max-age for InMemoryCache's eviction constructor.
+new InMemoryCache(0);
+```
+Throws `IllegalArgumentException`: *"maxEntryAgeMillis must be positive."*
+Use the no-arg `InMemoryCache()` constructor if you don't want age-based
+eviction at all, rather than trying to express "never evict" as `0`.
+
+```java
+// WRONG — building the eviction key from a URL that doesn't match what
+// was actually cached (missing query string, wrong casing, trailing slash).
+cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42/"));  // trailing slash
+// ...but the cached entry was stored under the URL with no trailing slash.
+```
+`Cache.key(...)` does no normalization — it's a literal
+`"<method> <url>"` string. If the URL you evict doesn't match the exact
+URL that was requested (including query string, when
+`cacheKeyIncludesQueryString` is on), the eviction silently misses and the
+stale entry stays cached. Build the eviction key from the same literal URL
+your `@RestClient` method actually calls, not a hand-typed guess at it.
+
+</details>
+
 ### Query string in the cache key
 
 By default the cache key includes the query string, so `/items?page=1` and
@@ -2954,6 +3105,43 @@ effect on a client with no `Cache` configured at all, and (per the
 per-client/shared-default precedence every other `RipClientConfig` setting
 follows) a client's own `cacheKeyIncludesQueryString(...)` wins over
 `RIP.setCacheKeyIncludesQueryString(...)`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — turning this off for an endpoint where the query string DOES
+// change the response.
+RIP.getClient(SearchApi.class, RipClientConfig.builder()
+        .cache(new InMemoryCache())
+        .cacheKeyIncludesQueryString(false)
+        .build());
+
+api.search("laptops");   // cached under just the path
+api.search("phones");    // served the CACHED "laptops" RESPONSE instead of a fresh search
+```
+This is the sharpest footgun in the whole caching feature: turning off
+query-string-awareness for a client whose query params genuinely change
+the response silently serves the wrong data with no error, no exception,
+and no log line — it looks exactly like a correct cache hit. Only disable
+this for a client where you've confirmed every cached endpoint's query
+params are either absent or provably irrelevant to the response body
+(pure tracking/analytics params the server ignores).
+
+```java
+// Misreading scope: expecting this to be settable per-METHOD like @NoCache.
+@GET("/items")
+@CacheKeyIncludesQueryString(false)   // doesn't exist — no such annotation
+List<Item> listItems();
+```
+There's no method-level override for this setting — it's per-client
+(`RipClientConfig`) or global (`RIP.setCacheKeyIncludesQueryString`) only.
+If different methods on the same interface need different behavior here,
+split them across two differently-configured clients for the same
+interface, or avoid relying on query-string-insensitive caching at all for
+the ones that need the query string to matter.
+
+</details>
 
 ## Interceptors
 
