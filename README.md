@@ -2297,6 +2297,64 @@ get retried, is still reported to any registered interceptor's
 `afterResponse`, so a `LoggingInterceptor` or similar sees each individual
 attempt, not just the final outcome.
 
+**Every attribute combined, and a fixed-delay variant:**
+
+```java
+// Fixed 500ms delay between all 5 attempts - backoffMultiplier = 1.0.
+@GET("https://api.example.com/users/{id}")
+@Retry(times = 5, delayMillis = 500, backoffMultiplier = 1.0, retryOnStatus = { 429, 503 })
+User getUser(@PathParam("id") String id);
+
+// A single retry, no backoff math needed at all.
+@Retry(times = 2)
+User getUserOnce(@PathParam("id") String id);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — times = 0.
+@Retry(times = 0)
+User getUser(@PathParam("id") String id);
+```
+Fails validation: *"is annotated with @Retry but times must be at least
+1."* `times` is the *total* attempt count, including the first — `times =
+1` means "no retries, just the one attempt" (a valid, if unusual, way to
+say that explicitly); `0` would mean "never even try," which RIP refuses
+to accept as almost certainly a typo for `1`.
+
+```java
+// WRONG — jitterFactor out of range.
+@Retry(times = 3, jitterFactor = 1.5)
+```
+Fails validation: *"is annotated with @Retry but jitterFactor must be
+between 0.0 and 1.0 inclusive."* A factor above `1.0` could make a
+computed delay go negative; RIP rejects it rather than silently clamping.
+
+```java
+// Compiles fine, almost certainly wrong: retrying a non-idempotent POST
+// without idempotent = true.
+@POST("https://api.example.com/charges")
+@Retry(times = 3)
+String createCharge(@Body Charge charge);
+```
+No validation error — RIP has no way to know your endpoint isn't
+idempotent from its signature alone. But a timeout *after* the server
+already processed the charge, followed by a retry, can double-charge a
+customer. Set `idempotent = true` (see below) for any `POST`/`PATCH`
+you put `@Retry` on, unless you're certain the endpoint is naturally
+idempotent (e.g. an upsert keyed by a client-supplied id).
+
+```java
+// RetryConfig.builder() throws the same way, for the same reasons, at
+// build() time instead of RIP.getClient(...) validation time:
+RetryConfig.builder().times(0).build();      // IllegalArgumentException: "times must be at least 1."
+RetryConfig.builder().jitterFactor(2.0).build(); // IllegalArgumentException: "jitterFactor must be between 0.0 and 1.0 inclusive."
+```
+
+</details>
+
 ### Idempotency keys
 
 Retrying is only safe by default for a method whose HTTP verb is already
@@ -2423,6 +2481,54 @@ being thrown, and is likewise never retried by an async `@Retry`. See
 [`docs/design/circuit-breaker-bulkhead.md`](docs/design/circuit-breaker-bulkhead.md)
 for the full design and every default's reasoning.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+CircuitBreakerConfig.builder().slidingWindowSize(0).build();
+// IllegalArgumentException: "size must be at least 1."
+
+CircuitBreakerConfig.builder().minimumNumberOfCalls(0).build();
+// IllegalArgumentException: "minimumNumberOfCalls must be at least 1."
+
+CircuitBreakerConfig.builder().failureRateThreshold(0).build();
+CircuitBreakerConfig.builder().failureRateThreshold(101).build();
+// Both: IllegalArgumentException: "failureRateThreshold must be between 1 and 100 inclusive."
+
+CircuitBreakerConfig.builder().waitDurationInOpenState(Duration.ZERO).build();
+// IllegalArgumentException: "waitDurationInOpenState must be positive."
+
+CircuitBreakerConfig.builder().permittedCallsInHalfOpenState(0).build();
+// IllegalArgumentException: "permittedCallsInHalfOpenState must be at least 1."
+```
+
+```java
+// Easy to get backwards: minimumNumberOfCalls bigger than slidingWindowSize.
+CircuitBreakerConfig.builder()
+        .slidingWindowSize(5)
+        .minimumNumberOfCalls(10)   // can never be reached by a window of 5
+        .build();
+```
+Not rejected by validation (both values are independently valid), but the
+breaker can never evaluate a failure rate at all — the window never holds
+enough calls to reach `minimumNumberOfCalls`. Keep
+`minimumNumberOfCalls <= slidingWindowSize`.
+
+```java
+// WRONG — setting both a CircuitBreakerConfig and a CircuitBreakerProvider
+// expecting them to combine.
+RipClientConfig.builder()
+        .circuitBreaker(CircuitBreakerConfig.builder().build())
+        .circuitBreaker(myResilience4jAdapter)   // silently replaces the config above
+        .build();
+```
+Not an error — but only the *last* `circuitBreaker(...)` call takes
+effect, same as any other builder setter. If you meant to configure RIP's
+built-in breaker AND delegate to resilience4j, that's a contradiction:
+pick exactly one implementation per client.
+
+</details>
+
 ### Bulkhead
 
 A circuit breaker reacts to a downstream *failing*; a bulkhead reacts to
@@ -2497,6 +2603,45 @@ the same builder — whichever you call last wins. `bulkhead(BulkheadProvider)`
 follows the identical shape (`tryAcquirePermission()`/`onComplete()`). See
 each interface's own javadoc for the full reasoning.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+BulkheadConfig.builder().maxConcurrentCalls(0).build();
+// IllegalArgumentException: "maxConcurrentCalls must be at least 1."
+
+BulkheadConfig.builder().maxWaitDuration(Duration.ofMillis(-1)).build();
+// IllegalArgumentException: "maxWaitDuration must not be negative."
+```
+
+```java
+// Easy to misdiagnose: blaming the circuit breaker for a BulkheadFullException.
+try {
+    api.getUser("42");
+} catch (CircuitOpenException e) {
+    // never reached — a full bulkhead throws BulkheadFullException, a
+    // completely different exception type with a different meaning
+    // (too much concurrent volume, not a failure-rate trip).
+}
+```
+The two resilience layers throw distinct exception types precisely so you
+can tell "the downstream is failing" (`CircuitOpenException`) apart from
+"we're sending it too much at once" (`BulkheadFullException`) — catch
+both separately if your error handling needs to react differently to each.
+
+```java
+// Setting an unrealistically small bulkhead for the traffic the client
+// actually sees - not a validation error, but a common production
+// surprise: every call now contends for 1 permit.
+RipClientConfig.builder().bulkhead(BulkheadConfig.builder().maxConcurrentCalls(1).build()).build();
+```
+`maxConcurrentCalls(1)` makes every call to this client fully
+serialized — the second concurrent caller always waits (or fails, with no
+`maxWaitDuration`) no matter how fast the downstream actually responds.
+Size this from real observed concurrency, not a guess.
+
+</details>
+
 ## Timeouts
 
 Annotate a method with `@Timeout` to override the connect/read timeout for
@@ -2521,6 +2666,63 @@ Precedence overall: a method's own `@Timeout`, then the interface's
 [`RipClientConfig`](#per-client-configuration-timeout-and-proxy)'s timeout,
 then the shared client's own configured default. A negative value other
 than `-1` fails validation.
+
+**Setting only one of the two, and an interface-level default:**
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+@Timeout(connectMillis = 2_000, readMillis = 5_000)   // default for every method below
+public interface ReportApi {
+
+    @GET("/reports/{id}")
+    Report getReport(@PathParam("id") String id);   // uses the interface default
+
+    @GET("/reports/export")
+    @Timeout(readMillis = 120_000)                   // overrides readMillis only; connectMillis still -1
+    String exportReport();                           // (falls through to RipClientConfig/client default)
+
+    @GET("/health")
+    @Timeout(connectMillis = 500, readMillis = 500)  // fail fast, ignore the interface default entirely
+    RipResponse<Void> healthCheck();
+}
+```
+
+A method's `@Timeout(readMillis = 120_000)` with `connectMillis` left
+unset does **not** inherit `connectMillis` from the interface-level
+`@Timeout` above it — "a method's own `@Timeout` is used in full instead"
+means the whole annotation, not a field-by-field merge. `connectMillis`
+falls through past the interface annotation straight to
+`RipClientConfig`/the client default.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a negative value other than the -1 sentinel.
+@Timeout(readMillis = -5000)
+```
+Fails validation: *"is annotated with @Timeout but readMillis must be -1
+(unset) or a non-negative number of milliseconds."* Same check applies to
+`connectMillis`. Use exactly `-1` (or omit the attribute - it defaults to
+`-1`) to mean "unset," never another negative number.
+
+```java
+// Easy to misread as "inherits the rest": expecting field-level merging
+// between a method's @Timeout and its interface's.
+@RestClient
+@Timeout(connectMillis = 2_000, readMillis = 5_000)
+public interface ReportApi {
+    @GET("/reports/export")
+    @Timeout(readMillis = 120_000)   // connectMillis is -1 here, NOT 2_000
+    String exportReport();
+}
+```
+If you need both a specific `connectMillis` and a specific `readMillis` on
+one method, set both explicitly on that method's own `@Timeout` — don't
+rely on the interface-level one to fill the gap.
+
+</details>
 
 ## Per-client configuration: timeout and proxy
 
