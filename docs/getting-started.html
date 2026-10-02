@@ -18,6 +18,7 @@
     --border:#e4ded2; --border-strong:#d3cbb9;
     --java-solid:#8f5510; --java-soft:#f2e4cd; --java-border:#dfc492;
     --spring-solid:#37633a; --spring-soft:#e1ebe1; --spring-border:#a9c7ab;
+    --mistake-solid:#a3312a; --mistake-soft:#f5e2e0; --mistake-border:#dba19c;
     --shadow: 0 1px 2px rgba(33,29,23,.06), 0 6px 20px -8px rgba(33,29,23,.12);
   }
   @media (prefers-color-scheme: dark){
@@ -27,6 +28,7 @@
       --border:#39331f; --border-strong:#4a422a;
       --java-solid:#e3a656; --java-soft:#3a2c14; --java-border:#5c4520;
       --spring-solid:#8bc290; --spring-soft:#213022; --spring-border:#3c5a3e;
+      --mistake-solid:#e38578; --mistake-soft:#3a1f1c; --mistake-border:#5c3430;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -10px rgba(0,0,0,.5);
     }
   }
@@ -125,6 +127,7 @@
   .snippet.java{ border-left-color:var(--java-solid); }
   .snippet.spring{ border-left-color:var(--spring-solid); }
   .snippet.neutral{ border-left-color:var(--border-strong); }
+  .snippet.mistake{ border-left-color:var(--mistake-solid); }
 
   .snippet-head{
     display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -137,6 +140,12 @@
   .snippet.java .snippet-tag{ background:var(--java-soft); color:var(--java-solid); }
   .snippet.spring .snippet-tag{ background:var(--spring-soft); color:var(--spring-solid); }
   .snippet.neutral .snippet-tag{ background:var(--paper-sunken); color:var(--ink-soft); }
+  .snippet.mistake .snippet-tag{ background:var(--mistake-soft); color:var(--mistake-solid); }
+  .snippet.mistake .mistake-why{
+    margin:0; padding:10px 14px; border-top:1px solid var(--border);
+    background:var(--paper-sunken); color:var(--ink-soft); font-size:.85rem; font-family:"IBM Plex Sans",sans-serif;
+  }
+  .snippet.mistake .mistake-why code{ font-size:.85em; }
   .snippet-caption{ font-size:.78rem; color:var(--ink-faint); text-align:right; }
 
   pre{ margin:0; padding:14px 16px; overflow-x:auto; font-size:.83rem; line-height:1.55; }
@@ -225,6 +234,7 @@
         <a href="#downloads">byte[] / File downloads</a>
         <a href="#ripresponse">RipResponse&lt;T&gt;</a>
         <a href="#async">Async — CompletableFuture</a>
+        <a href="#call-adapter">Pluggable CallAdapter SPI</a>
         <a href="#reactive">Reactive — Mono&lt;T&gt; / Flux&lt;T&gt;</a>
 
         <div class="group-title">Pagination</div>
@@ -241,6 +251,8 @@
         <a href="#errors">Error handling</a>
         <a href="#retry">@Retry &amp; idempotency</a>
         <a href="#timeout">@Timeout</a>
+        <a href="#circuit-breaker">Circuit breaker</a>
+        <a href="#bulkhead">Bulkhead</a>
 
         <div class="group-title">Client configuration</div>
         <a href="#client-config">RipClientConfig</a>
@@ -675,6 +687,75 @@ userApi.getUserAsync("42").thenAccept(user -> System.out.println(user.name));</c
         </div>
       </div>
 
+      <div class="feature" id="call-adapter">
+        <h3>Pluggable CallAdapter SPI</h3>
+        <p class="blurb">For a return type RIP has no built-in support for — <code>rest-in-peace-reactor</code>'s <code>Mono&lt;T&gt;</code>/<code>Flux&lt;T&gt;</code>, or your own — register a <code>CallAdapterFactory</code> that transforms the exact <code>CompletableFuture</code> RIP's async dispatch already produced. Zero hard dependency on whatever it adapts to.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">The SPI</span></div>
+            <pre><code class="language-java">public interface CallAdapter<T> {
+    Type responseBodyType();                       // what to decode the response body into
+    T adapt(CompletableFuture<Object> delegate);    // wraps the call RIP already dispatched
+}
+
+public interface CallAdapterFactory {
+    Optional<CallAdapter<?>> get(Method method);    // recognize a method's return type, or decline
+}</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Full example · Optional&lt;T&gt;</span>
+              <span class="snippet-caption">a 404 becomes Optional.empty() instead of a thrown exception</span></div>
+            <pre><code class="language-java">public final class OptionalCallAdapterFactory implements CallAdapterFactory {
+    @Override
+    public Optional<CallAdapter<?>> get(Method method) {
+        if (method.getReturnType() != Optional.class) return Optional.empty();
+        Type genericReturnType = method.getGenericReturnType();
+        if (!(genericReturnType instanceof ParameterizedType)) return Optional.empty();
+        Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+        return Optional.of(new CallAdapter<Optional<Object>>() {
+            public Type responseBodyType() { return innerType; }
+            public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+                try {
+                    return Optional.ofNullable(delegate.join());
+                } catch (CompletionException e) {
+                    if (e.getCause() instanceof RestInPeaceHttpException
+                            && ((RestInPeaceHttpException) e.getCause()).getStatus() == 404) {
+                        return Optional.empty();
+                    }
+                    throw e;
+                }
+            }
+        });
+    }
+}
+
+RIP.addCallAdapterFactory(new OptionalCallAdapterFactory());   // once, at startup
+
+@GET("/users/{id}")
+Optional<User> findUser(@PathParam("id") String id);</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">claiming a return type RIP already handles</span></div>
+            <pre><code class="language-java">public Optional<CallAdapter<?>> get(Method method) {
+    if (method.getReturnType() == byte[].class) {
+        return Optional.of(myByteArrayAdapter);   // never actually consulted
+    }
+    return Optional.empty();
+}</code></pre>
+            <p class="mistake-why"><code>byte[]</code>/<code>File</code>/<code>CompletableFuture&lt;T&gt;</code>/<code>RipResponse&lt;T&gt;</code> are checked before any <code>CallAdapterFactory</code> at dispatch time — a factory "claiming" one passes validation but is silently never consulted. Only claim a return type RIP has no built-in support for.</p>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">dispatching a second HTTP call from inside adapt()</span></div>
+            <pre><code class="language-java">public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+    return Optional.ofNullable(Unirest.get(someUrl).asString().getBody());   // never do this
+}</code></pre>
+            <p class="mistake-why">Bypasses <code>@Retry</code>/cache/circuit-breaker/bulkhead/interceptors entirely for the second call. <code>adapt</code> must only ever transform <code>delegate</code> — never issue a new request.</p>
+          </div>
+        </div>
+      </div>
+
       <div class="feature" id="reactive">
         <h3>Reactive — Mono&lt;T&gt; / Flux&lt;T&gt;</h3>
         <p class="blurb">The <code>rest-in-peace-reactor</code> module adds a <code>CallAdapterFactory</code> for Project Reactor — add the dependency, call <code>RestInPeaceReactor.register()</code> once at startup, and any method can return <code>Mono&lt;T&gt;</code> or <code>Flux&lt;T&gt;</code> directly. <code>rest-in-peace-reactor</code> isn't published yet, though — build it locally first (<code>mvn install -N &amp;&amp; mvn install -DskipTests -pl core,rest-in-peace-reactor</code> from the repository root), then depend on whatever version that installs. See the main README's <a href="https://github.com/shrinivas93/REST-in-peace#reactive-project-reactor">Reactive (Project Reactor)</a> section for the full walkthrough.</p>
@@ -1046,6 +1127,103 @@ public interface SlowApi {
     @GET("/slow/{id}")
     String getSlow(@PathParam("id") String id);   // uses the interface's @Timeout
 }</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">negative value other than the -1 sentinel</span></div>
+            <pre><code class="language-java">@Timeout(readMillis = -5000)</code></pre>
+            <p class="mistake-why">Fails validation: <em>"readMillis must be -1 (unset) or a non-negative number of milliseconds."</em> Use <code>-1</code> (or just omit the attribute) to mean "unset" — never another negative number.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="circuit-breaker">
+        <h3>Circuit breaker</h3>
+        <p class="blurb">Once a client's failure rate crosses a threshold, every call fails fast with <code>CircuitOpenException</code> for a cooldown period instead of paying for a timeout/<code>@Retry</code> loop that would fail anyway.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span>
+              <span class="snippet-caption">count-based sliding window, the last N calls</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .circuitBreaker(CircuitBreakerConfig.builder()
+                .slidingWindowSize(20)             // the last 20 calls
+                .minimumNumberOfCalls(10)           // don't evaluate a rate below this
+                .failureRateThreshold(50)            // trip at 50% failures
+                .waitDurationInOpenState(Duration.ofSeconds(30))
+                .permittedCallsInHalfOpenState(3)
+                .build())
+        .build());</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · time-based window</span>
+              <span class="snippet-caption">"last 30 seconds" instead of "last N calls"</span></div>
+            <pre><code class="language-java">CircuitBreakerConfig.builder().slidingWindowSize(Duration.ofSeconds(30))...</code></pre>
+          </div>
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Alternate · delegate to resilience4j</span>
+              <span class="snippet-caption">CircuitBreakerProvider — zero hard dependency either way</span></div>
+            <pre><code class="language-java">CircuitBreaker r4jBreaker = CircuitBreaker.ofDefaults("payment-api");
+
+RipClientConfig.builder().circuitBreaker(new CircuitBreakerProvider() {
+    public boolean tryAcquirePermission() { return r4jBreaker.tryAcquirePermission(); }
+    public void onSuccess(long durationNanos, int statusCode) {
+        if (statusCode >= 500) r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, new RuntimeException("HTTP " + statusCode));
+        else r4jBreaker.onSuccess(durationNanos, TimeUnit.NANOSECONDS);
+    }
+    public void onError(long durationNanos, Throwable t) { r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t); }
+}).build());</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">minimumNumberOfCalls bigger than the window</span></div>
+            <pre><code class="language-java">CircuitBreakerConfig.builder()
+        .slidingWindowSize(5)
+        .minimumNumberOfCalls(10)   // can never be reached by a window of 5
+        .build();</code></pre>
+            <p class="mistake-why">Not rejected by validation — both values are independently valid — but the breaker can never evaluate a failure rate at all, since the window never holds enough calls to reach <code>minimumNumberOfCalls</code>. Keep it &le; <code>slidingWindowSize</code>.</p>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">out-of-range builder values</span></div>
+            <pre><code class="language-java">CircuitBreakerConfig.builder().failureRateThreshold(0).build();
+CircuitBreakerConfig.builder().failureRateThreshold(101).build();</code></pre>
+            <p class="mistake-why">Both throw <code>IllegalArgumentException: "failureRateThreshold must be between 1 and 100 inclusive."</code> — same pattern for <code>slidingWindowSize(0)</code>, <code>minimumNumberOfCalls(0)</code>, <code>waitDurationInOpenState(Duration.ZERO)</code>, and <code>permittedCallsInHalfOpenState(0)</code>, each with its own matching message.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature" id="bulkhead">
+        <h3>Bulkhead</h3>
+        <p class="blurb">Caps how many calls to a client can be in flight at once, regardless of success/failure — so one slow downstream can't starve every other call sharing the same capacity.</p>
+        <div class="snippets">
+          <div class="snippet java">
+            <div class="snippet-head"><span class="snippet-tag">Basic</span>
+              <span class="snippet-caption">fails fast by default (resilience4j's own shape)</span></div>
+            <pre><code class="language-java">RIP.getClient(UserApi.class, RipClientConfig.builder()
+        .bulkhead(BulkheadConfig.builder()
+                .maxConcurrentCalls(25)
+                .maxWaitDuration(Duration.ofMillis(500))   // queue briefly instead of failing outright
+                .build())
+        .build());</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">confusing BulkheadFullException with CircuitOpenException</span></div>
+            <pre><code class="language-java">try {
+    api.getUser("42");
+} catch (CircuitOpenException e) {
+    // never reached for a full bulkhead — it throws BulkheadFullException,
+    // a distinct type for a distinct reason (too much concurrent volume,
+    // not a failure-rate trip). Catch both separately.
+}</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">invalid builder values</span></div>
+            <pre><code class="language-java">BulkheadConfig.builder().maxConcurrentCalls(0).build();
+// IllegalArgumentException: "maxConcurrentCalls must be at least 1."
+BulkheadConfig.builder().maxWaitDuration(Duration.ofMillis(-1)).build();
+// IllegalArgumentException: "maxWaitDuration must not be negative."</code></pre>
           </div>
         </div>
       </div>
