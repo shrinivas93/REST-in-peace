@@ -2114,6 +2114,135 @@ SPI, shipped as its own `rest-in-peace-reactor` module rather than folded
 into `core` — see [Reactive (Project Reactor)](#reactive-project-reactor)
 below.
 
+**Writing your own `CallAdapterFactory`** — a complete, runnable example
+adapting a `404` into `Optional.empty()` instead of a thrown exception,
+following the exact pattern `rest-in-peace-reactor`'s own
+`MonoCallAdapterFactory` uses internally:
+
+```java
+public final class OptionalCallAdapterFactory implements CallAdapterFactory {
+
+    @Override
+    public Optional<CallAdapter<?>> get(Method method) {
+        if (method.getReturnType() != Optional.class) {
+            return Optional.empty();           // decline - not our return type
+        }
+        Type genericReturnType = method.getGenericReturnType();
+        if (!(genericReturnType instanceof ParameterizedType)) {
+            return Optional.empty();           // decline a raw Optional too - nothing to decode into
+        }
+        Type innerType = ((ParameterizedType) genericReturnType).getActualTypeArguments()[0];
+        return Optional.of(new OptionalCallAdapter(innerType));
+    }
+
+    private static final class OptionalCallAdapter implements CallAdapter<Optional<Object>> {
+
+        private final Type responseBodyType;
+
+        private OptionalCallAdapter(Type responseBodyType) {
+            this.responseBodyType = responseBodyType;
+        }
+
+        @Override
+        public Type responseBodyType() {
+            return responseBodyType;           // what to decode a successful body into
+        }
+
+        @Override
+        public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+            try {
+                return Optional.ofNullable(delegate.join());
+            } catch (CompletionException e) {
+                // delegate.join() always wraps an exceptional completion in
+                // CompletionException, even for the already-unchecked
+                // RestInPeaceHttpException - unwrap it to inspect the real cause.
+                if (e.getCause() instanceof RestInPeaceHttpException
+                        && ((RestInPeaceHttpException) e.getCause()).getStatus() == 404) {
+                    return Optional.empty();
+                }
+                throw e;   // anything else propagates - only a 404 becomes "absent"
+            }
+        }
+    }
+}
+```
+
+```java
+RIP.addCallAdapterFactory(new OptionalCallAdapterFactory());   // once, at startup
+
+@RestClient
+@BaseUrl("https://api.example.com")
+public interface UserApi {
+    @GET("/users/{id}")
+    Optional<User> findUser(@PathParam("id") String id);   // empty instead of throwing on 404
+}
+```
+
+```java
+Optional<User> user = userApi.findUser("does-not-exist");
+user.ifPresentOrElse(this::process, () -> System.out.println("no such user"));
+```
+
+Note what this example deliberately does *not* do: `adapt(...)` blocks the
+calling thread on `delegate.join()`, because `Optional<T>` has no lazy
+subscription model the way `Mono<T>`/`Flux<T>` do - unlike
+`MonoCallAdapterFactory`'s own `adapt`, which wraps `delegate` in a `Mono`
+without ever blocking. A synchronous-looking adapted return type (plain
+`Optional<T>`, a hypothetical `Try<T>`, …) always costs a blocking call
+somewhere in `adapt()` itself; only an inherently async/lazy wrapper type
+can adapt without one.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a factory that tries to dispatch its own HTTP call instead of
+// transforming the CompletableFuture RIP already produced.
+@Override
+public Optional<Object> adapt(CompletableFuture<Object> delegate) {
+    return Optional.ofNullable(Unirest.get(someUrl).asString().getBody());   // never do this
+}
+```
+Not a validation error — but it breaks every documented guarantee
+`CallAdapter` makes: the call is now dispatched twice (once by RIP's
+normal pipeline to produce `delegate`, once more here), bypassing
+`@Retry`/cache/circuit-breaker/bulkhead/interceptors entirely for the
+second one. `adapt` must only ever transform `delegate` — never issue a
+new request.
+
+```java
+// WRONG — claiming a method whose return type RIP already handles natively.
+@Override
+public Optional<CallAdapter<?>> get(Method method) {
+    if (method.getReturnType() == byte[].class) {
+        return Optional.of(myByteArrayAdapter);   // never actually consulted
+    }
+    return Optional.empty();
+}
+```
+`byte[]`/`File`/`CompletableFuture<T>`/`RipResponse<T>` are checked by
+`RequestExecutor.processRestRequest` *before* any registered
+`CallAdapterFactory` is ever consulted, both at dispatch time and in
+`ReflectiveRestClientValidator`'s matching validation order — a factory
+"claiming" one of these built-in shapes passes validation (its
+`responseBodyType()` is checked and looks fine) but then silently never
+runs at dispatch time, since the built-in branch always wins first. Only
+claim a return type RIP has no built-in support for.
+
+```java
+// WRONG — registering a factory after building a client that uses it.
+UserApi api = RIP.getClient(UserApi.class);   // validated NOW, before the factory exists
+RIP.addCallAdapterFactory(new OptionalCallAdapterFactory());
+```
+`RIP.getClient(...)` validates the interface (including resolving any
+`CallAdapter` a registered factory would provide) at the moment it's
+called — a factory registered afterward doesn't retroactively validate or
+fix a client already built. Always call `RIP.addCallAdapterFactory(...)`
+for every factory you need before the first `RIP.getClient(...)` call that
+depends on it.
+
+</details>
+
 ## Reactive (Project Reactor)
 
 The `rest-in-peace-reactor` module ships real `CallAdapterFactory`
@@ -2193,6 +2322,50 @@ explicitly:
 A raw `Mono` (no type argument) fails validation by name, the same as an
 unclaimed `Mono<T>` with no factory registered.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — returning Mono<T> without calling RestInPeaceReactor.register() first.
+@GET("/users/{id}")
+Mono<User> getUser(@PathParam("id") String id);
+```
+```java
+UserApi api = RIP.getClient(UserApi.class);   // no RestInPeaceReactor.register() call anywhere yet
+```
+Fails validation: *"returns reactor.core.publisher.Mono, which RIP has no
+built-in support for and no registered CallAdapterFactory claims. If this
+is a Mono<T>/Flux<T>, add the rest-in-peace-reactor dependency and call
+RestInPeaceReactor.register() ... before building this client."*
+`RestInPeaceReactor.register()` has to run — once, at startup — before
+*any* `RIP.getClient(...)` call for an interface that returns `Mono<T>`/
+`Flux<T>`, not merely before the method is actually invoked.
+
+```java
+// WRONG — expecting subscribing twice to make two separate HTTP calls.
+Mono<User> userMono = userApi.getUser("42");   // the HTTP call already happened HERE
+userMono.subscribe(this::process);              // observes the one call's result
+userMono.subscribe(this::processAgain);         // observes the SAME result again, no new call
+```
+Because dispatch is eager (see above), `getUser("42")` makes exactly one
+HTTP call the moment it's invoked — every subscriber to the returned
+`Mono` shares that same single outcome. If you need a fresh call per
+subscription, wrap it yourself: `Mono.defer(() -> userApi.getUser("42"))`.
+
+```java
+// Easy to miss: disposing a Mono cancels the underlying HTTP call, which
+// can race a response that's already arriving.
+Disposable d = userApi.getUser("42").subscribe(this::process);
+d.dispose();   // best-effort cancel - if the response had already fully
+               // arrived microseconds earlier, process(...) may still run
+```
+Cancellation races the network the same way any cancellation does — it's
+not a guarantee that `process(...)` never runs, only that RIP stops
+waiting for (and attempting to cancel) a call that's still genuinely in
+flight.
+
+</details>
+
 ### `Flux<T>`
 
 `rest-in-peace-reactor` also registers `Flux<T>` support, in two genuinely
@@ -2240,6 +2413,55 @@ interface OrderApi {
 Both flavors decline a raw `Flux` (no type argument). The plain flavor then
 falls through to the by-name validation error; a raw `@Paginated Flux` is
 rejected by pagination validation as an unsupported paginated return type.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — assuming flavor 1's Flux<T> is backpressure-aware the same way
+// flavor 2 is, just because it's also a Flux.
+@GET("/orders")
+Flux<Order> listOrders();   // flavor 1 - NOT @Paginated
+```
+```java
+orderApi.listOrders().take(1).subscribe(this::process);
+// Still fetches and decodes EVERY order in the response body up front -
+// take(1) only limits how many of the already-decoded items get emitted
+// downstream, it doesn't make the server send fewer.
+```
+Only the `@Paginated` flavor (flavor 2) fetches lazily, page by page, in
+response to actual downstream demand. Flavor 1 is sugar over an
+already-fully-decoded `List<Order>` — reach for flavor 2 (add `@Paginated`
+and a `@PaginationCursor` parameter) whenever the actual memory/network
+cost of fetching everything up front matters.
+
+```java
+// WRONG — expecting .cancel()/.dispose() on flavor 2 to abort an
+// in-flight page fetch as reliably as Mono<T>'s does.
+Disposable d = orderApi.fluxOrders(null).subscribe(this::process);
+d.dispose();   // best-effort - the worker thread is interrupted, but the
+               // underlying blocking HTTP call (Page<T>.next()) may not
+               // actually abort mid-request the way CompletableFuture#cancel(true) does for Mono<T>
+```
+Flavor 2's page fetches run via `Page<T>.next()` (a plain blocking call)
+on a background thread, not via a cancellable `CompletableFuture` the way
+`Mono<T>`'s single dispatch is — disposal stops *further* pages from being
+fetched, but a fetch already in flight when disposal happens isn't
+guaranteed to abort early.
+
+```java
+// WRONG — a @Paginated Flux<T> combined with a plain (non-@PaginationCursor)
+// resend of the cursor by hand.
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Flux<Order> fluxOrders(@QueryParam("cursor") String cursor);   // missing @PaginationCursor
+```
+Fails the same `@Paginated` validation a `Page<T>`/`Stream<T>` method
+would for the identical mistake — see the [Pagination](#pagination)
+section's own "Common mistakes" above. The `Flux<T>` return type doesn't
+exempt a method from any of `@Paginated`'s usual validation rules.
+
+</details>
 
 Every numbered chunk of the rollout plan has now landed — see
 [`docs/design/reactor-call-adapter.md`](docs/design/reactor-call-adapter.md)
