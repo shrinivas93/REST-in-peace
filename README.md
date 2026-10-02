@@ -1035,6 +1035,23 @@ example above), so `createRaw("{\"field\": null}")` sends exactly that:
 api.createRaw("{\"field\": null}");   // sent verbatim, bypassing the ObjectMapper entirely
 ```
 
+**One caveat specific to the raw-`String` path:** the `Content-Type:
+application/json` default described [below](#json-objectmapper) only
+applies to a *non*-`String` `@Body` value — `applyBody` returns a raw
+`String` body as-is before that defaulting logic ever runs, so
+`createRaw(...)` sends no `Content-Type` header at all unless one is set
+some other way. Harmless against a server that sniffs the body or simply
+doesn't check, but a server that actually enforces
+`Content-Type: application/json` will reject it. Add an explicit
+`@Headers({"Content-Type: application/json"})` on a raw-`String` `@Body`
+method whenever that matters:
+
+```java
+@POST("https://api.example.com/items/raw")
+@Headers({ "Content-Type: application/json" })
+String createRawJson(@Body String rawJson);
+```
+
 Auto-serializing a `Map`/POJO into that same shape is less
 straightforward than it looks, for two independent reasons: an empty
 `Map` (or a POJO with the field simply left unset) serializes as `{}`,
