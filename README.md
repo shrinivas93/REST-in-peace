@@ -1764,6 +1764,172 @@ for more than one override at once. Unlike `@Paginated`, there's no
 `@Paginated` and a `PaginationStrategy<T>` parameter are mutually
 exclusive on one method - pick declarative or programmatic, not both.
 
+**An explicit `hasMore`/`total` termination example** — when the pointer
+field stays populated even on the genuinely last page (a real Stripe
+quirk), let a separate signal decide instead:
+
+```java
+@GET("/charges")
+@Paginated(itemsField = "data", pointerField = "next_cursor",
+        hasMoreSource = PaginationSignalSource.RESPONSE_BODY, hasMoreField = "has_more")
+Page<Charge> listCharges(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+
+```java
+// Response: {"data": [...], "next_cursor": "c9", "has_more": false}
+// -> page.hasNext() is false, even though next_cursor is non-empty,
+//    because hasMoreSource overrides pointer-presence as the signal.
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Paginated AND a PaginationStrategy<T> parameter on one method.
+@GET("/orders")
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor,
+        PaginationStrategy<Order> strategy);
+```
+Fails validation: *"is annotated with @Paginated and also has a
+PaginationStrategy<T> parameter - use one or the other."* Declarative and
+programmatic pagination are mutually exclusive on one method — pick one.
+
+```java
+// WRONG — returns Page<T> with no @Paginated and no PaginationStrategy<T>.
+@GET("/orders")
+Page<Order> listOrders();
+```
+Fails validation: *"returns Page<T> but is not annotated with @Paginated
+and has no PaginationStrategy<T> parameter."* `Page<T>` isn't a return
+type RIP infers paging behavior from automatically — one of the two
+mechanisms has to be present to say *how* to find the next page.
+
+```java
+// WRONG — @Paginated combined with @Url.
+@GET
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);
+```
+Fails validation: *"is annotated with both @Paginated and @Url - remove
+one or the other."*
+
+```java
+// WRONG — advance() set without pointerSource = NONE.
+@Paginated(itemsField = "orders", pointerField = "next_cursor",
+        advance = PaginationAdvance.INCREMENT_BY_ONE)
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+Fails validation: *"sets advance() but pointerSource is not NONE -
+advance() is only meaningful for client-driven pagination with no
+server-given pointer (pointerSource = NONE)."* `advance` and a real
+server-given pointer are two different termination strategies — mixing
+them leaves it ambiguous which one actually governs the next page.
+
+```java
+// WRONG — INCREMENT_BY_PAGE_SIZE with no pageSize set (defaults to 0).
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE,
+        advance = PaginationAdvance.INCREMENT_BY_PAGE_SIZE)
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+```
+Fails validation: *"sets advance = INCREMENT_BY_PAGE_SIZE, which needs
+pageSize() to be a positive number."*
+
+```java
+// WRONG — pointerSource = NONE with no advance() set at all.
+@Paginated(itemsField = "orders", pointerSource = PaginationSignalSource.NONE)
+Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);
+```
+Fails validation: *"has pointerSource = NONE, which needs advance() to be
+set for client-driven pagination."* `pointerSource = NONE` on its own
+just means "there's no server pointer" — it still needs `advance` to say
+how the client should move forward on its own.
+
+```java
+// WRONG — FULL_URL pointerKind with a @PaginationCursor parameter too.
+@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+        pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+Page<Repo> listRepos(@QueryParam("cursor") @PaginationCursor String cursor);
+```
+Fails validation: *"has pointerKind = FULL_URL but also has a
+@PaginationCursor parameter - a full URL is followed as-is, with nothing
+to inject."* A `FULL_URL` pointer *is* the next request — there's no
+template left for a cursor value to be substituted into.
+
+```java
+// WRONG — a @PaginationCursor stacked on something other than
+// @QueryParam/@PathParam/@HeaderParam/@Body.
+Page<Order> listOrders(@PaginationCursor String cursor);
+```
+Fails validation: *"has a @PaginationCursor parameter that must be
+stacked on exactly one of @QueryParam/@PathParam/@HeaderParam/@Body."*
+`@PaginationCursor` is a *marker* stacked on an existing request-building
+annotation, not a carrier in its own right — it has to ride on top of one.
+
+```java
+// WRONG — comma-separated pointerField without pointerSource = ITEM_FIELD.
+@Paginated(itemsField = "events", pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
+        @QueryParam("lastTs") @PaginationCursor String lastTimestamp);
+```
+Fails validation: *"has a comma-separated pointerField - a composite
+pointer is only supported for pointerSource = ITEM_FIELD."* A
+response-body/header pointer is always one value; only an item-derived
+keyset cursor can be composite.
+
+```java
+// WRONG — the number of @PaginationCursor parameters doesn't match
+// pointerField's comma-separated entry count.
+@Paginated(itemsField = "events", pointerSource = PaginationSignalSource.ITEM_FIELD,
+        pointerField = "id,createdAt")
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId);
+```
+Fails validation: *"has pointerKind = VALUE with pointerSource != NONE,
+which needs 2 @PaginationCursor parameter(s) (matching pointerField's 2
+comma-separated entries) - found 1."* `pointerField = "id,createdAt"`
+promises two resent values; the method only supplies one.
+
+```java
+// WRONG — a @Body @PaginationCursor with an empty bodyField.
+Page<Order> searchOrders(@Body @PaginationCursor Map<String, Object> body);
+```
+Fails validation: *"has a @PaginationCursor stacked on @Body but bodyField
+is empty - set it to the JSON path inside the body to write the next-page
+value to."* Unlike the query/path/header carriers (where the
+`@QueryParam`/etc.'s own `value()` already names the field), a `@Body`
+carrier has no other way to say which JSON field the cursor overwrites.
+
+```java
+// WRONG — a @Body @PaginationCursor on the wrong declared type.
+Page<Order> searchOrders(@Body @PaginationCursor(bodyField = "search_after") Map<String, String> body);
+```
+Fails validation: *"has a @PaginationCursor stacked on @Body but the
+parameter's declared type is not Map<String,Object>."* Must be exactly
+`Map<String, Object>` — not `Map<String, String>`, not a POJO — since the
+page-fetch loop needs to write an arbitrary-typed value (the cursor is
+often a number or nested object) into it between fetches.
+
+```java
+// WRONG — a @PaginationCursor of an unsupported type.
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor Instant cursor);
+```
+Fails validation: *"has a @PaginationCursor parameter of type
+java.time.Instant - only String, int, and long are supported."* Convert
+to a `String`/`long` yourself (e.g. `Instant.toString()` or
+`.toEpochMilli()`) before declaring the parameter.
+
+```java
+// WRONG — a PaginationStrategy<T>'s type argument doesn't match the
+// method's own Page<T>/Stream<T>/Iterator<T> item type.
+Page<Order> listOrders(PaginationStrategy<Item> strategy);   // Page<Order> but PaginationStrategy<Item>
+```
+Fails validation: *"PaginationStrategy<Item> parameter doesn't match its
+Page<Order> return type..."* — the two type parameters have to agree,
+since `PaginationStrategy<T>`'s `ctx.items()` and `Page<T>`'s own items
+are the same decoded objects.
+
+</details>
+
 Testing a paginated method against `MockRestServer` usually means scripting
 a short, fixed sequence of pages rather than one canned response — see
 [`onPages(...)`](#testing-with-mockrestserver) in the testing section
