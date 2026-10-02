@@ -892,6 +892,13 @@ while (true) {
 meta.getStatus();          // 200
 meta.getHeader("ETag");</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">Page&lt;T&gt; with no @Paginated and no PaginationStrategy&lt;T&gt;</span></div>
+            <pre><code class="language-java">@GET("/orders")
+Page<Order> listOrders();   // missing @Paginated</code></pre>
+            <p class="mistake-why">Fails validation: <em>"returns Page&lt;T&gt; but is not annotated with @Paginated and has no PaginationStrategy&lt;T&gt; parameter."</em> <code>Page&lt;T&gt;</code> alone doesn't tell RIP how to find the next page.</p>
+          </div>
         </div>
       </div>
 
@@ -918,6 +925,14 @@ Iterator<Order> it = orderApi.iterateOrders(null);
 while (it.hasNext()) {
     process(it.next());
 }</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@Paginated combined with @Url</span></div>
+            <pre><code class="language-java">@GET
+@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@Url String url, @QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"is annotated with both @Paginated and @Url - remove one or the other."</em></p>
           </div>
         </div>
       </div>
@@ -948,6 +963,13 @@ Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);</
         totalPagesSource = PaginationSignalSource.RESPONSE_BODY, totalPagesField = "total_pages")
 Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">a *Source set to ITEM_FIELD</span></div>
+            <pre><code class="language-java">@Paginated(itemsField = "orders", pointerField = "next_cursor",
+        hasMoreSource = PaginationSignalSource.ITEM_FIELD)</code></pre>
+            <p class="mistake-why">Fails validation: <em>"sets hasMoreSource = ITEM_FIELD, which is only meaningful for pointerSource."</em> <code>ITEM_FIELD</code> only makes sense for where the cursor itself comes from, not a has-more/total signal.</p>
+          </div>
         </div>
       </div>
 
@@ -967,6 +989,12 @@ body.put("size", 100);
 Page<Order> page = orderApi.searchOrders(body);
 // every field the caller put in `body` carries forward unchanged on every
 // subsequent page; only `search_after` gets overwritten, `body` itself is never mutated</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">empty bodyField</span></div>
+            <pre><code class="language-java">Page<Order> searchOrders(@Body @PaginationCursor Map<String, Object> body);   // bodyField not set</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has a @PaginationCursor stacked on @Body but bodyField is empty - set it to the JSON path inside the body to write the next-page value to."</em></p>
           </div>
         </div>
       </div>
@@ -989,6 +1017,14 @@ Page<Charge> listCharges(@QueryParam("starting_after") @PaginationCursor String 
 Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
         @QueryParam("lastTs") @PaginationCursor String lastTimestamp);</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">cursor-parameter count doesn't match pointerField's entries</span></div>
+            <pre><code class="language-java">@Paginated(itemsField = "events", pointerSource = PaginationSignalSource.ITEM_FIELD,
+        pointerField = "id,createdAt")   // 2 entries
+Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId);   // only 1 @PaginationCursor</code></pre>
+            <p class="mistake-why">Fails validation: <em>"needs 2 @PaginationCursor parameter(s) (matching pointerField's 2 comma-separated entries) - found 1."</em></p>
+          </div>
         </div>
       </div>
 
@@ -1002,6 +1038,14 @@ Page<Event> listEvents(@QueryParam("lastId") @PaginationCursor String lastId,
 @Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
         pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
 Page<Repo> listRepos();</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">FULL_URL with a @PaginationCursor parameter too</span></div>
+            <pre><code class="language-java">@Paginated(itemsField = "", pointerKind = PointerKind.FULL_URL,
+        pointerSource = PaginationSignalSource.RESPONSE_HEADER, pointerField = "Link")
+Page<Repo> listRepos(@QueryParam("cursor") @PaginationCursor String cursor);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"has pointerKind = FULL_URL but also has a @PaginationCursor parameter - a full URL is followed as-is, with nothing to inject."</em></p>
           </div>
         </div>
       </div>
@@ -1025,6 +1069,13 @@ Page<Order> listOrders(@QueryParam("offset") @PaginationCursor int offset);</cod
         advance = PaginationAdvance.INCREMENT_BY_ONE,
         totalPagesSource = PaginationSignalSource.RESPONSE_BODY, totalPagesField = "total_pages")
 Page<Order> listOrdersByPage(@QueryParam("page") @PaginationCursor int page);</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">advance() set without pointerSource = NONE</span></div>
+            <pre><code class="language-java">@Paginated(itemsField = "orders", pointerField = "next_cursor",
+        advance = PaginationAdvance.INCREMENT_BY_ONE)   // pointerSource defaults to RESPONSE_BODY, not NONE</code></pre>
+            <p class="mistake-why">Fails validation: <em>"sets advance() but pointerSource is not NONE - advance() is only meaningful for client-driven pagination with no server-given pointer."</em></p>
           </div>
         </div>
       </div>
@@ -1062,6 +1113,14 @@ Page<Order> page = api.listOrders("active", strategy);</code></pre>
     return Optional.of(PaginationRequest.withBodyField("lastId", last.getId())
             .and(PaginationRequest.withBodyField("lastTimestamp", last.getCreatedAt())));
 };</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@Paginated AND a PaginationStrategy&lt;T&gt; on one method</span></div>
+            <pre><code class="language-java">@Paginated(itemsField = "orders", pointerField = "next_cursor")
+Page<Order> listOrders(@QueryParam("cursor") @PaginationCursor String cursor,
+        PaginationStrategy<Order> strategy);</code></pre>
+            <p class="mistake-why">Fails validation: <em>"is annotated with @Paginated and also has a PaginationStrategy&lt;T&gt; parameter - use one or the other."</em> Declarative and programmatic pagination are mutually exclusive.</p>
           </div>
         </div>
       </div>
