@@ -20,7 +20,8 @@ package com.shri.restinpeace;
  *                 r4jBulkhead.onComplete();
  *             }
  *         })
- *         .build());
+ *         .build();
+ * UserApi api = RIP.getClient(UserApi.class, config);
  * </pre>
  *
  * <p>
