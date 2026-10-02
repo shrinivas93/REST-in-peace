@@ -1335,6 +1335,36 @@ discards the response. Anything else is deserialized from the response body
 as JSON, the same way `@Body` serializes non-`String` request bodies. These
 rules apply to a successful (2xx) response — see below for anything else.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// Not actually wrong, just a frequent misunderstanding: returning String
+// does NOT mean "the JSON field called 'name'" or similar - it's always
+// the ENTIRE raw response body, unparsed.
+@GET("https://api.example.com/users/{id}")
+String getUserName(@PathParam("id") String id);
+// Returns {"id":"42","name":"Ada"} in full, not "Ada".
+```
+If you want one field, deserialize into a POJO (or `Map<String, Object>`)
+and read the field yourself - `String` is an escape hatch for "give me the
+bytes as text," not a field selector.
+
+```java
+// A POJO with a constructor mismatch against the response shape doesn't
+// fail validation - RIP has no way to know your server's JSON shape ahead
+// of time - it fails at CALL time instead, as a Gson deserialization
+// exception, often with a confusing message if the field types mismatch
+// (e.g. server sends "id": 42 as a number, your field is a String).
+```
+There's no compile-time or `RIP.getClient(...)`-time check that a POJO
+actually matches your server's response shape - mismatches surface the
+first time the method is actually called. Write a unit test against a real
+response payload ([`MockRestServer`](#testing) is built exactly for this)
+rather than assuming the shape compiles because the Java side does.
+
+</details>
+
 ### Generic collection return types: `List<User>`
 
 A plain generic collection works too — decoded element-by-element into the
@@ -1355,6 +1385,43 @@ of a plain `Class<?>` whenever the two differ - see
 [Why isn't `List<User>` code-generated?](#why-isnt-listuser-code-generated)
 for the one place this still falls back to the reflective proxy rather than
 a fully generated implementation.
+
+**Every wrapping combination, explicitly:**
+
+```java
+@GET("https://api.example.com/users")
+List<User> listUsers();                                              // plain
+
+@GET("https://api.example.com/users")
+RipResponse<List<User>> listUsersWithHeaders();                       // + status/headers
+
+@GET("https://api.example.com/users")
+CompletableFuture<List<User>> listUsersAsync();                       // + async
+
+@GET("https://api.example.com/users")
+CompletableFuture<RipResponse<List<User>>> listUsersAsyncWithHeaders(); // both
+```
+
+A `Set<User>`/`Map<String, User>` works the same way — any generic
+collection/map type Gson itself knows how to deserialize into, not just
+`List`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a raw List with no type parameter.
+@GET("https://api.example.com/users")
+@SuppressWarnings("rawtypes")
+List listUsers();
+```
+This compiles (with a raw-type warning) but decodes as a plain `List` of
+`LinkedTreeMap`s, not `User`s — `ClassCastException` the moment you try to
+treat an element as a `User`. There's no validation error for this one,
+since a raw `List` is still a technically-valid return type — always
+declare the type parameter.
+
+</details>
 
 ### Binary downloads: `byte[]` and `File`
 
@@ -1406,6 +1473,62 @@ reportApi.downloadReport("42", target, (bytesWritten, totalBytes) ->
 `totalBytes` is `-1` if the server didn't send a `Content-Length`. Pass
 `null` for a call that doesn't need progress reporting.
 
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — returns File but no @Destination parameter at all.
+@GET("https://api.example.com/reports/{id}/pdf")
+File downloadReport(@PathParam("id") String id);
+```
+Fails validation: *"returns File but has no @Destination parameter to
+write the response to."* Unlike `byte[]`, a `File` return type needs
+somewhere to write the bytes - RIP never invents a temp file location for
+you implicitly.
+
+```java
+// WRONG — @Destination on a method that doesn't return File.
+@GET("https://api.example.com/reports/{id}/pdf")
+byte[] downloadReport(@PathParam("id") String id, @Destination File target);
+```
+Fails validation: *"has a @Destination parameter but does not return
+File."* `@Destination` only makes sense paired with a `File` return - for
+`byte[]`, the bytes themselves are the return value.
+
+```java
+// WRONG — two @Destination parameters.
+File downloadReport(@PathParam("id") String id, @Destination File a, @Destination File b);
+```
+Fails validation: *"has more than one parameter annotated with
+@Destination."*
+
+```java
+// WRONG — @Destination on a non-File parameter.
+File downloadReport(@PathParam("id") String id, @Destination String targetPath);
+```
+Fails validation: *"has a @Destination parameter of type
+java.lang.String - only File is supported."* Wrap the path in
+`new File(targetPath)` before passing it.
+
+```java
+// WRONG — DownloadProgressListener on a non-binary return type.
+User getUser(@PathParam("id") String id, DownloadProgressListener onProgress);
+```
+Fails validation: *"has a DownloadProgressListener parameter but does not
+return byte[] or File."* Progress reporting only applies to a response
+RIP streams as raw bytes - a JSON-decoded `User` is fully buffered and
+parsed in one step, with no meaningful intermediate progress to report.
+
+```java
+// Easy mistake: assuming a FAILED download still writes partial content
+// to the @Destination file.
+File pdf = reportApi.downloadReport("bad-id", target);
+// throws RestInPeaceHttpException — target is left untouched, not
+// partially written or deleted, whatever it contained before the call.
+```
+
+</details>
+
 ### Response headers and status: `RipResponse<T>`
 
 The rules above give you the body only. Declare `RipResponse<T>` instead of
@@ -1430,6 +1553,62 @@ raw body, `Void` to discard it, anything else deserialized from JSON).
 `RipResponse<T>` only ever wraps a successful response — a non-2xx status
 still throws `RestInPeaceHttpException` as described below, it's never
 wrapped.
+
+**`RipResponse<T>` composes with every other return-type rule** — a
+generic collection, async, or both:
+
+```java
+@GET("https://api.example.com/users")
+RipResponse<List<User>> listUsersWithHeaders();
+
+@GET("https://api.example.com/users/{id}")
+CompletableFuture<RipResponse<User>> getUserAsync(@PathParam("id") String id);
+```
+
+```java
+userApi.getUserAsync("42").thenAccept(response -> {
+    System.out.println(response.getStatus());
+    System.out.println(response.getBody().name());
+});
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a raw RipResponse with no type parameter.
+@SuppressWarnings("rawtypes")
+RipResponse getUser(@PathParam("id") String id);
+```
+Fails validation: *"returns a raw RipResponse with no type parameter."*
+RIP needs to know what `T` to decode the body into — there's no "give me
+the raw body" meaning for a raw `RipResponse` the way plain `String` has.
+
+```java
+// WRONG — RipResponse<File>.
+RipResponse<File> downloadReport(@PathParam("id") String id);
+```
+Fails validation: *"returns RipResponse<File>, which is not supported -
+use a plain File return type with @Destination instead."* `File` already
+has its own dedicated mechanism (`@Destination`) for where the bytes land;
+wrapping it in `RipResponse<T>` would leave `getBody()` returning the same
+`File` you already passed in as `@Destination`, which adds nothing.
+`RipResponse<byte[]>` works fine if you need both the bytes and the
+headers.
+
+```java
+// Looks right, silently wrong: calling getBody() on an exceptional call.
+try {
+    RipResponse<User> response = userApi.getUser("missing");
+} catch (RestInPeaceHttpException e) {
+    // response isn't in scope here — RipResponse<T> is never populated for
+    // a non-2xx status. Handle the error from the exception itself
+    // (e.getStatus(), e.getRawBody()), not by trying to inspect a
+    // response object that was never constructed.
+}
+```
+
+</details>
 
 ## Pagination
 
