@@ -1736,6 +1736,12 @@ RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGener
 }
 // api.getClass() is still UserApi_RipImpl — one unsupported method no longer disqualifies the rest</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">depending on the generated class directly</span></div>
+            <pre><code class="language-java">UserApi_RipImpl impl = new UserApi_RipImpl();   // don't do this</code></pre>
+            <p class="mistake-why">The generated class's name/shape isn't committed public API and can change between releases. Always go through <code>RIP.getClient(UserApi.class)</code>.</p>
+          </div>
         </div>
       </div>
 
@@ -1764,6 +1770,12 @@ RIP.addInterceptor(new CorrelationIdInterceptor("X-Trace-Id", () -> traceIdGener
             <div class="snippet-head"><span class="snippet-tag">Also runnable from the CLI</span></div>
             <pre><code class="language-java">java -cp ... com.shri.restinpeace.codegen.OpenApiClientGenerator \
     petstore-openapi.json src/main/java com.example.client PetStoreApi</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">pointing it at a YAML spec</span></div>
+            <pre><code class="language-java">OpenApiClientGenerator.generate(new File("openapi.yaml"), outDir, pkg, name);</code></pre>
+            <p class="mistake-why">Only JSON specs are supported — convert a YAML OpenAPI document to JSON first (most OpenAPI tooling can export either format).</p>
           </div>
         </div>
       </div>
@@ -1846,6 +1858,26 @@ server.on(HTTPMethod.GET, "/orders/{id}", MockResponse.notModified());
 void resetServer() {
     server.reset();   // one shared server across a whole test class, no cross-test leakage
 }</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">enqueue() when a route already covers the path</span></div>
+            <pre><code class="language-java">server.on(HTTPMethod.GET, "/orders", MockResponse.json(allOrders));
+server.enqueue(MockResponse.status(503, ""));   // DEAD - on(...) already claims every GET /orders
+
+// RIGHT tool: enqueueFor targets the already-registered route directly.
+server.enqueueFor(HTTPMethod.GET, "/orders", MockResponse.status(503, ""));</code></pre>
+            <p class="mistake-why"><code>enqueue(...)</code> only ever answers a path with <em>no</em> route registered via <code>on(...)</code> at all — route matching always happens first and unconditionally shadows the plain queue for a path that has one.</p>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">forgetting server.close()</span></div>
+            <pre><code class="language-java">@Test
+void getOrder_works() {
+    MockRestServer server = MockRestServer.start();
+    // ... no server.close() anywhere - leaks a real bound socket
+}</code></pre>
+            <p class="mistake-why">Use <code>MockRestServerExtension</code> or a <code>@BeforeEach</code>/<code>@AfterEach</code> pair so <code>close()</code> always runs, even if the test body throws.</p>
           </div>
           <div class="snippet neutral">
             <div class="snippet-head"><span class="snippet-tag">Unmatched request · closest-route suggestion</span>
@@ -1954,6 +1986,21 @@ class RipClientsConfig {
                 .build());
     }
 }</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">@RestClient interfaces exist but nothing enables scanning</span></div>
+            <pre><code class="language-java">@SpringBootApplication
+class Application { }   // no @EnableRestInPeaceClients anywhere</code></pre>
+            <p class="mistake-why">No beans are registered at all — injecting <code>UserApi</code> anywhere fails with Spring's own <code>NoSuchBeanDefinitionException</code>. The starter being on the classpath doesn't trigger scanning by itself.</p>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">baseUrlProperty names a property that was never set</span></div>
+            <pre><code class="language-java">@RestClient(baseUrlProperty = "user-api.base-url")
+interface UserApi { ... }
+// application.yml never sets user-api.base-url</code></pre>
+            <p class="mistake-why">Fails Spring Boot startup entirely: <code>IllegalStateException: Required key 'user-api.base-url' not found</code> — the whole application context fails to refresh, not just this one bean.</p>
           </div>
         </div>
       </div>
