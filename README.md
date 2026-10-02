@@ -514,6 +514,77 @@ String getItem(@PathParam("id") String id);
 Every method must have exactly one of these — none or more than one fails
 validation.
 
+**Every verb, side by side** — the only difference between them is which
+ones accept a body (`@Body`/`@Multipart`/`@FormUrlEncoded` all require
+`POST`, `PUT`, `PATCH`, or `DELETE`; using any of them on `GET`, `HEAD`, or
+`OPTIONS` fails validation):
+
+```java
+@GET("https://api.example.com/items/{id}")
+Item get(@PathParam("id") String id);
+
+@POST("https://api.example.com/items")
+Item create(@Body Item item);
+
+@PUT("https://api.example.com/items/{id}")
+Item replace(@PathParam("id") String id, @Body Item item);
+
+@PATCH("https://api.example.com/items/{id}")
+Item update(@PathParam("id") String id, @Body Map<String, Object> patch);
+
+@DELETE("https://api.example.com/items/{id}")
+void delete(@PathParam("id") String id);
+
+// DELETE is the one non-intuitive case: RFC 7231 allows a body on DELETE,
+// and RIP permits @Body/@Multipart/@FormUrlEncoded there too, even though
+// most real APIs never use it.
+@DELETE("https://api.example.com/items/bulk")
+void deleteMany(@Body List<String> ids);
+
+@HEAD("https://api.example.com/items/{id}")
+RipResponse<Void> exists(@PathParam("id") String id);
+
+@OPTIONS("https://api.example.com/items")
+RipResponse<Void> supportedMethods();
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — two method annotations on one method.
+@GET("/items")
+@POST("/items")
+String doSomething();
+```
+Fails validation: *"has more than one HTTP method annotations."* A method
+can mean one verb — if you need both a `GET` and a `POST` against the same
+path, that's two interface methods, not one annotated twice.
+
+```java
+// WRONG — no method annotation at all.
+String getItem(@PathParam("id") String id);
+```
+Fails validation from the other direction: *"is not annotated with any of
+the HTTP method annotations."* RIP has no "default verb" — every method
+needs an explicit one.
+
+```java
+// WRONG — @Body on a GET.
+@GET("/items")
+Item get(@Body Item filter);
+```
+Fails validation: *"is annotated with @Body but HTTP method GET does not
+support a request body."* Encode filter criteria that belong on a `GET` as
+`@QueryParam`/`@QueryMap` instead — a `GET` body is technically possible on
+the wire with some HTTP libraries, but it's unsupported by many
+servers/proxies/caches, which is exactly why RIP refuses to build one for
+you here. If your server genuinely requires a `GET` with a body, that's a
+non-standard server you'll need to talk to with a raw HTTP client outside
+RIP for that one call — RIP always builds a standards-conforming request.
+
+</details>
+
 ### `@PathParam`
 
 Substitutes a `{placeholder}` in the URL template with the argument value.
@@ -529,6 +600,48 @@ The value is percent-encoded before substitution, so a `/`, `?`, `#`, or a
 space in it lands as literal content of that one path segment instead of
 producing a broken or subtly wrong URL (e.g. an unencoded `?` would
 otherwise start a query string partway through the path).
+
+**Multiple placeholders, any order, any type** — `@PathParam` doesn't have
+to be a `String`; any argument is converted with `String.valueOf(...)`
+before encoding:
+
+```java
+@GET("https://api.example.com/orgs/{org}/repos/{repo}/issues/{number}")
+Issue getIssue(@PathParam("number") int number,
+               @PathParam("repo") String repo,
+               @PathParam("org") String org);
+
+// getIssue(42, "rest-in-peace", "shrinivas93") ->
+// GET https://api.example.com/orgs/shrinivas93/repos/rest-in-peace/issues/42
+```
+
+Parameter order in the method signature doesn't need to match the order
+placeholders appear in the URL — each `@PathParam`'s own `value()` is what's
+matched against `{...}`, not position.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — the URL has {id}, but nothing is annotated @PathParam("id").
+@GET("https://api.example.com/items/{id}")
+String getItem(String id);
+```
+Fails validation: *"has path param 'id' in its URL that is not annotated on
+any parameter with @PathParam."* An un-annotated `String` parameter isn't
+assumed to be a path param by position — RIP has no implicit binding here.
+
+```java
+// WRONG — @PathParam("itemId") names something the URL never declares.
+@GET("https://api.example.com/items/{id}")
+String getItem(@PathParam("itemId") String id);
+```
+Fails validation: *"has a @PathParam('itemId') that does not appear as
+'{itemId}' in its URL."* The annotation's `value()` and the URL's
+`{placeholder}` name have to match exactly, including case — `{id}` and
+`{Id}` are different placeholders as far as this check is concerned.
+
+</details>
 
 ### `@Url`
 
@@ -557,6 +670,68 @@ no template left for them to apply to - but `@QueryParam`/`@HeaderParam`/etc.
 still work normally, appended to the given URL. At most one `@Url` parameter
 is allowed per method, and a `null` argument throws at call time.
 
+**A full-URL `@Url` still composes with everything except the template
+itself** — query params, headers, even a request body:
+
+```java
+@POST
+@Headers("X-Trace: enabled")
+String followAction(@Url String actionUrl, @QueryParam("dryRun") boolean dryRun, @Body ActionPayload payload);
+
+// A HATEOAS-style action link embedded in a previous response, still
+// getting query params/headers/body applied on top of it:
+String result = api.followAction(previousResponse.actions().get("cancel"), true, payload);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — a static URL *and* a @Url parameter on the same method.
+@GET("https://api.example.com/items")
+String get(@Url String url);
+```
+Fails validation: *"has both a @Url parameter and a static URL
+'https://api.example.com/items' - remove one or the other."* Leave the
+method annotation's `value()` empty (just `@GET`) when a method uses `@Url`.
+
+```java
+// WRONG — @Url combined with @PathParam.
+@GET
+String get(@Url String url, @PathParam("id") String id);
+```
+Fails validation: *"has both a @Url parameter and a @PathParam parameter -
+@PathParam has no effect when @Url is used."* There's no template for
+`@PathParam` to substitute into once the whole URL is supplied directly -
+bake the id into the URL string yourself before calling.
+
+```java
+// WRONG — two @Url parameters on one method.
+@GET
+String get(@Url String primary, @Url String fallback);
+```
+Fails validation: *"has more than one parameter annotated with @Url."*
+Exactly one dynamic URL source per method, same reasoning as `@Body`.
+
+```java
+// WRONG — @Url on a non-String parameter.
+@GET
+String get(@Url URI uri);
+```
+Fails validation: *"has a @Url parameter of type java.net.URI - only
+String is supported."* Call `.toString()` yourself before passing it in.
+
+```java
+// WRONG — passing null at call time.
+api.get(null);
+```
+Throws `RestInPeaceException`: *"Missing value for @Url parameter in
+method ...get."* Unlike `@QueryParam`/`@HeaderParam`, `@Url` has no
+`defaultValue` to fall back to — there's no sensible default for an entire
+missing URL.
+
+</details>
+
 ### `@QueryParam`
 
 Appends a query string parameter. Supports `required` (throws at call time
@@ -579,6 +754,44 @@ String search(@QueryParam("tag") List<String> tags);
 // search(List.of("a", "b")) sends ?tag=a&tag=b
 ```
 
+**Every combination of `required`/`defaultValue`/plain-optional** side by
+side:
+
+```java
+@GET("https://api.example.com/items")
+String search(
+        @QueryParam(value = "q", required = true) String query,        // throws if null
+        @QueryParam(value = "page", defaultValue = "1") Integer page,   // "1" if null
+        @QueryParam("sort") String sort);                               // omitted entirely if null
+```
+
+A `null` argument for a plain optional `@QueryParam` (no `required`, no
+`defaultValue`) is simply left out of the URL - `search("x", null, null)`
+sends `?q=x` with no `page`/`sort` at all, not `?q=x&page=&sort=`.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — calling a required param with null.
+api.search(null, 1, null);
+```
+Throws `RestInPeaceException`: *"Missing required value for param 'q'."*
+`required = true` means exactly that — it's not a hint, it's enforced on
+every call, not just checked once at validation time (validation can't
+know what a caller will pass at runtime).
+
+```java
+// Easy to misread: required AND defaultValue together.
+@QueryParam(value = "status", required = true, defaultValue = "active") String status
+```
+This compiles and never actually throws — `defaultValue` is checked
+*before* `required`, so a `null` argument always resolves to `"active"`
+long before the required check would ever fire. If a default exists, a
+value is never truly "required" in practice. Pick one: `required` for
+"the caller must decide," `defaultValue` for "assume this if they don't."
+</details>
+
 ### `@HeaderParam`
 
 Sets an HTTP header, with the same `required`/`defaultValue` semantics as
@@ -588,6 +801,30 @@ Sets an HTTP header, with the same `required`/`defaultValue` semantics as
 @GET("https://api.example.com/items")
 String search(@HeaderParam(value = "Authorization", required = true) String token);
 ```
+
+**Multiple headers, mixing fixed and conditional:**
+
+```java
+@GET("https://api.example.com/items")
+String search(
+        @HeaderParam(value = "Authorization", required = true) String token,
+        @HeaderParam(value = "X-Request-Id") String requestId,
+        @HeaderParam(value = "Accept-Language", defaultValue = "en-US") String language);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — forgetting a value-less sentinel header is still "a value".
+api.search("", null, null);
+```
+`""` (empty string) is **not** `null` — `required` only rejects a missing
+argument, not an empty one. `search("", ...)` sends a literal
+`Authorization: ` header with an empty value, which almost certainly isn't
+what you want and won't trip any RIP-level validation. Check for blank
+tokens yourself before calling if that distinction matters to your API.
+</details>
 
 ### `@QueryMap` / `@HeaderMap`
 
@@ -614,6 +851,48 @@ annotated `@QueryMap`, and at most one `@HeaderMap`. Like `@QueryParam`, a
 once per element under the same name, instead of one entry with a single
 mangled `toString()` value.
 
+**A fully dynamic multi-tenant example**, mixing a fixed param, a fixed
+header, and two runtime-sized maps on one call:
+
+```java
+@GET("https://api.example.com/search")
+String search(@QueryParam("q") String query,
+               @HeaderParam("X-Tenant-Id") String tenantId,
+               @QueryMap Map<String, Object> filters,
+               @HeaderMap Map<String, String> extraHeaders);
+```
+
+```java
+Map<String, Object> filters = new LinkedHashMap<>();
+filters.put("category", "electronics");
+filters.put("tag", List.of("sale", "new"));   // repeats: &tag=sale&tag=new
+filters.put("inStock", null);                  // skipped entirely
+
+api.search("laptop", "tenant-42", filters, Map.of("X-Debug", "true"));
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — two parameters both annotated @QueryMap on one method.
+String search(@QueryMap Map<String, Object> a, @QueryMap Map<String, Object> b);
+```
+Fails validation: *"has more than one parameter annotated with @QueryMap."*
+If you have two logically distinct maps, merge them into one `Map` before
+calling, or promote the always-present ones to fixed `@QueryParam`s instead.
+
+```java
+// WRONG — @QueryMap on something that isn't a Map.
+String search(@QueryMap List<String> filters);
+```
+Fails validation: *"has a parameter annotated with @QueryMap that is not a
+Map."* A `List` has no key to use as the param name — if you just need a
+repeated single-name param, use `@QueryParam` on the `Collection` directly
+instead of `@QueryMap`.
+
+</details>
+
 ### `@Headers`
 
 Sets one or more fixed HTTP headers on a method — for a header whose value
@@ -633,6 +912,63 @@ method; if both set the same header name, `@HeaderParam`/`@HeaderMap` wins,
 since a per-call value is more specific than an always-on method annotation.
 An entry with no `:`, or an empty header name, fails validation.
 
+**Precedence in action** — the fixed `@Headers` entry is a floor, not a
+final answer:
+
+```java
+@GET("https://api.example.com/items")
+@Headers("X-Api-Version: 1")
+List<Item> listItems(@HeaderParam("X-Api-Version") String overrideVersion);
+
+// listItems(null)   -> sends X-Api-Version: 1        (the @Headers default)
+// listItems("2")    -> sends X-Api-Version: 2         (the per-call value wins)
+```
+
+Interface-level `@Headers` on `@RestClient` itself applies to every method
+on the interface, same precedence rules:
+
+```java
+@RestClient
+@BaseUrl("https://api.example.com")
+@Headers({ "Accept: application/json", "X-Client: rest-in-peace" })
+public interface ItemApi {
+    @GET("/items")
+    List<Item> listItems();   // always sends both headers
+}
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — missing the ':' separator entirely.
+@Headers("X-Api-Version 2")
+```
+Fails validation: *"has a @Headers entry 'X-Api-Version 2' with no ':' -
+expected 'Name: Value'."* A space instead of a colon is the single most
+common typo here — `Headers` parses each string by splitting on the first
+`:`, not by whitespace.
+
+```java
+// WRONG — empty header name before the colon.
+@Headers(": application/json")
+```
+Fails validation: *"has a @Headers entry ': application/json' with an
+empty header name."*
+
+```java
+// Technically valid, but probably not what you meant: a colon *in* the
+// value (e.g. a URL) is fine — only the *first* colon is the separator.
+@Headers("Link: <https://api.example.com/next>; rel=\"next\"")
+```
+This parses correctly as header `Link` with value
+`<https://api.example.com/next>; rel="next"` — only the first `:` splits
+the string, so a value containing its own colons (URLs, timestamps) is
+safe. It's listed here because it surprises people the first time, not
+because it's broken.
+
+</details>
+
 ### `@Body`
 
 Sends a request body. Only valid on `POST`, `PUT`, `PATCH`, and `DELETE` —
@@ -648,6 +984,61 @@ String createRaw(@Body String rawJson);
 ```
 
 At most one parameter per method may be annotated `@Body`.
+
+**Every HTTP verb that accepts one, and a nested generic body:**
+
+```java
+@POST("https://api.example.com/items")
+Item create(@Body Item item);
+
+@PUT("https://api.example.com/items/{id}")
+Item replace(@PathParam("id") String id, @Body Item item);
+
+@PATCH("https://api.example.com/items/{id}")
+Item patch(@PathParam("id") String id, @Body Map<String, Object> partialFields);
+
+@POST("https://api.example.com/batch")
+BatchResult createMany(@Body List<Item> items);   // a generic collection as the BODY, not the return type
+```
+
+A `null` `@Body` argument is sent as a JSON `null` body (via the same
+`ObjectMapper` every other body goes through), not an empty/missing one —
+useful for an endpoint that genuinely distinguishes "no body" from
+`"field": null`; check your server's own handling if that distinction
+matters.
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Body on a GET.
+@GET("/items")
+Item search(@Body SearchCriteria criteria);
+```
+Fails validation: *"is annotated with @Body but HTTP method GET does not
+support a request body."* See the [HTTP method annotations](#http-method-annotations)
+section above for the fix (query params instead).
+
+```java
+// WRONG — two @Body parameters on one method.
+Item create(@Body Item a, @Body Item b);
+```
+Fails validation: *"has more than one parameter annotated with @Body."*
+Wrap both into one object (or one `Map`) and send that instead — a request
+has exactly one body on the wire, so RIP has exactly one `@Body` slot.
+
+```java
+// Misleading rather than broken: @Body combined with @QueryParam.
+@POST("https://api.example.com/items")
+Item create(@Body Item item, @QueryParam("dryRun") boolean dryRun);
+```
+This is perfectly valid and common (`?dryRun=true` alongside a JSON body) -
+listed here only because it's easy to assume `@Body` "uses up" the method
+the way `@Multipart`/`@FormUrlEncoded` exclude each other. `@Body` only
+conflicts with the *other* body-encoding strategies, never with
+`@QueryParam`/`@HeaderParam`/`@PathParam`.
+
+</details>
 
 ### `@Multipart` / `@Part` / `@PartMap`
 
@@ -733,6 +1124,96 @@ part's name (its `@Part`/`@PartMap` key), needed to tell parts apart since
 calls for different parts interleave rather than running one at a time.
 Pass `null` for a call that doesn't need progress reporting.
 
+**All four `@Part` value types on one method**, to see the shape
+differences side by side:
+
+```java
+@POST("https://api.example.com/documents")
+@Multipart
+String upload(
+        @Part("title") String title,                                    // plain form field
+        @Part("document") File document,                                 // filename = document.getName()
+        @Part(value = "thumbnail", fileName = "thumb.png") byte[] thumb,  // filename must be supplied
+        @Part(value = "stream", fileName = "data.bin") InputStream data); // filename must be supplied
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @Multipart on a method with no @Part/@PartMap at all.
+@POST("https://api.example.com/ping")
+@Multipart
+String ping();
+```
+Fails validation: *"is annotated with @Multipart but has no @Part or
+@PartMap parameters."* An empty multipart body is never useful - if you
+don't need a body, drop `@Multipart` entirely.
+
+```java
+// WRONG — @Multipart combined with @Body.
+@POST("https://api.example.com/items")
+@Multipart
+String create(@Body Item item, @Part("file") File attachment);
+```
+Fails validation: *"is annotated with @Multipart and also has a @Body
+parameter - use one or the other."* A request has one body-encoding
+strategy; mix the JSON fields into the multipart body as additional
+`@Part` string fields instead if you need both.
+
+```java
+// WRONG — @Multipart combined with @FormUrlEncoded.
+@POST("https://api.example.com/items")
+@Multipart
+@FormUrlEncoded
+String create(@Part("file") File f, @Field("name") String name);
+```
+Fails validation: *"is annotated with both @Multipart and @FormUrlEncoded -
+use one or the other."*
+
+```java
+// WRONG — @Part on a method that isn't @Multipart.
+@POST("https://api.example.com/items")
+String create(@Part("file") File f);
+```
+Fails validation: *"has a @Part parameter but is not annotated with
+@Multipart."* Forgetting the method-level `@Multipart` while adding
+`@Part` parameters is the single most common mistake with this feature -
+the two always travel together.
+
+```java
+// WRONG — an unsupported @Part value type.
+@Multipart
+String create(@Part("count") int count);
+```
+Fails validation: *"has a @Part parameter of type int - only String, File,
+byte[], and InputStream are supported."* Send a number as a `String` form
+field (`@Part("count") String count`, passing `String.valueOf(count)`) -
+there's no numeric multipart field type on the wire anyway.
+
+```java
+// WRONG — UploadProgressListener without @Multipart.
+String create(@Part("file") File f, UploadProgressListener onProgress);
+```
+Fails validation: *"has an UploadProgressListener parameter but is not
+annotated with @Multipart."* Progress reporting only makes sense for a
+multipart file upload - it has no meaning for a JSON `@Body` call, which
+is written to the wire in one shot regardless.
+
+```java
+// Easy to get backwards: forgetting PartValue when a @PartMap entry needs
+// its OWN filename, distinct from its map key.
+Map<String, Object> parts = new LinkedHashMap<>();
+parts.put("file", photoBytes);   // filename defaults to "file", NOT "photo.jpg"
+```
+A `@PartMap` entry's filename defaults to its *map key*, not anything
+derived from the value - `"file"` above uploads as a part literally named
+`file` with filename `file`, which is rarely what you want for a `byte[]`.
+Wrap it in `PartValue.of(photoBytes, "photo.jpg")` (shown above) whenever
+the filename needs to differ from the key.
+
+</details>
+
 ### `@FormUrlEncoded` / `@Field` / `@FieldMap`
 
 Sends an `application/x-www-form-urlencoded` body instead of `@Body`'s
@@ -768,6 +1249,71 @@ String search(@FieldMap Map<String, Object> filters);
 `@FieldMap` combines with fixed `@Field` parameters on the same method, a
 `null` map or a `null` entry value is skipped rather than an error, and at
 most one `@FieldMap` parameter per method is allowed.
+
+**A realistic OAuth2 `client_credentials` grant**, combining fixed and
+optional fields:
+
+```java
+@POST("https://auth.example.com/oauth/token")
+@FormUrlEncoded
+TokenResponse clientCredentials(
+        @Field(value = "grant_type", defaultValue = "client_credentials") String grantType,
+        @Field("client_id") String clientId,
+        @Field("client_secret") String clientSecret,
+        @Field(value = "scope", required = false) String scope);
+```
+
+<details>
+<summary><strong>❌ Common mistakes</strong></summary>
+
+```java
+// WRONG — @FormUrlEncoded on a GET.
+@GET("https://auth.example.com/token")
+@FormUrlEncoded
+String getToken(@Field("grant_type") String grantType);
+```
+Fails validation: *"is annotated with @FormUrlEncoded but HTTP method GET
+does not support a request body."*
+
+```java
+// WRONG — no @Field/@FieldMap at all.
+@POST("https://api.example.com/ping")
+@FormUrlEncoded
+String ping();
+```
+Fails validation: *"is annotated with @FormUrlEncoded but has no @Field or
+@FieldMap parameters."*
+
+```java
+// WRONG — @FormUrlEncoded combined with @Body.
+@POST("https://api.example.com/items")
+@FormUrlEncoded
+String create(@Body Item item, @Field("name") String name);
+```
+Fails validation: *"is annotated with @FormUrlEncoded and also has a @Body
+parameter - use one or the other."*
+
+```java
+// WRONG — @Field without the method-level @FormUrlEncoded.
+@POST("https://api.example.com/items")
+String create(@Field("name") String name);
+```
+Fails validation: *"has a @Field parameter but is not annotated with
+@FormUrlEncoded."* Same forgot-the-method-annotation mistake as `@Part`
+above.
+
+```java
+// Sends the wrong Content-Type if you reach for the wrong annotation:
+// @FormUrlEncoded is application/x-www-form-urlencoded (key=value&key=value,
+// no file support); @Multipart is multipart/form-data (supports files,
+// larger/binary-safe, heavier wire format). Picking @FormUrlEncoded for a
+// file upload isn't a validation error - @Field only accepts values RIP
+// can URL-encode as text, so there's no File/byte[]/InputStream @Field
+// type to reach for by mistake - but it's the most common "why doesn't my
+// server see the file" confusion between the two.
+```
+
+</details>
 
 ## Return types
 
