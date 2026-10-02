@@ -30,7 +30,7 @@ package com.shri.restinpeace;
  *                 r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t);
  *             }
  *         })
- *         .build());
+ *         .build();
  * </pre>
  *
  * <p>

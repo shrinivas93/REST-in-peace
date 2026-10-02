@@ -2887,7 +2887,7 @@ RipClientConfig config = RipClientConfig.builder()
                 r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t);
             }
         })
-        .build());
+        .build();
 ```
 
 Passing the status code to `onSuccess` (rather than RIP guessing at its

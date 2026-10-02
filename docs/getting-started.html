@@ -1297,14 +1297,14 @@ public interface SlowApi {
               <span class="snippet-caption">CircuitBreakerProvider — zero hard dependency either way</span></div>
             <pre><code class="language-java">CircuitBreaker r4jBreaker = CircuitBreaker.ofDefaults("payment-api");
 
-RipClientConfig.builder().circuitBreaker(new CircuitBreakerProvider() {
+RipClientConfig config = RipClientConfig.builder().circuitBreaker(new CircuitBreakerProvider() {
     public boolean tryAcquirePermission() { return r4jBreaker.tryAcquirePermission(); }
     public void onSuccess(long durationNanos, int statusCode) {
         if (statusCode >= 500) r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, new RuntimeException("HTTP " + statusCode));
         else r4jBreaker.onSuccess(durationNanos, TimeUnit.NANOSECONDS);
     }
     public void onError(long durationNanos, Throwable t) { r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t); }
-}).build());</code></pre>
+}).build();</code></pre>
           </div>
           <div class="snippet mistake">
             <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>

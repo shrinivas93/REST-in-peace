@@ -20,7 +20,7 @@ package com.shri.restinpeace;
  *                 r4jBulkhead.onComplete();
  *             }
  *         })
- *         .build());
+ *         .build();
  * </pre>
  *
  * <p>
