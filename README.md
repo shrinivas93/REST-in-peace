@@ -1360,7 +1360,7 @@ bytes as text," not a field selector.
 There's no compile-time or `RIP.getClient(...)`-time check that a POJO
 actually matches your server's response shape - mismatches surface the
 first time the method is actually called. Write a unit test against a real
-response payload ([`MockRestServer`](#testing) is built exactly for this)
+response payload ([`MockRestServer`](#testing-with-mockrestserver) is built exactly for this)
 rather than assuming the shape compiles because the Java side does.
 
 </details>
