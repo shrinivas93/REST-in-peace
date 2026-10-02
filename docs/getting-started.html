@@ -1506,6 +1506,12 @@ api.getUser("does-not-exist");   // throws the same exception again - served fro
               <span class="snippet-caption">a client's own setting still wins over this</span></div>
             <pre><code class="language-java">RIP.setNegativeCacheTtlMillis(TimeUnit.MINUTES.toMillis(1));</code></pre>
           </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">expecting it to cover every error status</span></div>
+            <pre><code class="language-java">api.getUser("rate-limited");   // a 429, NOT a 404 - never negatively cached</code></pre>
+            <p class="mistake-why">Only ever applies to a confirmed <code>404</code> — a <code>429</code>/<code>500</code>/anything else is never cached under this mechanism, since those are transient failures, not a confirmed "this doesn't exist."</p>
+          </div>
         </div>
       </div>
 
@@ -1522,6 +1528,12 @@ api.getUser("does-not-exist");   // throws the same exception again - served fro
             <div class="snippet-head"><span class="snippet-tag">Alternate · manual eviction</span>
               <span class="snippet-caption">Cache.key(...) computes the same key CacheCoordinator uses internally</span></div>
             <pre><code class="language-java">cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42"));</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">eviction key doesn't match the cached one exactly</span></div>
+            <pre><code class="language-java">cache.evict(Cache.key(HTTPMethod.GET, "https://api.example.com/users/42/"));  // trailing slash</code></pre>
+            <p class="mistake-why"><code>Cache.key(...)</code> does no normalization — a URL that doesn't match the exact one actually requested (trailing slash, casing, query string) silently misses, and the stale entry stays cached with no error.</p>
           </div>
         </div>
       </div>
@@ -1541,6 +1553,16 @@ api.getUser("does-not-exist");   // throws the same exception again - served fro
             <div class="snippet-head"><span class="snippet-tag">Alternate · shared default</span>
               <span class="snippet-caption">a client's own setting still wins over this</span></div>
             <pre><code class="language-java">RIP.setCacheKeyIncludesQueryString(false);</code></pre>
+          </div>
+          <div class="snippet mistake">
+            <div class="snippet-head"><span class="snippet-tag">❌ Mistake</span>
+              <span class="snippet-caption">the sharpest footgun in caching</span></div>
+            <pre><code class="language-java">// cacheKeyIncludesQueryString(false) on a client whose query params
+// DO change the response:
+api.search("laptops");   // cached under just the path
+api.search("phones");    // served the CACHED "laptops" response instead
+                          // of a fresh search - no error, looks like a hit</code></pre>
+            <p class="mistake-why">Only disable this when you've confirmed every cached endpoint's query params are provably irrelevant to the response (pure tracking params the server ignores) — otherwise it silently serves wrong data.</p>
           </div>
         </div>
       </div>
