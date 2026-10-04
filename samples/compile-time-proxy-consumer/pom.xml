@@ -21,7 +21,7 @@
 		<maven.compiler.target>1.8</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<!-- Must match core's own pom.xml <version> - see README.md. -->
-		<rest-in-peace.version>1.0.0.36-SNAPSHOT</rest-in-peace.version>
+		<rest-in-peace.version>1.0.0.52</rest-in-peace.version>
 	</properties>
 
 	<dependencies>
@@ -81,7 +81,7 @@
 					<plugin>
 						<groupId>org.graalvm.buildtools</groupId>
 						<artifactId>native-maven-plugin</artifactId>
-						<version>1.1.13</version>
+						<version>1.1.14</version>
 						<extensions>true</extensions>
 						<executions>
 							<execution>
