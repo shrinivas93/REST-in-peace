@@ -23,8 +23,8 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<!-- Must match core and the starter's own shared parent <version> -
 		     see README.md. Both always match each other by construction. -->
-		<rest-in-peace.version>1.0.0.36-SNAPSHOT</rest-in-peace.version>
-		<rest-in-peace-spring-boot-starter.version>1.0.0.36-SNAPSHOT</rest-in-peace-spring-boot-starter.version>
+		<rest-in-peace.version>1.0.0.52</rest-in-peace.version>
+		<rest-in-peace-spring-boot-starter.version>1.0.0.52</rest-in-peace-spring-boot-starter.version>
 		<spring-boot.version>4.1.1</spring-boot.version>
 	</properties>
 
