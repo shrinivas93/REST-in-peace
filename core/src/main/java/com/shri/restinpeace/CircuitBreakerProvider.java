@@ -30,7 +30,8 @@ package com.shri.restinpeace;
  *                 r4jBreaker.onError(durationNanos, TimeUnit.NANOSECONDS, t);
  *             }
  *         })
- *         .build());
+ *         .build();
+ * UserApi api = RIP.getClient(UserApi.class, config);
  * </pre>
  *
  * <p>
