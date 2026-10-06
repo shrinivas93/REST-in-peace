@@ -185,6 +185,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   response queue `enqueueFor`/`onFlaky` already used for retry-recovery
   scripting - no change to `MockResponse` was needed.
 
+## [1.0.0.48] - 2026-09-20
 
 ### Added
 
