@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0.52] - 2026-09-30
+
 ### Added
 
 - A pluggable `CallAdapter`/`CallAdapterFactory` SPI, letting a method
@@ -78,6 +80,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its own dedicated "Reactive (Project Reactor)" section, and
   `docs/getting-started.html`'s field guide gained a matching entry. No
   production code change.
+
+## [1.0.0.51] - 2026-09-22
+
+### Added
 
 - `@Paginated` follows a next-page pointer automatically instead of
   hand-writing the fetch-extract-repeat loop, handing back a `Page<T>` for
@@ -179,7 +185,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   response queue `enqueueFor`/`onFlaky` already used for retry-recovery
   scripting - no change to `MockResponse` was needed.
 
-## [1.0.0.48] - 2026-09-20
 
 ### Added
 
