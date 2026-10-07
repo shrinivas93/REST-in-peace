@@ -170,14 +170,14 @@ dependency with one coherent API surface:
 
 | | REST-in-peace | Retrofit | Feign / OpenFeign | `RestTemplate`/`WebClient` |
 |---|---|---|---|---|
-| Declarative `@RestClient`-style interfaces | ✅ | ✅ | ✅ | ❌ (imperative, call-by-call) |
-| Pagination helper (`@Paginated` → `Page<T>`/`Stream<T>`/`Flux<T>`) | ✅ built in | ❌ roll your own | ❌ roll your own | ❌ roll your own |
+| Declarative `@RestClient`-style interfaces | ✅ | ✅ | ✅ | ✅ via Spring HTTP Interfaces (`@HttpExchange`) |
+| Pagination helper (`@Paginated` → `Page<T>`/`Stream<T>`; `Flux<T>` via the separate `rest-in-peace-reactor` module) | ✅ built in | ❌ roll your own | ❌ roll your own | ❌ roll your own |
 | Circuit breaker / bulkhead | ✅ built in | ❌ wire in Resilience4j yourself | ❌ wire in Resilience4j/Spring Cloud CircuitBreaker yourself | ❌ wire in Resilience4j yourself |
 | HTTP-aware response caching (`Cache-Control`/`ETag`/stale-while-revalidate) | ✅ built in | ❌ configure OkHttp's cache + handle headers yourself | ❌ roll your own | ❌ roll your own |
-| Bundled local test server | ✅ `MockRestServer` | OkHttp's `MockWebServer` (separate artifact) | needs WireMock (separate) | needs WireMock (separate) |
+| Bundled local test server | ✅ `MockRestServer` | OkHttp's `MockWebServer` (separate artifact) | needs WireMock (separate) | Spring's bundled `MockRestServiceServer` (a mock, not a real local server) |
 | OpenAPI spec → client interface generator | ✅ bundled `OpenApiClientGenerator` | separate OpenAPI Generator template | separate OpenAPI Generator template | separate OpenAPI Generator template |
 | Compile-time, reflection-free dispatch | ✅ optional annotation processor | runtime dynamic proxy only | runtime dynamic proxy only | n/a |
-| Pluggable reactive return types | ✅ `CallAdapter` SPI (`Mono<T>`/`Flux<T>` today) | ✅ via separate adapter artifacts | mainly synchronous | ✅ native (`WebClient` only) |
+| Pluggable reactive return types | `CallAdapter` SPI; `Mono<T>`/`Flux<T>` via `rest-in-peace-reactor` (not yet on Maven Central - see [Installation](#installation)) | ✅ via separate adapter artifacts | mainly synchronous | ✅ native (`WebClient` only) |
 
 This isn't a claim that Retrofit or Feign are worse — both are mature,
 battle-tested, and have a much larger ecosystem than REST-in-peace does
