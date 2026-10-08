@@ -266,15 +266,13 @@ for what actually happens under `getUser(...)`.
 ## Installation
 
 Published to [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace)
-under `io.github.shrinivas93:rest-in-peace` (core) and
+under `io.github.shrinivas93:rest-in-peace` (core),
 `io.github.shrinivas93:rest-in-peace-spring-boot-starter` (the
-[Spring Boot starter](#spring--spring-boot)) — no repository declaration or
-credentials needed, just add the dependency.
+[Spring Boot starter](#spring--spring-boot)), and
 `io.github.shrinivas93:rest-in-peace-reactor` (the
-[`Mono<T>`/`Flux<T>` `CallAdapter`s](#reactive-project-reactor)) isn't
-published yet - see [`ROADMAP.md`](ROADMAP.md) for status; build it locally
-in the meantime, per [Reactive (Project Reactor)](#reactive-project-reactor)
-below. The other two coordinates are also
+[`Mono<T>`/`Flux<T>` `CallAdapter`s](#reactive-project-reactor)) — no
+repository declaration or credentials needed, just add the dependency.
+All three are also
 published to GitHub Packages, which does require authentication even for
 public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
@@ -2324,25 +2322,15 @@ implementations for Project Reactor's `Mono<T>` and plain `Flux<T>`, plus a
 pagination-aware counterpart SPI — see [Pagination](#pagination) above) —
 add the dependency, register once at startup, and any `@RestClient` method
 can return any of the three directly, with no other configuration.
-`rest-in-peace-reactor` isn't published yet (see the
-[Installation](#installation) section above), so build it locally first -
-`mvn install -N && mvn install -DskipTests -pl core,rest-in-peace-reactor`
-from the repository root - then depend on whatever version that installs
-(see [`samples/reactor-consumer`](samples/reactor-consumer) for a complete,
-runnable example resolving it exactly this way):
+Published on Maven Central (see [Installation](#installation) above) -
+see [`samples/reactor-consumer`](samples/reactor-consumer) for a complete,
+runnable example:
 
 ```xml
-<!-- Replace with whatever version `mvn install` above actually installed -
-     it matches core's own version by construction (shared parent). A
-     comment can't go inside <version> itself - Maven sees the element's
-     text content as empty and rejects the POM - and an illustrative real
-     version number would silently go stale as the parent version moves on,
-     so REPLACE_WITH_INSTALLED_VERSION is deliberately not a real version:
-     it fails to resolve instead of quietly resolving to the wrong one. -->
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace-reactor</artifactId>
-    <version>REPLACE_WITH_INSTALLED_VERSION</version>
+    <version>1.0.0.55</version>
 </dependency>
 ```
 
