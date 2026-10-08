@@ -321,11 +321,11 @@
           <tbody>
             <tr><th scope="row">Declarative <code>@RestClient</code>-style interfaces</th><td>✅</td><td>✅</td><td>✅</td><td>✅ via Spring HTTP Interfaces (<code>@HttpExchange</code>)</td></tr>
             <tr><th scope="row">Pagination helper (<code>@Paginated</code> → <code>Page&lt;T&gt;</code>/<code>Stream&lt;T&gt;</code>; <code>Flux&lt;T&gt;</code> via the separate <code>rest-in-peace-reactor</code> module)</th><td>✅ built in</td><td>❌ roll your own</td><td>❌ roll your own</td><td>❌ roll your own</td></tr>
-            <tr><th scope="row">Circuit breaker / bulkhead</th><td>✅ built in</td><td>❌ wire in Resilience4j yourself</td><td>❌ wire in Resilience4j/Spring Cloud CircuitBreaker yourself</td><td>❌ wire in Resilience4j yourself</td></tr>
+            <tr><th scope="row">Circuit breaker / bulkhead</th><td>✅ built in</td><td>❌ wire in Resilience4j yourself</td><td>❌ standalone Feign: wire in <code>feign-resilience4j</code> yourself; Spring Cloud OpenFeign: add the CircuitBreaker starter + a property flag</td><td>❌ wire in Resilience4j yourself</td></tr>
             <tr><th scope="row">HTTP-aware response caching (<code>Cache-Control</code>/<code>ETag</code>/stale-while-revalidate)</th><td>✅ built in</td><td>❌ configure OkHttp's cache + handle headers yourself</td><td>❌ roll your own</td><td>❌ roll your own</td></tr>
             <tr><th scope="row">Bundled local test server</th><td>✅ <code>MockRestServer</code></td><td>OkHttp's <code>MockWebServer</code> (separate artifact)</td><td>needs WireMock (separate)</td><td>Spring's bundled <code>MockRestServiceServer</code> (a mock, not a real local server)</td></tr>
             <tr><th scope="row">OpenAPI spec → client interface generator</th><td>✅ bundled <code>OpenApiClientGenerator</code></td><td>separate OpenAPI Generator template</td><td>separate OpenAPI Generator template</td><td>separate OpenAPI Generator template</td></tr>
-            <tr><th scope="row">Compile-time, reflection-free dispatch</th><td>✅ optional annotation processor</td><td>runtime dynamic proxy only</td><td>runtime dynamic proxy only</td><td>n/a</td></tr>
+            <tr><th scope="row">Compile-time, reflection-free dispatch</th><td>✅ optional annotation processor</td><td>runtime dynamic proxy only</td><td>runtime dynamic proxy only</td><td>runtime proxy (<code>HttpServiceProxyFactory</code>)</td></tr>
             <tr><th scope="row">Pluggable reactive return types</th><td><code>CallAdapter</code> SPI; <code>Mono&lt;T&gt;</code>/<code>Flux&lt;T&gt;</code> via <code>rest-in-peace-reactor</code></td><td>✅ via separate adapter artifacts</td><td>mainly synchronous</td><td>✅ native (<code>WebClient</code> only)</td></tr>
           </tbody>
         </table>
@@ -877,7 +877,7 @@ Optional&lt;User&gt; findUser(@PathParam("id") String id);</code></pre>
 
       <div class="feature" id="reactive">
         <h3>Reactive — Mono&lt;T&gt; / Flux&lt;T&gt;</h3>
-        <p class="blurb">The <code>rest-in-peace-reactor</code> module adds a <code>CallAdapterFactory</code> for Project Reactor — add the dependency, call <code>RestInPeaceReactor.register()</code> once at startup, and any method can return <code>Mono&lt;T&gt;</code> or <code>Flux&lt;T&gt;</code> directly. It will be published on Maven Central alongside core starting with the next release. See the main README's <a href="https://github.com/shrinivas93/REST-in-peace#reactive-project-reactor">Reactive (Project Reactor)</a> section for the full walkthrough.</p>
+        <p class="blurb">The <code>rest-in-peace-reactor</code> module adds a <code>CallAdapterFactory</code> for Project Reactor — add the dependency, call <code>RestInPeaceReactor.register()</code> once at startup, and any method can return <code>Mono&lt;T&gt;</code> or <code>Flux&lt;T&gt;</code> directly. Published on Maven Central alongside core. See the main README's <a href="https://github.com/shrinivas93/REST-in-peace#reactive-project-reactor">Reactive (Project Reactor)</a> section for the full walkthrough.</p>
         <div class="snippets">
           <div class="snippet java">
             <div class="snippet-head"><span class="snippet-tag">Basic · Mono&lt;T&gt;</span>
