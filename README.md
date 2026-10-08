@@ -172,11 +172,11 @@ dependency with one coherent API surface:
 |---|---|---|---|---|
 | Declarative `@RestClient`-style interfaces | ✅ | ✅ | ✅ | ✅ via Spring HTTP Interfaces (`@HttpExchange`) |
 | Pagination helper (`@Paginated` → `Page<T>`/`Stream<T>`; `Flux<T>` via the separate `rest-in-peace-reactor` module) | ✅ built in | ❌ roll your own | ❌ roll your own | ❌ roll your own |
-| Circuit breaker / bulkhead | ✅ built in | ❌ wire in Resilience4j yourself | ❌ wire in Resilience4j/Spring Cloud CircuitBreaker yourself | ❌ wire in Resilience4j yourself |
+| Circuit breaker / bulkhead | ✅ built in | ❌ wire in Resilience4j yourself | ❌ standalone Feign: wire in `feign-resilience4j` yourself; Spring Cloud OpenFeign: add the CircuitBreaker starter + a property flag | ❌ wire in Resilience4j yourself |
 | HTTP-aware response caching (`Cache-Control`/`ETag`/stale-while-revalidate) | ✅ built in | ❌ configure OkHttp's cache + handle headers yourself | ❌ roll your own | ❌ roll your own |
 | Bundled local test server | ✅ `MockRestServer` | OkHttp's `MockWebServer` (separate artifact) | needs WireMock (separate) | Spring's bundled `MockRestServiceServer` (a mock, not a real local server) |
 | OpenAPI spec → client interface generator | ✅ bundled `OpenApiClientGenerator` | separate OpenAPI Generator template | separate OpenAPI Generator template | separate OpenAPI Generator template |
-| Compile-time, reflection-free dispatch | ✅ optional annotation processor | runtime dynamic proxy only | runtime dynamic proxy only | n/a |
+| Compile-time, reflection-free dispatch | ✅ optional annotation processor | runtime dynamic proxy only | runtime dynamic proxy only | runtime proxy (`HttpServiceProxyFactory`) |
 | Pluggable reactive return types | `CallAdapter` SPI; `Mono<T>`/`Flux<T>` via `rest-in-peace-reactor` | ✅ via separate adapter artifacts | mainly synchronous | ✅ native (`WebClient` only) |
 
 This isn't a claim that Retrofit or Feign are worse — both are mature,
@@ -297,15 +297,13 @@ reconcile yourself.
 ## Installation
 
 Published to [Maven Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace)
-under `io.github.shrinivas93:rest-in-peace` (core) and
+under `io.github.shrinivas93:rest-in-peace` (core),
 `io.github.shrinivas93:rest-in-peace-spring-boot-starter` (the
-[Spring Boot starter](#spring--spring-boot)) — no repository declaration
-or credentials needed, just add the dependency.
+[Spring Boot starter](#spring--spring-boot)), and
 `io.github.shrinivas93:rest-in-peace-reactor` (the
-[`Mono<T>`/`Flux<T>` `CallAdapter`s](#reactive-project-reactor)) will join
-them starting with the next tagged release — see that section for how to
-build it locally until then.
-All published artifacts are also
+[`Mono<T>`/`Flux<T>` `CallAdapter`s](#reactive-project-reactor)) — no
+repository declaration or credentials needed, just add the dependency.
+All three are also
 published to GitHub Packages, which does require authentication even for
 public read access — see
 [GitHub's Maven registry docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry)
@@ -2355,10 +2353,7 @@ implementations for Project Reactor's `Mono<T>` and plain `Flux<T>`, plus a
 pagination-aware counterpart SPI — see [Pagination](#pagination) above) —
 add the dependency, register once at startup, and any `@RestClient` method
 can return any of the three directly, with no other configuration.
-Will be published on Maven Central starting with the next tagged release
-(see [Installation](#installation) above) - until then, build it locally
-first (`mvn install -N && mvn install -DskipTests -pl core,rest-in-peace-reactor`
-from the repository root), then depend on whatever version that installs -
+Published on Maven Central (see [Installation](#installation) above) -
 see [`samples/reactor-consumer`](samples/reactor-consumer) for a complete,
 runnable example:
 
@@ -2366,7 +2361,7 @@ runnable example:
 <dependency>
     <groupId>io.github.shrinivas93</groupId>
     <artifactId>rest-in-peace-reactor</artifactId>
-    <version>REPLACE_WITH_INSTALLED_VERSION</version>
+    <version>1.0.0.57</version>
 </dependency>
 ```
 
