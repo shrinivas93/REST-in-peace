@@ -41,9 +41,12 @@ zero extra configuration.
 
 ## Running it
 
-This library isn't published anywhere `mvn` looks by default yet (see the
-"Maven Central publishing" item in [`ROADMAP.md`](../../ROADMAP.md)), so
-you need a locally-installed build of it first. core shares a parent POM
+This sample deliberately pins the repository's current `-SNAPSHOT` dev
+version rather than a released one, so it always exercises whatever's
+actually in this checkout - even though `core` itself is published on
+Maven Central (see [Installation](../../README.md#installation)), you
+still need a locally-installed build of this exact version first. core
+shares a parent POM
 ([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
 non-recursive: just that one POM), since core's own published POM
 references it:

@@ -25,7 +25,7 @@
 		     <version> - see README.md. One property, referenced by both
 		     dependencies below, so a future bump can't desync them (they're
 		     otherwise independent literals in this non-reactor POM). -->
-		<rest-in-peace.version>1.0.0.54-SNAPSHOT</rest-in-peace.version>
+		<rest-in-peace.version>1.0.0.56-SNAPSHOT</rest-in-peace.version>
 	</properties>
 
 	<dependencies>
