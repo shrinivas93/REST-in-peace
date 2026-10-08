@@ -37,14 +37,13 @@ for reference rather than tracked in code. Check items off as they land.
       once, right after this shipped (#194). First real releases:
       v1.0.0.45-v1.0.0.47, all confirmed live on
       [Central](https://central.sonatype.com/artifact/io.github.shrinivas93/rest-in-peace).
-      **`rest-in-peace-reactor` is deliberately excluded from this, for
-      now** - it shares this reactor's root `pom.xml` purely for version
-      sync, not because it's meant to ship; `maven.deploy.skip=true` plus
-      its own `central` profile `skipPublishing=true` override
-      (`rest-in-peace-reactor/pom.xml`) keep it out of both GitHub
-      Packages and Maven Central. No release date is planned yet - see the
-      PR #227 review backlog section below for the exact mechanism and its
-      rationale.
+      **`rest-in-peace-reactor` joins this starting with the next tagged
+      release** (#249) - the `maven.deploy.skip=true` plus its own
+      `central` profile `skipPublishing=true` override that previously
+      kept it out of both GitHub Packages and Maven Central (see the PR
+      #227 review backlog section below for the original mechanism and
+      rationale) were removed once the module proved fully tested,
+      documented, and metadata-complete with no remaining readiness gap.
 - [x] **Refactor to idiomatic Java 8** — swept `RestRequestProcessor`,
       `RestClientValidator`, and `RestClientInvocationHandler` for imperative
       loops and manual `Optional` isPresent/get patterns, replacing them with
