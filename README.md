@@ -44,6 +44,7 @@ test server for unit tests.
 ## Table of contents
 
 - [Why REST-in-peace?](#why-rest-in-peace)
+  - [How it compares](#how-it-compares)
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -155,6 +156,36 @@ cross-cutting concerns like auth headers and logging are all handled by the
 library instead of being re-implemented per call site — see
 [Features](#features) below for the full list, and [How it works](#how-it-works)
 for what actually happens under `getUser(...)`.
+
+### How it compares
+
+If you've used [Retrofit](https://github.com/square/retrofit),
+[Feign](https://github.com/OpenFeign/feign)/Spring Cloud OpenFeign, or
+Spring's `RestTemplate`/`WebClient`, the declarative-interface idea will
+feel familiar. The difference is scope: those are primarily HTTP-call
+libraries you then combine with a separate resilience library, a separate
+mock server, and sometimes a separate OpenAPI generator to get a
+production-ready client. REST-in-peace folds that combination into one
+dependency with one coherent API surface:
+
+| | REST-in-peace | Retrofit | Feign / OpenFeign | `RestTemplate`/`WebClient` |
+|---|---|---|---|---|
+| Declarative `@RestClient`-style interfaces | ✅ | ✅ | ✅ | ✅ via Spring HTTP Interfaces (`@HttpExchange`) |
+| Pagination helper (`@Paginated` → `Page<T>`/`Stream<T>`; `Flux<T>` via the separate `rest-in-peace-reactor` module) | ✅ built in | ❌ roll your own | ❌ roll your own | ❌ roll your own |
+| Circuit breaker / bulkhead | ✅ built in | ❌ wire in Resilience4j yourself | ❌ wire in Resilience4j/Spring Cloud CircuitBreaker yourself | ❌ wire in Resilience4j yourself |
+| HTTP-aware response caching (`Cache-Control`/`ETag`/stale-while-revalidate) | ✅ built in | ❌ configure OkHttp's cache + handle headers yourself | ❌ roll your own | ❌ roll your own |
+| Bundled local test server | ✅ `MockRestServer` | OkHttp's `MockWebServer` (separate artifact) | needs WireMock (separate) | Spring's bundled `MockRestServiceServer` (a mock, not a real local server) |
+| OpenAPI spec → client interface generator | ✅ bundled `OpenApiClientGenerator` | separate OpenAPI Generator template | separate OpenAPI Generator template | separate OpenAPI Generator template |
+| Compile-time, reflection-free dispatch | ✅ optional annotation processor | runtime dynamic proxy only | runtime dynamic proxy only | n/a |
+| Pluggable reactive return types | `CallAdapter` SPI; `Mono<T>`/`Flux<T>` via `rest-in-peace-reactor` | ✅ via separate adapter artifacts | mainly synchronous | ✅ native (`WebClient` only) |
+
+This isn't a claim that Retrofit or Feign are worse — both are mature,
+battle-tested, and have a much larger ecosystem than REST-in-peace does
+today. The bet here is narrower: if you're reaching for an HTTP client,
+a resilience library, a mock server, *and* an OpenAPI generator on the
+same project, REST-in-peace tries to be the one dependency that already
+does all four, consistently, instead of four dependencies you have to
+reconcile yourself.
 
 ## Features
 
