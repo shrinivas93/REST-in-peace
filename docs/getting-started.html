@@ -114,6 +114,22 @@
   }
   section.category > .category-desc{ color:var(--ink-soft); font-size:.92rem; margin:8px 0 28px; max-width:64ch; }
 
+  .compare-wrap{ overflow-x:auto; margin:20px 0; border:1px solid var(--border); border-radius:10px; }
+  table.compare{ width:100%; border-collapse:collapse; font-size:.86rem; background:var(--paper-raised); }
+  table.compare caption{
+    position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+    overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
+  }
+  table.compare th, table.compare td{
+    padding:10px 14px; text-align:left; border-bottom:1px solid var(--border); vertical-align:top;
+  }
+  table.compare thead th{
+    font-family:"IBM Plex Mono",monospace; font-size:.72rem; text-transform:uppercase;
+    letter-spacing:.06em; color:var(--ink-faint); border-bottom:1px solid var(--border-strong);
+  }
+  table.compare tbody tr:last-child td, table.compare tbody tr:last-child th{ border-bottom:none; }
+  table.compare tbody th{ font-weight:500; color:var(--ink); white-space:nowrap; }
+
   .feature{ margin-bottom:38px; scroll-margin-top:20px; }
   .feature h3{ font-size:1.12rem; margin:0 0 4px; font-family:"IBM Plex Sans",sans-serif; font-weight:600; }
   .feature .blurb{ color:var(--ink-soft); font-size:.9rem; margin:0 0 16px; max-width:66ch; }
@@ -212,6 +228,9 @@
       <input id="filter" type="text" placeholder="Filter features…" autocomplete="off">
 
       <nav class="toc" id="toc">
+        <div class="group-title">Overview</div>
+        <a href="#compare">How it compares</a>
+
         <div class="group-title">Setup</div>
         <a href="#setup">Declaring a client</a>
 
@@ -287,6 +306,32 @@
       <p>Every feature below works identically no matter how the client was constructed — a JDK dynamic proxy, a compile-time-generated class, or a Spring bean all resolve through the same <code>RIP.getClient(...)</code> choke point. What differs is <em>how you configure and inject</em> the client. Each entry shows the plain-Java form first, then every documented alternative — a different overload, a default, a collection form, or the Spring Boot starter's own way of expressing the same thing.</p>
       <p>Amber snippets run in plain Java (or any JVM language). Green snippets are specific to the <code>rest-in-peace-spring-boot-starter</code> module. See the <a href="https://github.com/shrinivas93/REST-in-peace#installation">README</a> for Maven/Gradle coordinates and the <a href="apidocs/">Javadoc</a> for the full API surface.</p>
     </div>
+
+    <!-- ============ HOW IT COMPARES ============ -->
+    <section class="category" id="compare">
+      <h2>How it compares</h2>
+      <p class="category-desc">Placing REST-in-peace against the declarative Java HTTP clients you're probably already evaluating it next to. This is a scope comparison, not a maturity claim — Retrofit and Feign are both more established and more widely adopted today.</p>
+
+      <div class="compare-wrap">
+        <table class="compare">
+          <caption>REST-in-peace vs. Retrofit, Feign/OpenFeign, and Spring's RestTemplate/WebClient</caption>
+          <thead>
+            <tr><th scope="col"></th><th scope="col">REST-in-peace</th><th scope="col">Retrofit</th><th scope="col">Feign / OpenFeign</th><th scope="col">RestTemplate/WebClient</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Declarative <code>@RestClient</code>-style interfaces</th><td>✅</td><td>✅</td><td>✅</td><td>✅ via Spring HTTP Interfaces (<code>@HttpExchange</code>)</td></tr>
+            <tr><th scope="row">Pagination helper (<code>@Paginated</code> → <code>Page&lt;T&gt;</code>/<code>Stream&lt;T&gt;</code>; <code>Flux&lt;T&gt;</code> via the separate <code>rest-in-peace-reactor</code> module)</th><td>✅ built in</td><td>❌ roll your own</td><td>❌ roll your own</td><td>❌ roll your own</td></tr>
+            <tr><th scope="row">Circuit breaker / bulkhead</th><td>✅ built in</td><td>❌ wire in Resilience4j yourself</td><td>❌ wire in Resilience4j/Spring Cloud CircuitBreaker yourself</td><td>❌ wire in Resilience4j yourself</td></tr>
+            <tr><th scope="row">HTTP-aware response caching (<code>Cache-Control</code>/<code>ETag</code>/stale-while-revalidate)</th><td>✅ built in</td><td>❌ configure OkHttp's cache + handle headers yourself</td><td>❌ roll your own</td><td>❌ roll your own</td></tr>
+            <tr><th scope="row">Bundled local test server</th><td>✅ <code>MockRestServer</code></td><td>OkHttp's <code>MockWebServer</code> (separate artifact)</td><td>needs WireMock (separate)</td><td>Spring's bundled <code>MockRestServiceServer</code> (a mock, not a real local server)</td></tr>
+            <tr><th scope="row">OpenAPI spec → client interface generator</th><td>✅ bundled <code>OpenApiClientGenerator</code></td><td>separate OpenAPI Generator template</td><td>separate OpenAPI Generator template</td><td>separate OpenAPI Generator template</td></tr>
+            <tr><th scope="row">Compile-time, reflection-free dispatch</th><td>✅ optional annotation processor</td><td>runtime dynamic proxy only</td><td>runtime dynamic proxy only</td><td>n/a</td></tr>
+            <tr><th scope="row">Pluggable reactive return types</th><td><code>CallAdapter</code> SPI; <code>Mono&lt;T&gt;</code>/<code>Flux&lt;T&gt;</code> via <code>rest-in-peace-reactor</code></td><td>✅ via separate adapter artifacts</td><td>mainly synchronous</td><td>✅ native (<code>WebClient</code> only)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="category-desc" style="margin-top:0;">See the README's <a href="https://github.com/shrinivas93/REST-in-peace#how-it-compares">full "How it compares" section ↗</a> for the reasoning behind each row.</p>
+    </section>
 
     <!-- ============ SETUP ============ -->
     <section class="category" id="setup">
@@ -2055,7 +2100,9 @@ interface UserApi {
       f.hidden = q.length > 0 && !text.includes(q);
     });
     categories.forEach(cat => {
-      const anyVisible = Array.from(cat.querySelectorAll('.feature')).some(f => !f.hidden);
+      const catFeatures = cat.querySelectorAll('.feature');
+      if (catFeatures.length === 0) return;   // no .feature cards to filter (e.g. "How it compares") - never hide
+      const anyVisible = Array.from(catFeatures).some(f => !f.hidden);
       cat.hidden = !anyVisible;
     });
   });
