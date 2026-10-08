@@ -177,7 +177,7 @@ dependency with one coherent API surface:
 | Bundled local test server | ✅ `MockRestServer` | OkHttp's `MockWebServer` (separate artifact) | needs WireMock (separate) | Spring's bundled `MockRestServiceServer` (a mock, not a real local server) |
 | OpenAPI spec → client interface generator | ✅ bundled `OpenApiClientGenerator` | separate OpenAPI Generator template | separate OpenAPI Generator template | separate OpenAPI Generator template |
 | Compile-time, reflection-free dispatch | ✅ optional annotation processor | runtime dynamic proxy only | runtime dynamic proxy only | n/a |
-| Pluggable reactive return types | `CallAdapter` SPI; `Mono<T>`/`Flux<T>` via `rest-in-peace-reactor` (not yet on Maven Central - see [Installation](#installation)) | ✅ via separate adapter artifacts | mainly synchronous | ✅ native (`WebClient` only) |
+| Pluggable reactive return types | `CallAdapter` SPI; `Mono<T>`/`Flux<T>` via `rest-in-peace-reactor` | ✅ via separate adapter artifacts | mainly synchronous | ✅ native (`WebClient` only) |
 
 This isn't a claim that Retrofit or Feign are worse — both are mature,
 battle-tested, and have a much larger ecosystem than REST-in-peace does
