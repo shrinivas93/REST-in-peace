@@ -24,7 +24,7 @@
 	-->
 	<groupId>io.github.shrinivas93</groupId>
 	<artifactId>rest-in-peace-parent</artifactId>
-	<version>1.0.0.56-SNAPSHOT</version>
+	<version>1.0.0.58-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
 	<name>rest-in-peace-parent</name>

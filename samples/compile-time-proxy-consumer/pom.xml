@@ -21,7 +21,7 @@
 		<maven.compiler.target>1.8</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<!-- Must match core's own pom.xml <version> - see README.md. -->
-		<rest-in-peace.version>1.0.0.54-SNAPSHOT</rest-in-peace.version>
+		<rest-in-peace.version>1.0.0.56-SNAPSHOT</rest-in-peace.version>
 	</properties>
 
 	<dependencies>

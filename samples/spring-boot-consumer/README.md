@@ -28,10 +28,12 @@ other Spring bean, with zero hand-written `@Bean` method.
 
 ## Running it
 
-Neither `rest-in-peace` nor `rest-in-peace-spring-boot-starter` is
-published anywhere `mvn` looks by default yet (see the "Maven Central
-publishing" item in [`ROADMAP.md`](../../ROADMAP.md)), so you need locally
--installed builds of both first. core and the starter share a parent POM
+This sample deliberately pins the repository's current `-SNAPSHOT` dev
+version rather than a released one, so it always exercises whatever's
+actually in this checkout - even though both `rest-in-peace` and
+`rest-in-peace-spring-boot-starter` are published on Maven Central (see
+[Installation](../../README.md#installation)), you still need
+locally-installed builds of this exact version first. core and the starter share a parent POM
 ([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
 non-recursive: just that one POM), since both of their published POMs
 reference it:
