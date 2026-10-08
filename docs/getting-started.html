@@ -116,7 +116,10 @@
 
   .compare-wrap{ overflow-x:auto; margin:20px 0; border:1px solid var(--border); border-radius:10px; }
   table.compare{ width:100%; border-collapse:collapse; font-size:.86rem; background:var(--paper-raised); }
-  table.compare caption{ display:none; }
+  table.compare caption{
+    position:absolute; width:1px; height:1px; margin:-1px; padding:0;
+    overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0;
+  }
   table.compare th, table.compare td{
     padding:10px 14px; text-align:left; border-bottom:1px solid var(--border); vertical-align:top;
   }
@@ -124,7 +127,7 @@
     font-family:"IBM Plex Mono",monospace; font-size:.72rem; text-transform:uppercase;
     letter-spacing:.06em; color:var(--ink-faint); border-bottom:1px solid var(--border-strong);
   }
-  table.compare tbody tr:last-child td{ border-bottom:none; }
+  table.compare tbody tr:last-child td, table.compare tbody tr:last-child th{ border-bottom:none; }
   table.compare tbody th{ font-weight:500; color:var(--ink); white-space:nowrap; }
 
   .feature{ margin-bottom:38px; scroll-margin-top:20px; }
@@ -2097,7 +2100,9 @@ interface UserApi {
       f.hidden = q.length > 0 && !text.includes(q);
     });
     categories.forEach(cat => {
-      const anyVisible = Array.from(cat.querySelectorAll('.feature')).some(f => !f.hidden);
+      const catFeatures = cat.querySelectorAll('.feature');
+      if (catFeatures.length === 0) return;   // no .feature cards to filter (e.g. "How it compares") - never hide
+      const anyVisible = Array.from(catFeatures).some(f => !f.hidden);
       cat.hidden = !anyVisible;
     });
   });
