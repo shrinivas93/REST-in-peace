@@ -31,10 +31,12 @@ just works.
 
 ## Running it
 
-`core` is published on Maven Central (see the "Maven Central publishing"
-item in [`ROADMAP.md`](../../ROADMAP.md)), but this sample pins the
-repository's current `-SNAPSHOT` version, and `rest-in-peace-reactor` isn't
-published yet at all - so you need locally-installed builds of both first.
+This sample deliberately pins the repository's current `-SNAPSHOT` dev
+version rather than a released one, so it always exercises whatever's
+actually in this checkout - even though `core` is published on Maven
+Central (see [Installation](../../README.md#installation)) and
+`rest-in-peace-reactor` will join it starting with the next release, you
+still need locally-installed builds of this exact version first.
 core and `rest-in-peace-reactor` share a parent POM
 ([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
 non-recursive: just that one POM), since both of their published POMs
