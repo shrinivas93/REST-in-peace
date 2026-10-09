@@ -8,6 +8,19 @@
 # Packages deploy above it, rather than one shared settings.xml/deploy).
 # For more information see: https://github.com/actions/setup-java#apache-maven-with-a-settings-path
 #
+# Every mvn invocation here goes through ./mvnw (the Maven Wrapper, pinned
+# to 3.9.11 in .mvn/wrapper/maven-wrapper.properties) rather than whatever
+# `mvn` happens to be preinstalled on the ubuntu-latest runner image. That
+# preinstalled version isn't fixed and drifts as GitHub rolls out runner
+# updates - under Maven 3.10.0, central-publishing-maven-plugin's bundle
+# step leaves a stray maven-metadata-local.xml in each module's
+# artifact-level staging directory (mavenplugins/central-publishing-maven-
+# plugin#79), which Central's validator then rejects with "Bundle has
+# content that does NOT have a .pom file". Maven 3.9.x builds a clean
+# bundle. Pinning via the wrapper makes the "Publish to Maven Central"
+# step's success stop depending on which Maven the runner image happens to
+# ship that week.
+#
 # Dispatch-only by design, not `on: release` - a release created via
 # release.yml's own GITHUB_TOKEN wouldn't fire that trigger anyway (GitHub's
 # anti-recursion rule), so release.yml always dispatches this explicitly
@@ -50,10 +63,10 @@ jobs:
     # core, and spring-boot-starter - all three share one version and one
     # release.
     - name: Build with Maven
-      run: mvn -B package
+      run: ./mvnw -B package
 
     - name: Publish to GitHub Packages Apache Maven
-      run: mvn deploy -s $GITHUB_WORKSPACE/settings.xml
+      run: ./mvnw deploy -s $GITHUB_WORKSPACE/settings.xml
       env:
         GITHUB_TOKEN: ${{ github.token }}
 
@@ -86,7 +99,7 @@ jobs:
     # bundle goes live on Central immediately - every tagged release publishes
     # automatically, with no manual step in the Portal UI.
     - name: Publish to Maven Central
-      run: mvn -B deploy -Pcentral -s $GITHUB_WORKSPACE/central-settings/settings.xml -Dgpg.passphrase="$MAVEN_GPG_PASSPHRASE"
+      run: ./mvnw -B deploy -Pcentral -s $GITHUB_WORKSPACE/central-settings/settings.xml -Dgpg.passphrase="$MAVEN_GPG_PASSPHRASE"
       env:
         CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
         CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
