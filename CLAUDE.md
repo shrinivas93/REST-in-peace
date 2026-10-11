@@ -11,3 +11,5 @@
   off `develop`, commit there, push, and open a PR into `develop` for
   review. Let that PR go through the same CI/Greptile/cubic review as any
   other change before it lands on `develop`.
+- **Always use a regular merge when merging a PR — never squash.** Keep
+  each branch's individual commits intact in the history.
