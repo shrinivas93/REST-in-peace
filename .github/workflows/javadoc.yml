@@ -64,6 +64,7 @@ jobs:
         run: |
           mkdir -p target/site/spring-boot-starter target/site/rest-in-peace-reactor
           cp docs/getting-started.html target/site/index.html
+          cp -r docs/assets target/site/assets
 
           # Stamps the field guide with the exact version it was built from
           # and today's date, so a reader can tell at a glance whether it's
