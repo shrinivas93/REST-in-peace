@@ -50,6 +50,20 @@ updates:
       # support.
       - dependency-name: "org.junit.jupiter:*"
         update-types: ["version-update:semver-major"]
+      # Dependabot reads this as the Maven distribution version pinned in
+      # .mvn/wrapper/maven-wrapper.properties (distributionUrl). That pin is
+      # deliberate, not stale: under Maven 3.10.0, a known bug in
+      # central-publishing-maven-plugin leaves a stray
+      # maven-metadata-local.xml in each module's artifact-level staging
+      # directory, which Central's bundle validator then rejects - this
+      # caused the real, repeated Maven Central publish failures on
+      # v1.0.0.56/.58/.59 (see #255's PR description for the full
+      # diagnosis). 3.9.x builds a clean bundle. Without this, Dependabot
+      # re-proposes exactly the broken version (#259) every time, bundled
+      # with genuinely-wanted maven-wrapper plugin bumps in the same group,
+      # so a blind merge would silently reintroduce the bug. Revisit only
+      # once the upstream plugin bug is actually fixed.
+      - dependency-name: "org.apache.maven:apache-maven"
 
   - package-ecosystem: maven
     directory: /samples/compile-time-proxy-consumer
