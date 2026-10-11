@@ -41,12 +41,13 @@ zero extra configuration.
 
 ## Running it
 
-This sample deliberately pins the repository's current `-SNAPSHOT` dev
-version rather than a released one, so it always exercises whatever's
-actually in this checkout - even though `core` itself is published on
-Maven Central (see [Installation](../../README.md#installation)), you
-still need a locally-installed build of this exact version first. core
-shares a parent POM
+This sample's `pom.xml` pins the latest released `rest-in-peace` version by
+default, resolved straight from Maven Central (see
+[Installation](../../README.md#installation)) - no local build needed to
+just run it as-is. To exercise an unreleased local checkout instead (e.g.
+while developing `core` itself), override the version with the `-D` flag
+below; that needs a locally-installed build of that exact version first.
+core shares a parent POM
 ([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
 non-recursive: just that one POM), since core's own published POM
 references it:
@@ -73,8 +74,9 @@ VERIFICATION PASSED: compile-time proxy generation works for a real downstream c
 `<rest-in-peace.version>` default with whatever core's actual version is
 right now - they're two independent projects, so nothing keeps the two in
 sync automatically, and core's version does change over time (each release
-bumps it). Omitting the flag falls back to the hardcoded default, which
-will fail to resolve once it drifts from whatever you just installed.
+bumps it). Omitting the flag falls back to the hardcoded default - the
+latest released version - which resolves fine from Maven Central but won't
+reflect an unreleased local checkout.
 
 ### Running the native-image smoke test
 

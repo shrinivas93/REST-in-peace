@@ -28,12 +28,13 @@ other Spring bean, with zero hand-written `@Bean` method.
 
 ## Running it
 
-This sample deliberately pins the repository's current `-SNAPSHOT` dev
-version rather than a released one, so it always exercises whatever's
-actually in this checkout - even though both `rest-in-peace` and
-`rest-in-peace-spring-boot-starter` are published on Maven Central (see
-[Installation](../../README.md#installation)), you still need
-locally-installed builds of this exact version first. core and the starter share a parent POM
+This sample's `pom.xml` pins the latest released `rest-in-peace` and
+`rest-in-peace-spring-boot-starter` versions by default, resolved straight
+from Maven Central (see [Installation](../../README.md#installation)) - no
+local build needed to just run it as-is. To exercise an unreleased local
+checkout instead (e.g. while developing `core` or the starter itself),
+override the versions with the `-D` flags below; that needs
+locally-installed builds of that exact version first. core and the starter share a parent POM
 ([`../../pom.xml`](../../pom.xml)) that needs installing too (`-N`,
 non-recursive: just that one POM), since both of their published POMs
 reference it:
@@ -63,8 +64,9 @@ defaults with whatever core and the starter's shared version actually is
 right now - core and the starter always match each other (both inherit one
 version from their common parent), but this sample is still a separate,
 non-reactor project, so its own defaults still drift the moment that shared
-version changes. Omitting either flag falls back to its hardcoded default,
-which will fail to resolve once it drifts from whatever you just installed.
+version changes. Omitting either flag falls back to its hardcoded default -
+the latest released version - which resolves fine from Maven Central but
+won't reflect an unreleased local checkout.
 
 ## Try it yourself
 
