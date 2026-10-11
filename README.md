@@ -18,6 +18,8 @@ methods like any other Java call.
 
 **[Field guide — every feature, plain Java and Spring side by side](https://shrinivas93.github.io/REST-in-peace/)**
 
+[![REST-in-peace vs. Retrofit, Feign/OpenFeign, and RestTemplate/WebClient](docs/assets/comparison-card.png)](#how-it-compares)
+
 ```java
 @RestClient
 @BaseUrl("https://api.example.com")

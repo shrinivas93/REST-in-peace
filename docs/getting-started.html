@@ -6,6 +6,18 @@
 <meta name="description" content="Every REST-in-peace feature — plain Java and the Spring Boot starter, side by side, with runnable examples.">
 <meta name="color-scheme" content="light dark">
 <title>REST-in-peace Field Guide</title>
+<meta property="og:type" content="website">
+<meta property="og:title" content="REST-in-peace Field Guide">
+<meta property="og:description" content="Every REST-in-peace feature — plain Java and the Spring Boot starter, side by side, with runnable examples.">
+<meta property="og:url" content="https://shrinivas93.github.io/REST-in-peace/">
+<meta property="og:image" content="https://shrinivas93.github.io/REST-in-peace/assets/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="REST-in-peace — a declarative REST client for Java">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="REST-in-peace Field Guide">
+<meta name="twitter:description" content="Every REST-in-peace feature — plain Java and the Spring Boot starter, side by side, with runnable examples.">
+<meta name="twitter:image" content="https://shrinivas93.github.io/REST-in-peace/assets/social-preview.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
@@ -107,6 +119,14 @@
   .intro h1{ font-size:clamp(1.9rem,3.2vw,2.5rem); margin:0 0 14px; }
   .intro p{ color:var(--ink-soft); max-width:62ch; }
   .intro p + p{ margin-top:10px; }
+
+  .intro-banner{
+    display:block; max-width:920px; margin:0 0 52px;
+    border-radius:14px; overflow:hidden;
+    border:1px solid var(--border-strong);
+    box-shadow:0 20px 50px -20px rgba(0,0,0,.25);
+  }
+  .intro-banner img{ display:block; width:100%; height:auto; }
 
   section.category{ margin-bottom:56px; scroll-margin-top:20px; }
   section.category > h2{
@@ -306,6 +326,10 @@
       <p>Every feature below works identically no matter how the client was constructed — a JDK dynamic proxy, a compile-time-generated class, or a Spring bean all resolve through the same <code>RIP.getClient(...)</code> choke point. What differs is <em>how you configure and inject</em> the client. Each entry shows the plain-Java form first, then every documented alternative — a different overload, a default, a collection form, or the Spring Boot starter's own way of expressing the same thing.</p>
       <p>Amber snippets run in plain Java (or any JVM language). Green snippets are specific to the <code>rest-in-peace-spring-boot-starter</code> module. See the <a href="https://github.com/shrinivas93/REST-in-peace#installation">README</a> for Maven/Gradle coordinates and the <a href="apidocs/">Javadoc</a> for the full API surface.</p>
     </div>
+
+    <a class="intro-banner" href="#compare">
+      <img src="assets/comparison-card.png" alt="REST-in-peace vs. Retrofit, Feign/OpenFeign, and RestTemplate/WebClient" width="1280" height="640" loading="lazy">
+    </a>
 
     <!-- ============ HOW IT COMPARES ============ -->
     <section class="category" id="compare">
