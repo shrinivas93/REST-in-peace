@@ -1742,9 +1742,8 @@ policy in `CLAUDE.md`.
 
 ## Promotion checklist (2026-10-12) — in progress
 
-Channels and assets for getting REST-in-peace in front of users. Also
-tracked as a live, click-to-update board:
-https://claude.ai/artifact/NGVFokehwtysgmeFpToGSN
+Channels and assets for getting REST-in-peace in front of users, tracked
+in this file as the source of truth.
 
 - [x] **Maven Central listing** — confirmed the listing page looks right.
 - [x] **README demo GIF** — dark-theme GIF above the badges row, typing
