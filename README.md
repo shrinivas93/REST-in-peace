@@ -7,6 +7,8 @@ working HTTP client for it at runtime — no hand-written request-building
 boilerplate. Annotate an interface, call `RIP.getClient(...)`, and invoke its
 methods like any other Java call.
 
+![Declaring a UserApi interface and calling it with RIP.getClient](docs/assets/demo.gif)
+
 [![CI](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/shrinivas93/REST-in-peace/branch/develop/graph/badge.svg)](https://codecov.io/gh/shrinivas93/REST-in-peace)
 [![Latest Release](https://img.shields.io/github/v/release/shrinivas93/REST-in-peace?label=release)](https://github.com/shrinivas93/REST-in-peace/releases/latest)
