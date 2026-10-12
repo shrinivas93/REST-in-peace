@@ -1739,3 +1739,41 @@ policy in `CLAUDE.md`.
       Mono/plain-Flux calls. Fixed; confirmed the sample still compiles
       and runs correctly against a local install after the change.
       `samples/reactor-consumer/src/main/java/com/example/consumer/Main.java:60`.
+
+## Promotion checklist (2026-10-12) — in progress
+
+Channels and assets for getting REST-in-peace in front of users. Also
+tracked as a live, click-to-update board:
+https://claude.ai/artifact/NGVFokehwtysgmeFpToGSN
+
+- [x] **Maven Central listing** — confirmed the listing page looks right.
+- [x] **README demo GIF** — dark-theme GIF above the badges row, typing
+      the real quickstart example end to end.
+- [x] **GitHub About + topics** — repo discoverability metadata verified.
+- [ ] **`akullpp/awesome-java`** — add a one-line entry under the HTTP
+      Clients section.
+- [ ] **`neomatrix369/awesome-graal`** — add an entry; the zero-hand-
+      written-reflect-config native-image story is a genuine fit.
+- [ ] **`mfornos/awesome-microservices`** — check the JVM/toolkit section
+      first; only submit if a clean client-library category exists.
+- [ ] **`tuyucheng777/awesome-java`** — secondary list; reuse the
+      akullpp entry text.
+- [ ] **r/java** — "show & tell" post, lead with the comparison-table
+      image.
+- [ ] **r/programming** — only if the angle is broader than "Java
+      library," e.g. the Maven 3.10.0 publish-bug war story.
+- [ ] **Hacker News (Show HN)** — "Show HN: REST-in-peace – a
+      declarative REST client for Java." Post once, don't resubmit.
+- [ ] **Twitter/X** — short thread: problem → one `@RestClient`
+      interface → link. Pin it.
+- [ ] **LinkedIn** — personal post with the before/after comparison
+      card.
+- [ ] **dev.to article** — "Stop writing HttpClient boilerplate," with a
+      code example and the demo GIF embedded.
+- [ ] **Medium cross-post** — reuse the dev.to article content.
+- [ ] **Baeldung Java Weekly** — submit via their community library
+      suggestion form.
+- [ ] **InfoQ / Javalobby-style aggregators** — lower priority, slower
+      review cycles.
+- [ ] **GitHub Discussions** — enable if not already; lower friction
+      than filing an issue.
