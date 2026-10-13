@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <img src="docs/assets/logo-light.png" alt="REST-in-peace" width="420">
+  </picture>
+</p>
+
 # REST-in-peace
 
 **A Simple, Declarative and Peaceful REST Client for Java**
@@ -6,6 +13,8 @@ REST-in-peace lets you declare a REST API as a plain Java interface and get a
 working HTTP client for it at runtime — no hand-written request-building
 boilerplate. Annotate an interface, call `RIP.getClient(...)`, and invoke its
 methods like any other Java call.
+
+![Declaring a UserApi interface and calling it with RIP.getClient](docs/assets/demo.gif)
 
 [![CI](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/shrinivas93/REST-in-peace/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/shrinivas93/REST-in-peace/branch/develop/graph/badge.svg)](https://codecov.io/gh/shrinivas93/REST-in-peace)

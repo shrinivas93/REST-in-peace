@@ -6,6 +6,7 @@
 <meta name="description" content="Every REST-in-peace feature — plain Java and the Spring Boot starter, side by side, with runnable examples.">
 <meta name="color-scheme" content="light dark">
 <title>REST-in-peace Field Guide</title>
+<link rel="icon" type="image/png" href="assets/icon.png">
 <meta property="og:type" content="website">
 <meta property="og:title" content="REST-in-peace Field Guide">
 <meta property="og:description" content="Every REST-in-peace feature — plain Java and the Spring Boot starter, side by side, with runnable examples.">
@@ -70,6 +71,8 @@
     display:flex; flex-direction:column; gap:22px;
   }
   .brand{ display:flex; flex-direction:column; gap:4px; }
+  .brand-row{ display:flex; align-items:center; gap:10px; }
+  .brand-icon{ width:26px; height:31px; flex-shrink:0; display:block; }
   .brand .mark{ font-family:"Fraunces",serif; font-size:1.5rem; font-weight:600; line-height:1.15; }
   .brand .tag{ font-size:.8rem; color:var(--ink-soft); }
   .brand .version{ font-family:"IBM Plex Mono",monospace; font-size:.7rem; color:var(--ink-faint); }
@@ -230,7 +233,13 @@
     </button>
     <div class="sidebar-body" id="sidebarBody">
       <div class="brand">
-        <span class="mark">REST-in-peace</span>
+        <div class="brand-row">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="assets/icon-dark.png">
+            <img class="brand-icon" src="assets/icon.png" alt="" width="26" height="31">
+          </picture>
+          <span class="mark">REST-in-peace</span>
+        </div>
         <span class="tag">Field guide — every feature, every way to call it</span>
         <span class="version">__RIP_VERSION__ · generated __RIP_BUILD_DATE__</span>
         <div class="brand-links">
