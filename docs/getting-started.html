@@ -44,8 +44,6 @@
       --mistake-solid:#e38578; --mistake-soft:#3a1f1c; --mistake-border:#5c3430;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -10px rgba(0,0,0,.5);
     }
-    .brand-icon-light{ display:none; }
-    .brand-icon-dark{ display:block; }
   }
 
   *{box-sizing:border-box;}
@@ -75,7 +73,6 @@
   .brand{ display:flex; flex-direction:column; gap:4px; }
   .brand-row{ display:flex; align-items:center; gap:10px; }
   .brand-icon{ width:26px; height:31px; flex-shrink:0; display:block; }
-  .brand-icon-dark{ display:none; }
   .brand .mark{ font-family:"Fraunces",serif; font-size:1.5rem; font-weight:600; line-height:1.15; }
   .brand .tag{ font-size:.8rem; color:var(--ink-soft); }
   .brand .version{ font-family:"IBM Plex Mono",monospace; font-size:.7rem; color:var(--ink-faint); }
@@ -237,8 +234,10 @@
     <div class="sidebar-body" id="sidebarBody">
       <div class="brand">
         <div class="brand-row">
-          <img class="brand-icon brand-icon-light" src="assets/icon.png" alt="" width="26" height="31">
-          <img class="brand-icon brand-icon-dark" src="assets/icon-dark.png" alt="" width="26" height="31">
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="assets/icon-dark.png">
+            <img class="brand-icon" src="assets/icon.png" alt="" width="26" height="31">
+          </picture>
           <span class="mark">REST-in-peace</span>
         </div>
         <span class="tag">Field guide — every feature, every way to call it</span>
