@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <img src="docs/assets/logo-light.png" alt="REST-in-peace" width="420">
+  </picture>
+</p>
+
 # REST-in-peace
 
 **A Simple, Declarative and Peaceful REST Client for Java**
