@@ -1785,5 +1785,5 @@ in this file as the source of truth.
       suggestion form.
 - [ ] **InfoQ / Javalobby-style aggregators** — lower priority, slower
       review cycles.
-- [ ] **GitHub Discussions** — enable if not already; lower friction
-      than filing an issue.
+- [x] **GitHub Discussions** — enabled; lower friction than filing an
+      issue.
