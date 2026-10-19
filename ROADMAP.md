@@ -1757,6 +1757,17 @@ in this file as the source of truth.
       first; only submit if a clean client-library category exists.
 - [ ] **`tuyucheng777/awesome-java`** — secondary list; reuse the
       akullpp entry text.
+- [ ] **`marmelab/awesome-rest`** — the `## Clients` section has PHP/JS/
+      Node/Ruby/Go/.NET Clients subsections but no Java one yet; open a
+      PR adding a "Java Clients" subsection with the entry.
+- [ ] **`Vedenin/useful-java-links`** — "5. Rest Frameworks" section
+      already lists Retrofit and Feign; add alongside them.
+- [ ] **`gunnarmorling/awesome-annotation-processing`** — "Existing
+      Annotation Processors" category; pitch the compile-time codegen
+      path specifically, not the REST-client angle.
+- [ ] **`libs.tech/java`** — the site's "REST Clients" category has
+      only one entry (zalando/riptide); no self-serve submit form found,
+      file a request via `github.com/libstech/issues`.
 - [ ] **r/java** — "show & tell" post, lead with the comparison-table
       image.
 - [ ] **r/programming** — only if the angle is broader than "Java
