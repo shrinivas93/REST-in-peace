@@ -1766,9 +1766,12 @@ in this file as the source of truth.
       https://github.com/Vedenin/useful-java-links/pull/161.
 - [ ] **`gunnarmorling/awesome-annotation-processing`** — PR open,
       Sourcery-bot approved: https://github.com/gunnarmorling/awesome-annotation-processing/pull/36.
-- [ ] **`libs.tech/java`** — the site's "REST Clients" category has
-      only one entry (zalando/riptide); no self-serve submit form found,
-      file a request via `github.com/libstech/issues`.
+- [ ] **`libs.tech/java`** — submitted 2026-10-19 via their GitHub-
+      authenticated "Add" form (REST Clients + HTTP Clients categories,
+      no PR/issue link since it's a form submission); their stated
+      inclusion bar needs 15+ stars and the repo currently has 0, so a
+      5-day auto-review may not add it on this pass — worth resubmitting
+      once star count picks up if it doesn't land.
 - [ ] **r/java** — "show & tell" post, lead with the comparison-table
       image.
 - [ ] **r/programming** — only if the angle is broader than "Java
