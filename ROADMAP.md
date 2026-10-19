@@ -1782,8 +1782,10 @@ in this file as the source of truth.
       interface → link. Pin it.
 - [ ] **LinkedIn** — personal post with the before/after comparison
       card.
-- [ ] **dev.to article** — "Stop writing HttpClient boilerplate," with a
-      code example and the demo GIF embedded.
+- [ ] **dev.to article** — "Stop Writing REST Client Boilerplate in Java"
+      (retitled from the original "Stop writing HttpClient boilerplate" to
+      include the REST keyword), with a code example and the demo GIF
+      embedded. Drafted, ready to publish.
 - [ ] **Medium cross-post** — reuse the dev.to article content.
 - [ ] **Baeldung Java Weekly** — submit via their community library
       suggestion form.
