@@ -1749,22 +1749,23 @@ in this file as the source of truth.
 - [x] **README demo GIF** — dark-theme GIF above the badges row, typing
       the real quickstart example end to end.
 - [x] **GitHub About + topics** — repo discoverability metadata verified.
-- [ ] **`akullpp/awesome-java`** — add a one-line entry under the HTTP
-      Clients section.
-- [ ] **`neomatrix369/awesome-graal`** — add an entry; the zero-hand-
-      written-reflect-config native-image story is a genuine fit.
-- [ ] **`mfornos/awesome-microservices`** — check the JVM/toolkit section
-      first; only submit if a clean client-library category exists.
-- [ ] **`tuyucheng777/awesome-java`** — secondary list; reuse the
-      akullpp entry text.
+- [ ] **`akullpp/awesome-java`** — PR open:
+      https://github.com/akullpp/awesome-java/pull/1358.
+- [ ] **`neomatrix369/awesome-graal`** — PR open, Sourcery-bot approved:
+      https://github.com/neomatrix369/awesome-graal/pull/24.
+- [ ] **`mfornos/awesome-microservices`** — PR open:
+      https://github.com/mfornos/awesome-microservices/pull/344.
+- [ ] **`tuyucheng777/awesome-java`** — PR open (Chinese-language entry,
+      matching house style): https://github.com/tuyucheng777/awesome-java/pull/7.
 - [ ] **`marmelab/awesome-rest`** — the `## Clients` section has PHP/JS/
-      Node/Ruby/Go/.NET Clients subsections but no Java one yet; open a
-      PR adding a "Java Clients" subsection with the entry.
-- [ ] **`Vedenin/useful-java-links`** — "5. Rest Frameworks" section
-      already lists Retrofit and Feign; add alongside them.
-- [ ] **`gunnarmorling/awesome-annotation-processing`** — "Existing
-      Annotation Processors" category; pitch the compile-time codegen
-      path specifically, not the REST-client angle.
+      Node/Ruby/Go/.NET Clients subsections but no Java one yet; holding
+      off — their contributing guide explicitly says PRs for young/
+      unproven tools get closed, and this project doesn't have the
+      track record yet to clear that bar.
+- [ ] **`Vedenin/useful-java-links`** — PR open:
+      https://github.com/Vedenin/useful-java-links/pull/161.
+- [ ] **`gunnarmorling/awesome-annotation-processing`** — PR open,
+      Sourcery-bot approved: https://github.com/gunnarmorling/awesome-annotation-processing/pull/36.
 - [ ] **`libs.tech/java`** — the site's "REST Clients" category has
       only one entry (zalando/riptide); no self-serve submit form found,
       file a request via `github.com/libstech/issues`.
