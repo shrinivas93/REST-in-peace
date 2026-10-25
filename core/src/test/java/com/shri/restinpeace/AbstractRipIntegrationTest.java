@@ -424,6 +424,7 @@ abstract class AbstractRipIntegrationTest {
 	static void stopServer() {
 		server.stop(0);
 		RIP.setCache(null);
+		RIP.clearInterceptors();
 	}
 
 	@BeforeEach
