@@ -1755,8 +1755,9 @@ in this file as the source of truth.
       https://github.com/neomatrix369/awesome-graal/pull/24.
 - [ ] **`mfornos/awesome-microservices`** — PR open:
       https://github.com/mfornos/awesome-microservices/pull/344.
-- [ ] **`tuyucheng777/awesome-java`** — PR open (Chinese-language entry,
-      matching house style): https://github.com/tuyucheng777/awesome-java/pull/7.
+- [x] **`tuyucheng777/awesome-java`** — merged 2026-10-25 (Chinese-
+      language entry, matching house style):
+      https://github.com/tuyucheng777/awesome-java/pull/7.
 - [ ] **`marmelab/awesome-rest`** — the `## Clients` section has PHP/JS/
       Node/Ruby/Go/.NET Clients subsections but no Java one yet; holding
       off — their contributing guide explicitly says PRs for young/
