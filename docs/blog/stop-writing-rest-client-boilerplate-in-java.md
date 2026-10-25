@@ -49,11 +49,11 @@ That's the whole thing. No `HttpClient` setup, no manual JSON parsing, no status
 
 If you've used Retrofit or Feign, the interface-based idea will feel familiar — annotate a method, get an HTTP call. The part I actually built RIP around is what happens *underneath* that interface.
 
-**Compile-time code generation, with a reflective fallback.** By default, RIP implements your interface at compile time via an annotation processor — you get a real generated class, not a runtime-built dynamic proxy. That means no reflection on your hot path, and no proxy-generation cost at startup. If you'd rather skip the build-time step, the reflective proxy is still there and works identically.
+**Compile-time code generation, with a reflective fallback.** Add the annotation processor and, for a supported interface, RIP implements it at compile time — you get a real generated class, not a runtime-built dynamic proxy. That means no reflection on your hot path, and no proxy-generation cost at startup. If the processor never ran, or the interface uses a shape it doesn't yet cover, `RIP.getClient(...)` transparently falls back to a reflective proxy that behaves identically.
 
 **GraalVM native-image just works.** Because the generated implementation is real compiled bytecode instead of a runtime proxy, there's no reflect-config JSON to hand-write for RIP's own client-generation path. Build a native image the normal way and it works.
 
-**Resilience is built in, not bolted on.** Retry with backoff, a circuit breaker, a bulkhead, idempotency keys for safe retries on non-idempotent-looking calls — all as annotations on the interface, not a separate library you have to wire in yourself.
+**Resilience is built in, not bolted on.** Retry with backoff and idempotency keys for safe retries on non-idempotent-looking calls are annotations right on the interface. A circuit breaker and a bulkhead are built in too, configured per client through `RipClientConfig.Builder` rather than a separate library you have to wire in yourself.
 
 ```java
 @RestClient
@@ -66,11 +66,11 @@ public interface OrderApi {
 }
 ```
 
-**Response caching with stale-while-revalidate and negative caching**, out of the box, configurable per client or per call.
+**Response caching with stale-while-revalidate and negative caching**, opt-in per client (or globally) by configuring a `Cache`, with `@NoCache` to exempt a single call.
 
 **A pluggable interceptor chain** for logging, auth headers, request signing, or short-circuiting a call entirely (handy for feature flags or local overrides).
 
-**A Spring Boot starter**, if that's your world — annotate the interface, inject it like any other bean, zero hand-written `@Bean` methods.
+**A Spring Boot starter**, if that's your world — annotate the interface, add `@EnableRestInPeaceClients` to your configuration, and inject it like any other bean, zero hand-written `@Bean` methods.
 
 **Reactive support** via `rest-in-peace-reactor` — any method returning `Mono<T>` or `Flux<T>` just works once you register the call adapter.
 
